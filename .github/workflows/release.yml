@@ -103,9 +103,15 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
-            git commit -m "chore(release): bump version to $NEW_TAG [skip ci]" || echo "Никаких изменений для фиксации"
-            git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
-            git push origin HEAD:${{ github.ref_name }} --follow-tags || echo "Не удалось сделать push тега (возможно уже существует)"
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(release): bump version to $NEW_TAG [skip ci]"
+              git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+              git push origin HEAD:${{ github.ref_name }} --follow-tags
+            else
+              echo "Никаких изменений для фиксации. Проверяем тег..."
+              git tag -a "$NEW_TAG" -m "Release $NEW_TAG" || true
+              git push origin "$NEW_TAG" || true
+            fi
           else
             # Авто-бамп patch при пуше с [release]
             node scripts/bump-version.js patch
@@ -117,9 +123,15 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
-            git commit -m "chore(release): auto-bump version to $NEW_TAG [skip ci]" || echo "Никаких изменений для фиксации"
-            git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
-            git push origin HEAD:${{ github.ref_name }} --follow-tags || echo "Не удалось сделать push тега"
+            if ! git diff --cached --quiet; then
+              git commit -m "chore(release): auto-bump version to $NEW_TAG [skip ci]"
+              git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+              git push origin HEAD:${{ github.ref_name }} --follow-tags
+            else
+              echo "Никаких изменений для фиксации. Проверяем тег..."
+              git tag -a "$NEW_TAG" -m "Release $NEW_TAG" || true
+              git push origin "$NEW_TAG" || true
+            fi
           fi
 
       - name: Создание структуры черновика релиза
@@ -128,6 +140,7 @@ jobs:
         with:
           tag_name: ${{ steps.version-step.outputs.tag }}
           name: "Video Cutter Pro ${{ steps.version-step.outputs.tag }}"
+          target_commitish: ${{ github.ref_name }}
           draft: true
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           generate_release_notes: true
@@ -254,9 +267,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
+          target_commitish: ${{ github.ref_name }}
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
-          files: all-dist-releases/*
+          files: all-dist-releases/**/*
           body: |
             ## 🎬 Video Cutter Pro ${{ needs.prepare-release.outputs.tag }}
 
