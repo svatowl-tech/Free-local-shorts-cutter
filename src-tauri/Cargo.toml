@@ -1,6 +1,6 @@
 [package]
 name = "video-cutter"
-version = "2.0.4"
+version = "2.0.5"
 description = "Intelligent Video Cutting Desktop Application"
 authors = ["Senior Architect"]
 edition = "2021"
