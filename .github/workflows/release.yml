@@ -66,16 +66,7 @@ jobs:
       - name: Проверка необходимости публикации
         id: check-trigger
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should_release=true" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "should_release=true" >> $GITHUB_OUTPUT
-          elif [ "${{ github.event_name }}" = "push" ] && (echo "${{ github.event.head_commit.message }}" | grep -iE '\[release\]|release:'); then
-            echo "should_release=true" >> $GITHUB_OUTPUT
-          else
-            echo "Коммит не содержит тега или ключевого слова [release]. Сборка будет выполнена в режиме верификации (CI)."
-            echo "should_release=false" >> $GITHUB_OUTPUT
-          fi
+          echo "should_release=true" >> $GITHUB_OUTPUT
 
       - name: Установка зависимостей Node
         run: npm ci || npm install
