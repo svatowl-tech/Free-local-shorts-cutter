@@ -1,8 +1,8 @@
 // src-tauri/src/models.rs
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tauri::{AppHandle, Emit, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use serde::{Deserialize, Serialize};
 use crate::error::{AppResult, AppError};
 use tokio::fs::File;

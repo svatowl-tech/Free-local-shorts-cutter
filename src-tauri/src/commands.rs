@@ -1,7 +1,7 @@
 // src-tauri/src/commands.rs
 use crate::error::{AppResult, AppError};
 use crate::AppState;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use std::path::PathBuf;
 use serde::Serialize;
 use crate::pipeline::orchestrator::PipelineConfig;
@@ -155,7 +155,6 @@ pub async fn render_clips_from_fragments(
     fragments: Vec<FragmentDto>,
     config: PipelineConfig,
 ) -> AppResult<Vec<String>> {
-    use tauri::Emit;
     log::info!("IPC: render_clips_from_fragments: {}, fragments: {:?}", video_path, fragments);
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 0.0, stage: "Инициализация...".to_string() });
 
@@ -251,7 +250,6 @@ pub async fn generate_subtitles_only(
     video_path: String,
     config: PipelineConfig,
 ) -> AppResult<String> {
-    use tauri::Emit;
     log::info!("IPC: generate_subtitles_only: {}", video_path);
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 0.0, stage: "Инициализация субтитров...".to_string() });
 

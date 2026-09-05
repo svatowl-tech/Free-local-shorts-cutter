@@ -11,9 +11,6 @@ pub mod pipeline;
 mod commands;
 mod models;
 
-use error::AppResult;
-use tauri::Manager;
-
 pub struct AppState {
     pub cancel_tx: tokio::sync::broadcast::Sender<()>,
 }
@@ -42,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
             models::get_models_status,
             models::download_model
         ])
-        .setup(|app| {
+        .setup(|_app| {
             log::info!("Приложение проинициализировано. Ожидание команд...");
             Ok(())
         })

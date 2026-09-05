@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::broadcast::Receiver;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubtitleFragment {
@@ -85,7 +85,8 @@ pub fn parse_srt(content: &str) -> Vec<SubtitleFragment> {
 
 fn parse_srt_time(time_str: &str) -> f64 {
     // Формат: HH:MM:SS,MMM
-    let parts: Vec<&str> = time_str.replace(',', ".").split(':').collect();
+    let normalized = time_str.replace(',', ".");
+    let parts: Vec<&str> = normalized.split(':').collect();
     if parts.len() == 3 {
         let h: f64 = parts[0].parse().unwrap_or(0.0);
         let m: f64 = parts[1].parse().unwrap_or(0.0);
@@ -148,7 +149,7 @@ pub async fn analyze_text_with_llm(
 
     for chunk in fragments.chunks(batch_size) {
         // Проверка отмены пользователем
-        if let Ok(_) = cancel_rx.try_recv() {
+        if cancel_rx.try_recv().is_ok() {
             log::info!("Анализ текста отменен пользователем");
             return Err(AppError::Pipeline("Отменено пользователем".into()));
         }
@@ -281,7 +282,7 @@ fn parse_json_array(text: &str) -> Option<Vec<f64>> {
 pub fn compute_text_scores_fallback(fragments: &[SubtitleFragment]) -> Vec<f64> {
     fragments.iter().map(|f| {
         let txt = f.text.to_lowercase();
-        let mut score = 0.1;
+        let mut score: f64 = 0.1;
         if txt.contains('!') { score += 0.2; }
         if txt.contains("ха-ха") || txt.contains("haha") || txt.contains("ахах") { score += 0.3; }
         if txt.contains('?') { score += 0.1; }

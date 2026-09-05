@@ -1,7 +1,7 @@
 // src-tauri/src/analyzer.rs
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emit, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use serde::{Deserialize, Serialize};
@@ -97,8 +97,6 @@ pub async fn analyze_video(
             let _ = std::fs::remove_dir_all(&temp_dir);
             AppError::Pipeline(format!("Не удалось запустить FFmpeg для извлечения кадров: {}", e))
         })?;
-        
-    let child_killer = child.clone();
 
     let extract_future = async {
         while let Some(event) = rx.recv().await {
@@ -121,7 +119,7 @@ pub async fn analyze_video(
             }
         },
         _ = cancel_rx.recv() => {
-            let _ = child_killer.kill();
+            let _ = child.kill();
             let _ = tokio::fs::remove_dir_all(&temp_dir).await;
             return Err(AppError::Pipeline("Анализ отменен пользователем.".to_string()));
         }
@@ -185,8 +183,6 @@ pub async fn analyze_video(
             let _ = tokio::fs::remove_dir_all(&temp_dir);
             AppError::Pipeline(format!("Не удалось запустить llama-vision: {}", e))
         })?;
-        
-        let child_killer = child.clone();
 
         let analyze_future = async {
             let mut stdout_accum = String::new();
@@ -219,7 +215,7 @@ pub async fn analyze_video(
                 }
             },
             _ = cancel_rx.recv() => {
-                let _ = child_killer.kill();
+                let _ = child.kill();
                 let _ = tokio::fs::remove_dir_all(&temp_dir).await;
                 return Err(AppError::Pipeline("Анализ отменен пользователем.".to_string()));
             }

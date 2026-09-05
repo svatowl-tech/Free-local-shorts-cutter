@@ -1,12 +1,11 @@
 // src-tauri/src/pipeline/orchestrator.rs
 use std::path::PathBuf;
-use tauri::{AppHandle, Emit};
+use tauri::{AppHandle, Emitter};
 use serde::{Deserialize, Serialize};
 use crate::error::{AppResult, AppError};
 use tokio::sync::broadcast::Receiver;
 use tokio::try_join;
 use crate::render::{RenderConfig, SubtitleStyle};
-use crate::analyzer::SceneCandidate;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {

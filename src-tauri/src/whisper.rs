@@ -1,6 +1,6 @@
 // src-tauri/src/whisper.rs
 use std::path::PathBuf;
-use tauri::{AppHandle, Emit, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use serde::Serialize;
@@ -60,8 +60,6 @@ pub async fn transcribe_audio(
     let (mut rx, child) = command.spawn()
         .map_err(|e| AppError::Pipeline(format!("Не удалось запустить процесс whisper.cpp: {}", e)))?;
 
-    let child_killer = child.clone();
-
     // Запускаем асинхронное чтение событий процесса
     let progress_future = async move {
         // Уведомление фронтенда о старте
@@ -109,7 +107,7 @@ pub async fn transcribe_audio(
     tokio::select! {
         result = progress_future => result,
         _ = cancel_rx.recv() => {
-            let _ = child_killer.kill();
+            let _ = child.kill();
             Err(AppError::Pipeline("Распознавание отменено пользователем.".to_string()))
         }
     }

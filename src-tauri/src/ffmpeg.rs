@@ -1,6 +1,6 @@
 // src-tauri/src/ffmpeg.rs
 use std::path::PathBuf;
-use tauri::{AppHandle, Emit};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use serde::Serialize;
@@ -41,8 +41,6 @@ pub async fn extract_audio(
 
     let (mut rx, child) = command.spawn()
         .map_err(|e| AppError::Pipeline(format!("Не удалось запустить процесс FFmpeg: {}", e)))?;
-
-    let child_killer = child.clone();
 
     let progress_future = async move {
         let mut total_duration: Option<f64> = None;
@@ -88,7 +86,7 @@ pub async fn extract_audio(
     tokio::select! {
         result = progress_future => result,
         _ = cancel_rx.recv() => {
-            let _ = child_killer.kill();
+            let _ = child.kill();
             Err(AppError::Pipeline("Нарезка аудио прервана пользователем.".to_string()))
         }
     }

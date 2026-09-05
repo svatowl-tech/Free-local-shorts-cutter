@@ -1,6 +1,6 @@
 // src-tauri/src/render.rs
 use std::path::PathBuf;
-use tauri::{AppHandle, Emit};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use serde::{Deserialize, Serialize};
@@ -106,8 +106,6 @@ pub async fn render_clip(
     let (mut rx, child) = command.spawn()
         .map_err(|e| AppError::Pipeline(format!("Не удалось запустить FFmpeg при рендере: {}", e)))?;
 
-    let child_killer = child.clone();
-
     let render_future = async {
         let _ = app_handle.emit("render-progress", RenderProgressPayload { 
             percent: 0.0, 
@@ -138,7 +136,7 @@ pub async fn render_clip(
     tokio::select! {
         res = render_future => res,
         _ = cancel_rx.recv() => {
-            let _ = child_killer.kill();
+            let _ = child.kill();
             Err(AppError::Pipeline("Отрисовка отменена пользователем.".to_string()))
         }
     }
