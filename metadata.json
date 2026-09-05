@@ -1,0 +1,6 @@
+{
+  "name": "Tauri 2 Video Cutter Architect",
+  "description": "An interactive workspace builder, code generator, and AI architecture guide for a desktop video cutting app using Tauri 2, SvelteKit, Rust, and Python ASR.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

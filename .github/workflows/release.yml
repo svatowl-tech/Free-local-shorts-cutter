@@ -1,0 +1,280 @@
+name: Automated Release & Multi-Platform Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Тип обновления версии (semantic versioning)'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+          - none
+      custom_version:
+        description: 'Пользовательская версия (если выбран тип custom, например 2.1.0)'
+        required: false
+        default: ''
+        type: string
+      draft:
+        description: 'Создать как черновик (Draft)'
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: 'Пометить как предварительный выпуск (Pre-release)'
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # 1. Подготовка версии, тега и инициализация GitHub Release
+  prepare-release:
+    name: 🔖 Определение версии и создание релиза
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version-step.outputs.version }}
+      tag: ${{ steps.version-step.outputs.tag }}
+      should_release: ${{ steps.check-trigger.outputs.should_release }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Проверка необходимости публикации
+        id: check-trigger
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "push" ] && (echo "${{ github.event.head_commit.message }}" | grep -iE '\[release\]|release:'); then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "Коммит не содержит тега или ключевого слова [release]. Сборка будет выполнена в режиме верификации (CI)."
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Установка зависимостей Node
+        run: npm ci || npm install
+
+      - name: Вычисление и обновление версии
+        id: version-step
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            # Извлекаем версию из тега (например v2.0.1 -> 2.0.1)
+            RAW_TAG="${GITHUB_REF#refs/tags/}"
+            VER="${RAW_TAG#v}"
+            node scripts/bump-version.js "$VER"
+            echo "version=$VER" >> $GITHUB_OUTPUT
+            echo "tag=$RAW_TAG" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            BUMP_TYPE="${{ github.event.inputs.bump }}"
+            if [ "$BUMP_TYPE" = "custom" ]; then
+              TARGET_VER="${{ github.event.inputs.custom_version }}"
+              node scripts/bump-version.js "$TARGET_VER"
+            elif [ "$BUMP_TYPE" = "none" ]; then
+              # Используем текущую версию без инкремента
+              CURRENT_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+              node scripts/bump-version.js "$CURRENT_VER"
+            else
+              node scripts/bump-version.js "$BUMP_TYPE"
+            fi
+            
+            NEW_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+            NEW_TAG="v$NEW_VER"
+            echo "version=$NEW_VER" >> $GITHUB_OUTPUT
+            echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+
+            # Коммитим обновленные манифесты и создаем Git тег
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+            git commit -m "chore(release): bump version to $NEW_TAG [skip ci]" || echo "Никаких изменений для фиксации"
+            git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+            git push origin HEAD:${{ github.ref_name }} --follow-tags || echo "Не удалось сделать push тега (возможно уже существует)"
+          else
+            # Авто-бамп patch при пуше с [release]
+            node scripts/bump-version.js patch
+            NEW_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+            NEW_TAG="v$NEW_VER"
+            echo "version=$NEW_VER" >> $GITHUB_OUTPUT
+            echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+            git commit -m "chore(release): auto-bump version to $NEW_TAG [skip ci]" || echo "Никаких изменений для фиксации"
+            git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+            git push origin HEAD:${{ github.ref_name }} --follow-tags || echo "Не удалось сделать push тега"
+          fi
+
+      - name: Создание структуры черновика релиза
+        if: steps.check-trigger.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version-step.outputs.tag }}
+          name: "Video Cutter Pro ${{ steps.version-step.outputs.tag }}"
+          draft: true
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 2. Кроссплатформенная матричная сборка (Windows, Linux, macOS)
+  build-and-package:
+    name: 📦 Сборка (${{ matrix.platform }})
+    needs: prepare-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows x64 (NSIS Installer + MSI + Portable Zip)
+          - os: windows-latest
+            platform: Windows x64
+            target: x86_64-pc-windows-msvc
+
+          # Linux x64 (DEB Installer + AppImage + Portable tar.gz)
+          - os: ubuntu-22.04
+            platform: Linux x64
+            target: x86_64-unknown-linux-gnu
+
+          # macOS Apple Silicon (DMG + Portable Zip)
+          - os: macos-14
+            platform: macOS Apple Silicon (ARM64)
+            target: aarch64-apple-darwin
+
+          # macOS Intel (DMG + Portable Zip)
+          - os: macos-13
+            platform: macOS Intel (x86_64)
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust build cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Установка системных зависимостей Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libasound2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            curl \
+            tar \
+            xz-utils
+
+      - name: Установка Node.js зависимостей
+        run: npm ci || npm install
+
+      - name: Подготовка бинарных зависимостей (sidecars) и иконок
+        run: npm run pretauri:build
+        env:
+          TARGET: ${{ matrix.target }}
+
+      - name: Сборка дистрибутивов через Tauri
+        run: npx @tauri-apps/cli build --target ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+
+      - name: Упаковка Установочных и Portable версий
+        run: npm run package:portable
+
+      - name: Выгрузка файлов сборки в артефакты GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-cutter-${{ matrix.target }}
+          path: dist-releases/*
+          if-no-files-found: warn
+
+      - name: Выгрузка дистрибутивов в GitHub Release
+        if: needs.prepare-release.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          files: dist-releases/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 3. Финализация релиза: публикация из черновика и сводная таблица
+  finalize-release:
+    name: 🚀 Публикация релиза
+    needs: [prepare-release, build-and-package]
+    runs-on: ubuntu-latest
+    if: needs.prepare-release.outputs.should_release == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Опубликовать релиз
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare-release.outputs.tag }}
+          draft: ${{ github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          body: |
+            ## 🎬 Video Cutter Pro ${{ needs.prepare-release.outputs.tag }}
+
+            Автоматический многоплатформенный релиз Video Cutter Pro.
+            Включает как стандартные установщики, так и полноценные **Portable (портативные)** версии, не требующие установки.
+
+            ### 📦 Доступные файлы для скачивания:
+
+            | Платформа | Установочная версия (Installer) | Портативная версия (Portable) |
+            | :--- | :--- | :--- |
+            | **Windows (x64)** | `.exe` (NSIS Setup) / `.msi` | `.zip` (Готовая папка с программой и sidecars) |
+            | **Linux (x64)** | `.deb` (Debian/Ubuntu/Mint) | `.AppImage` / `.tar.gz` |
+            | **macOS (Apple Silicon M1/M2/M3)** | `.dmg` | `.zip` (.app бандл) |
+            | **macOS (Intel x64)** | `.dmg` | `.zip` (.app бандл) |
+
+            ---
+            *Сборка выполнена автоматически через GitHub Actions CI/CD.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

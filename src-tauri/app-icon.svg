@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Основной фон: глубокий индиго-фиолетовый градиент -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="50%" stop-color="#1e1b4b" />
+      <stop offset="100%" stop-color="#311042" />
+    </linearGradient>
+
+    <!-- Неоновый градиент для акцентов -->
+    <linearGradient id="neonGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+
+    <!-- Глянцевый отблеск сверху -->
+    <linearGradient id="glassGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.0" />
+    </linearGradient>
+
+    <!-- Свечение -->
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="16" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Закругленная подложка иконки (Squircle) -->
+  <rect x="64" y="64" width="896" height="896" rx="220" ry="220" fill="url(#bgGrad)" stroke="#4338ca" stroke-width="8" stroke-opacity="0.4" />
+
+  <!-- Элегантные диагональные линии на фоне (паттерн скорости/нарезки) -->
+  <g opacity="0.06" stroke="#ffffff" stroke-width="4" stroke-linecap="round">
+    <line x1="200" y1="100" x2="900" y2="800" />
+    <line x1="100" y1="200" x2="800" y2="900" />
+    <line x1="300" y1="50" x2="950" y2="700" />
+    <line x1="50" y1="300" x2="700" y2="950" />
+  </g>
+
+  <!-- Глянцевый полукруглый блик в верхней части -->
+  <path d="M 64 284 C 64 162, 162 64, 284 64 L 740 64 C 862 64, 960 162, 960 284 C 960 380, 700 320, 512 320 C 324 320, 64 380, 64 284 Z" fill="url(#glassGrad)" />
+
+  <!-- Центральная эмблема: стилизованные ножницы, режущие кадр на букве 'V' -->
+  <g filter="url(#neonGlow)" transform="translate(12, 12)">
+    <!-- Левое лезвие / Направляющая V -->
+    <path d="M360,280 L480,580 L500,630 L520,580 L640,280" fill="none" stroke="url(#neonGrad)" stroke-width="56" stroke-linecap="round" stroke-linejoin="round" />
+    
+    <!-- Перекрестие нарезки (линия реза) -->
+    <path d="M280,500 L720,500" fill="none" stroke="#f43f5e" stroke-width="16" stroke-dasharray="24,16" stroke-linecap="round" opacity="0.9" />
+
+    <!-- Кольца ножниц снизу (смысловой акцент) -->
+    <!-- Левое кольцо -->
+    <circle cx="380" cy="740" r="80" fill="none" stroke="url(#neonGrad)" stroke-width="40" />
+    <path d="M380,660 L460,540" fill="none" stroke="url(#neonGrad)" stroke-width="40" stroke-linecap="round" />
+
+    <!-- Правое кольцо -->
+    <circle cx="620" cy="740" r="80" fill="none" stroke="url(#neonGrad)" stroke-width="40" />
+    <path d="M620,660 L540,540" fill="none" stroke="url(#neonGrad)" stroke-width="40" stroke-linecap="round" />
+
+    <!-- Центральный шарнир / Вспышка разреза -->
+    <circle cx="500" cy="485" r="32" fill="#ffffff" filter="drop-shadow(0px 0px 12px #ffffff)" />
+    <circle cx="500" cy="485" r="14" fill="#a855f7" />
+
+    <!-- Искорки/Частицы нарезаемого кадра -->
+    <path d="M240,460 L200,420 M230,540 L180,570 M760,460 L800,420 M770,540 L820,570" stroke="#f43f5e" stroke-width="12" stroke-linecap="round" />
+  </g>
+
+  <!-- Текстовая плашка "VC" в самом низу (субтильный техно-бренд) -->
+  <text x="512" y="900" font-family="'Courier New', Courier, monospace, sans-serif" font-weight="900" font-size="42" fill="#818cf8" letter-spacing="16" text-anchor="middle" opacity="0.75">AI ENGINE</text>
+</svg>

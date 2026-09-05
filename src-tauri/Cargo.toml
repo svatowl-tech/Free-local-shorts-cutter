@@ -1,0 +1,27 @@
+[package]
+name = "video-cutter"
+version = "2.0.0"
+description = "Intelligent Video Cutting Desktop Application"
+authors = ["Senior Architect"]
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2.0.0" }
+
+[dependencies]
+tauri = { version = "2.0.0", features = ["devtools"] }
+tauri-plugin-shell = "2.0.0"
+tauri-plugin-dialog = "2.0.0"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+tokio = { version = "1.38", features = ["full"] }
+tokio-stream = "0.1"
+anyhow = "1.0"
+thiserror = "1.0"
+
+log = "0.4"
+env_logger = "0.11"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }

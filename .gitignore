@@ -1,0 +1,31 @@
+node_modules/
+.next/
+coverage/
+.DS_Store
+Thumbs.db
+*.log
+
+# SvelteKit & Vite build outputs
+.svelte-kit/
+build/
+dist/
+dist-releases/
+
+# Rust and Tauri outputs
+src-tauri/target/
+src-tauri/resources/*
+!src-tauri/resources/.gitkeep
+src-tauri/models/*
+!src-tauri/models/.gitkeep
+!src-tauri/models/placeholder.txt
+
+# Archive / binary downloads
+*.zip
+*.tar.*
+*.7z
+*.rar
+
+# Environment variables
+.env*
+!.env.example
+
