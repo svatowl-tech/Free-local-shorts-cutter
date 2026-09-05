@@ -1,6 +1,6 @@
 {
   "productName": "Video Cutter Pro",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "identifier": "com.developer.videocutter",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -41,7 +41,9 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37"]
+        "depends": [
+          "libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37"
+        ]
       }
     },
     "macOS": {
