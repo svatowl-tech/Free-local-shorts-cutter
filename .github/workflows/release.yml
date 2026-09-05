@@ -218,21 +218,16 @@ jobs:
       - name: Упаковка Установочных и Portable версий
         run: npm run package:portable
 
+      - name: Показать созданные дистрибутивы
+        shell: bash
+        run: ls -la dist-releases || echo "Директория dist-releases не найдена"
+
       - name: Выгрузка файлов сборки в артефакты GitHub Actions
         uses: actions/upload-artifact@v4
         with:
-          name: video-cutter-${{ matrix.target }}
+          name: dist-${{ matrix.target }}
           path: dist-releases/*
           if-no-files-found: warn
-
-      - name: Выгрузка дистрибутивов в GitHub Release
-        if: needs.prepare-release.outputs.should_release == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare-release.outputs.tag }}
-          files: dist-releases/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # 3. Финализация релиза: публикация из черновика и сводная таблица
   finalize-release:
@@ -244,12 +239,24 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Скачивание всех собранных артефактов
+        uses: actions/download-artifact@v4
+        with:
+          path: all-dist-releases
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Список скачанных файлов релиза
+        shell: bash
+        run: ls -la all-dist-releases || echo "No files downloaded"
+
       - name: Опубликовать релиз
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          files: all-dist-releases/*
           body: |
             ## 🎬 Video Cutter Pro ${{ needs.prepare-release.outputs.tag }}
 
