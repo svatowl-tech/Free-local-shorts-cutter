@@ -167,6 +167,7 @@
         on:click={clearSelected}
         class="p-2 border border-slate-800 text-slate-400 hover:text-red-400 hover:border-red-950 rounded-xl transition-all hover:bg-red-950/10 cursor-pointer self-stretch md:self-auto flex items-center justify-center"
         title="Сбросить выбор"
+        aria-label="Сбросить выбор"
       >
         <Trash2 class="h-4 w-4" />
       </button>

@@ -202,6 +202,8 @@
           <!-- Delete button -->
           <button 
             class="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-[10px] z-10 shadow-lg"
+            aria-label="Удалить фрагмент"
+            title="Удалить фрагмент"
             on:click={(e) => handleRemoveFragment(frag.id, e)}
           >
             ✕
