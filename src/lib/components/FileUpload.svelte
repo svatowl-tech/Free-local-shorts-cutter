@@ -1,12 +1,11 @@
 <!-- src/lib/components/FileUpload.svelte -->
 <script lang="ts">
   import { pipelineStore } from '../stores/pipeline';
-  import { Video, UploadCloud, FileVideo, HardDrive, Trash2 } from '@lucide/svelte';
+  import { HardDrive, Trash2 } from '@lucide/svelte';
 
   let dragOver = false;
   let fileInput: HTMLInputElement;
 
-  // Функция форматирования байтов
   function formatBytes(bytes: number, decimals = 2) {
     if (bytes === 0) return '0 Байт';
     const k = 1024;
@@ -16,7 +15,6 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   }
 
-  // Обработка выбора файла через HTML5 Input (браузер / резервный вариант)
   function handleFileSelected(event: Event) {
     const target = event.target as HTMLInputElement;
     const files = target.files;
@@ -26,17 +24,15 @@
         name: file.name,
         path: file.webkitRelativePath || `/local/user/videos/${file.name}`,
         size: file.size,
-        duration: 180 // по умолчанию для демонстрации
+        duration: 180
       });
     }
   }
 
-  // Вызов нативного Tauri диалога (для десктопа)
   async function chooseVideoTauri() {
     try {
       const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
       if (isTauri) {
-        // Динамический импорт для предотвращения ошибок сборки в обычном браузере
         const { open } = await import('@tauri-apps/plugin-dialog');
         const selected = await open({
           multiple: false,
@@ -47,26 +43,23 @@
         });
 
         if (selected && typeof selected === 'string') {
-          // Имитируем получение размера и имени для нативного файла
           const fileName = selected.split(/[/\\]/).pop() || 'selected_video.mp4';
           pipelineStore.setVideo({
             name: fileName,
             path: selected,
-            size: 345220000, // Специфический размер для демонстрации
+            size: 345220000,
             duration: 180
           });
         }
       } else {
-        // Клик на скрытый инпут, если в браузере
-        fileInput.click();
+        fileInput?.click();
       }
     } catch (err) {
       console.error('Ошибка выбора файла Tauri, переключаемся на стандартный диалог:', err);
-      fileInput.click();
+      fileInput?.click();
     }
   }
 
-  // Drag and drop handlers
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
     dragOver = true;
@@ -82,7 +75,7 @@
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type.startsWith('video/')) {
+      if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm)$/i.test(file.name)) {
         pipelineStore.setVideo({
           name: file.name,
           path: file.webkitRelativePath || `/drag-drop/videos/${file.name}`,
@@ -95,15 +88,19 @@
     }
   }
 
-  function clearSelected() {
+  function clearSelected(e: MouseEvent) {
+    e.stopPropagation();
     pipelineStore.setVideo(null);
   }
 </script>
 
-<div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-xl backdrop-blur-md">
-  <div class="flex items-center gap-2 mb-4">
-    <Video class="h-5 w-5 text-indigo-400" />
-    <h2 class="text-sm font-bold tracking-widest text-slate-200 uppercase font-mono">Выбор видеоматериала</h2>
+<div class="panel p-6 sm:p-8 flex-1 flex flex-col">
+  <div class="panel-title flex items-center gap-2 mb-4">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>
+      <rect x="2" y="6" width="14" height="12" rx="2"/>
+    </svg>
+    <span>Выбор видеоматериала</span>
   </div>
 
   <input 
@@ -115,7 +112,7 @@
   />
 
   {#if !$pipelineStore.video}
-    <!-- Область загрузки (Drag and Drop) -->
+    <!-- Dropzone according to Variation 2 -->
     <!-- svelte-ignore a11y-no-static-element-interactions -->
     <!-- svelte-ignore a11y-click-events-have-key-events -->
     <div 
@@ -123,53 +120,57 @@
       on:dragleave={handleDragLeave}
       on:drop={handleDrop}
       on:click={chooseVideoTauri}
-      class="group border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-300 flex flex-col items-center justify-center min-h-[220px] {
+      class="flex-1 min-h-[240px] border-[1.5px] border-dashed rounded-[4px] p-8 flex flex-col items-center justify-center text-center transition-all duration-200 cursor-pointer select-none {
         dragOver 
-          ? 'border-indigo-400 bg-indigo-950/20 shadow-[0_0_15px_rgba(99,102,241,0.15)]' 
-          : 'border-slate-800 hover:border-indigo-500/50 hover:bg-slate-950/40'
+          ? 'border-[#5865f2] bg-[#5865f2]/5' 
+          : 'border-[rgba(226,226,224,0.15)] hover:border-[#5865f2] hover:bg-[#1a1a20]'
       }"
     >
-      <div class="p-4 bg-slate-950 border border-slate-800 rounded-2xl mb-4 group-hover:scale-105 transition-transform duration-300">
-        <UploadCloud class="h-8 w-8 text-indigo-400 group-hover:text-indigo-300" />
+      <div class="mb-4 text-[#e2e2e4] opacity-50 transition-opacity group-hover:opacity-80">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 13v8M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242M8 17l4-4 4 4"/>
+        </svg>
       </div>
-      <p class="text-xs font-semibold text-slate-300 mb-1.5 font-mono">
-        ПЕРЕТАЩИТЕ ВИДЕО СЮДА ИЛИ НАЖМИТЕ
-      </p>
-      <p class="text-[11px] text-slate-500 max-w-xs leading-relaxed font-sans">
-        Поддерживаются MP4, MOV, MKV, AVI, WEBM. Файл обрабатывается локально без отправки на сервер.
+      <h2 class="text-base font-semibold tracking-tight text-[#e2e2e4] mb-1.5 uppercase font-syne">ПЕРЕТАЩИТЕ ВИДЕО СЮДА</h2>
+      <p class="text-xs text-[rgba(226,226,224,0.5)] max-w-[280px] leading-relaxed">
+        Поддерживаются MP4, MOV, MKV, AVI, WEBM. Обработка локально.
       </p>
     </div>
   {:else}
-    <!-- Панель выбранного видео -->
-    <div class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-      <div class="flex items-start gap-3.5 flex-1 min-w-0">
-        <div class="p-3 bg-indigo-950/40 border border-indigo-900/40 rounded-xl text-indigo-400">
-          <FileVideo class="h-6 w-6" />
+    <!-- Selected video card -->
+    <div class="border border-[rgba(226,226,224,0.15)] bg-[#0c0c0e] p-5 rounded-[4px] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div class="flex items-start gap-4 flex-1 min-w-0">
+        <div class="w-10 h-10 bg-[#5865f2] rounded-[4px] flex items-center justify-center text-white shrink-0">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="6" width="14" height="12" rx="2"/>
+            <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>
+          </svg>
         </div>
         <div class="flex-1 min-w-0">
-          <h3 class="text-xs font-bold text-slate-200 truncate font-mono mb-1 leading-tight" title={$pipelineStore.video.name}>
+          <div class="label-mono mb-0.5">ВЫБРАН ФАЙЛ</div>
+          <h3 class="text-sm font-semibold text-[#e2e2e4] truncate font-mono mb-1" title={$pipelineStore.video.name}>
             {$pipelineStore.video.name}
           </h3>
-          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-500 font-mono">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[rgba(226,226,224,0.5)] font-mono">
             <span class="flex items-center gap-1">
               <HardDrive class="h-3 w-3" />
               {formatBytes($pipelineStore.video.size)}
             </span>
             <span>• Длительность: ~3 мин</span>
           </div>
-          <p class="text-[10px] text-slate-600 truncate font-mono mt-1 w-full bg-slate-950/40 px-1.5 py-0.5 rounded border border-slate-900">
-            Путь: {$pipelineStore.video.path}
+          <p class="text-[10px] text-[rgba(226,226,224,0.4)] truncate font-mono mt-1.5 p-1 bg-[#16161a] border border-[rgba(226,226,224,0.08)] rounded-[2px]">
+            {$pipelineStore.video.path}
           </p>
         </div>
       </div>
 
       <button 
         on:click={clearSelected}
-        class="p-2 border border-slate-800 text-slate-400 hover:text-red-400 hover:border-red-950 rounded-xl transition-all hover:bg-red-950/10 cursor-pointer self-stretch md:self-auto flex items-center justify-center"
+        class="btn border border-[rgba(226,226,224,0.15)] bg-transparent text-[rgba(226,226,224,0.6)] hover:text-red-400 hover:border-red-500/40 p-2.5 rounded-[4px] transition-colors cursor-pointer self-stretch sm:self-auto flex items-center justify-center gap-1.5"
         title="Сбросить выбор"
-        aria-label="Сбросить выбор"
       >
         <Trash2 class="h-4 w-4" />
+        <span class="text-[10px] sm:hidden">УДАЛИТЬ</span>
       </button>
     </div>
   {/if}

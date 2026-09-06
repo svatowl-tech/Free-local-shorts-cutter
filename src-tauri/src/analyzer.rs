@@ -45,22 +45,23 @@ pub async fn analyze_video(
     
     let shell = app_handle.shell();
     
-    // Получаем путь к модели llama-vision
-    let model = model_path.unwrap_or_else(|| {
-        app_handle
-            .path()
-            .resource_dir()
-            .unwrap_or_default()
-            .join("models")
-            .join("qwen-vl-2b.gguf")
-    });
-
-    if !model.exists() {
-        return Err(AppError::Pipeline(format!(
-            "Vision модель не найдена по пути: {}. Скачайте её (например, qwen-vl-2b.gguf) и положите в src-tauri/models/",
-            model.display()
-        )));
+    // Получаем путь к модели llama-vision через многоуровневый резолвер
+    let model = match model_path {
+        Some(p) => crate::models::resolve_model_path(&app_handle, &p.to_string_lossy()),
+        None => None,
     }
+    .or_else(|| crate::models::resolve_model_path(&app_handle, "qwen-vl-2b.gguf"))
+    .or_else(|| crate::models::resolve_model_path(&app_handle, "qwen2-vl-2b-instruct-q4_k_m.gguf"))
+    .or_else(|| crate::models::resolve_model_path(&app_handle, "models/qwen-vl-2b.gguf"));
+
+    let model = match model {
+        Some(m) if m.exists() => m,
+        _ => {
+            return Err(AppError::Pipeline(
+                "Модель визуального анализа (qwen-vl-2b.gguf) не найдена. Убедитесь, что модель установлена или используйте текстовый/аудио анализ.".to_string(),
+            ));
+        }
+    };
 
     // Создаем временную директорию для хранения кадров
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros();

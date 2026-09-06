@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
   import { pipelineStore } from '../stores/pipeline';
   import Timeline from './Timeline.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -9,18 +8,14 @@
   let duration = 0;
   let currentTime = 0;
 
-  // Reactively update videoSrc when pipelineStore.video changes
   $: {
     if ($pipelineStore.video?.path) {
-      // In a real Tauri app, we need to convert the file path so the webview can load it
       try {
         const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
         if (isTauri) {
           videoSrc = convertFileSrc($pipelineStore.video.path);
         } else {
-          // If in browser simulating, we can't load absolute paths. 
-          // We'd rely on a Blob URL if we had it, but here we just pass an empty string or a placeholder
-          videoSrc = ''; // Or a test video URL
+          videoSrc = '';
         }
       } catch (err) {
         console.error("Failed to convert file src", err);
@@ -39,24 +34,23 @@
   function handleLoadedMetadata() {
     if (videoEl) {
       duration = videoEl.duration;
-      // Update duration in store if needed
-      if ($pipelineStore.video) {
-        // We can't mutate directly, but we let Timeline use our local 'duration'
-      }
     }
   }
 
   function handleSeek(event: CustomEvent<{ time: number }>) {
     if (videoEl) {
       videoEl.currentTime = event.detail.time;
-      // Optional: Play on seek if desired
-      // videoEl.play().catch(() => {});
     }
   }
 </script>
 
-<div class="flex flex-col gap-4 bg-slate-900/60 border border-slate-800 rounded-2xl p-5 fade-in duration-300">
-  <div class="relative w-full aspect-video bg-black rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center shadow-lg">
+<div class="panel p-6 flex flex-col gap-4">
+  <div class="panel-title flex items-center justify-between">
+    <span>Видеопросмотр & Таймлайн</span>
+    <span class="label-mono">Предпросмотр</span>
+  </div>
+
+  <div class="relative w-full aspect-video bg-[#0c0c0e] rounded-[2px] overflow-hidden border border-[rgba(226,226,224,0.1)] flex items-center justify-center">
     {#if videoSrc}
       <!-- svelte-ignore a11y-media-has-caption -->
       <video
@@ -68,14 +62,15 @@
         on:timeupdate={handleTimeUpdate}
         on:loadedmetadata={handleLoadedMetadata}
       >
-        Ваш браузер не поддерживает элемент видео.
+        Ваш браузер не поддерживает видео.
       </video>
     {:else}
-      <div class="text-slate-500 font-mono text-sm flex flex-col items-center gap-2">
-        <svg class="h-8 w-8 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+      <div class="text-[rgba(226,226,224,0.4)] font-mono text-xs flex flex-col items-center gap-2">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="6" width="14" height="12" rx="2"/>
+          <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>
         </svg>
-        <span>Превью видео недоступно (требуется окружение Tauri)</span>
+        <span>Превью видео доступно в окружении приложения</span>
       </div>
     {/if}
   </div>

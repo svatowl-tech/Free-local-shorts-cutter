@@ -3,24 +3,21 @@
   import { fragmentsStore, addFragment, updateFragment, removeFragment } from '../stores/fragments';
   import type { Fragment } from '../stores/fragments';
 
-  export let videoDuration: number = 0; // seconds
-  export let currentTime: number = 0; // seconds
+  export let videoDuration: number = 0;
+  export let currentTime: number = 0;
 
   const dispatch = createEventDispatcher();
 
   let timelineEl: HTMLElement;
   let timelineWidth: number = 0;
 
-  // React to resize and calculate scale
   $: scale = videoDuration > 0 && timelineWidth > 0 ? timelineWidth / videoDuration : 1;
 
-  // Interaction states
   let isDragging = false;
   let isResizingLeft = false;
   let isResizingRight = false;
   let activeFragmentId: string | null = null;
 
-  // Mouse tracking state
   let dragStartX: number = 0;
   let initialFragStart: number = 0;
   let initialFragEnd: number = 0;
@@ -52,9 +49,6 @@
     const time = getMouseTime(e);
     dispatch('seek', { time });
     
-    // Check if clicked exactly on a fragment is handled by child elements' stopPropagation, 
-    // so if this fires, it means we clicked on empty space.
-    // Automatically adding a new fragment at seek position
     const start = time;
     const end = Math.min(videoDuration, time + 5);
     addFragment(start, end - start);
@@ -71,7 +65,6 @@
     removeFragment(id);
   }
 
-  // --- MOUSE DOWN HANDLERS ---
   function startDrag(frag: Fragment, e: MouseEvent) {
     e.stopPropagation();
     isDragging = true;
@@ -108,7 +101,6 @@
     window.addEventListener('mouseup', onMouseUp);
   }
 
-  // --- MOUSE MOVE AND UP ---
   function onMouseMove(e: MouseEvent) {
     if (!activeFragmentId) return;
 
@@ -158,16 +150,16 @@
 </script>
 
 <div class="space-y-2">
-  <div class="flex items-center justify-between text-xs font-mono text-slate-400">
-    <span>Таймлайн фрагментов</span>
+  <div class="flex items-center justify-between text-xs font-mono">
+    <span class="label-mono text-[#e2e2e4]">Таймлайн фрагментов</span>
     {#if videoDuration > 0}
-      <span>{formatTime(currentTime)} / {formatTime(videoDuration)}</span>
+      <span class="text-[#5865f2] font-semibold">{formatTime(currentTime)} / {formatTime(videoDuration)}</span>
     {/if}
   </div>
 
   <div 
     bind:this={timelineEl}
-    class="relative h-24 w-full bg-slate-900 border border-slate-800 rounded overflow-hidden select-none cursor-pointer"
+    class="relative h-20 w-full bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[2px] overflow-hidden select-none cursor-pointer"
     on:click={handleTimelineClick}
     role="slider"
     tabindex="0"
@@ -176,22 +168,20 @@
     aria-valuemax={videoDuration}
     on:keydown={(e) => {
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        const delta = e.key === 'ArrowRight' ? 1 : -1;
-        // In a real app this would alter currentTime, but we dispatch a seek event just in case
-        // Custom events here need the same format as handled in the parent component
+        // Accessibility placeholder
       }
     }}
   >
     {#if videoDuration > 0}
-      <!-- Дробления шкалы времени (подсказки) -->
+      <!-- Grid subdivisions -->
       {#each Array(Math.ceil(videoDuration / 10)) as _, i}
-        <div class="absolute top-0 bottom-0 border-l border-slate-800/50 pointer-events-none" style="left: {i * 10 * scale}px;"></div>
+        <div class="absolute top-0 bottom-0 border-l border-[rgba(226,226,224,0.05)] pointer-events-none" style="left: {i * 10 * scale}px;"></div>
       {/each}
 
-      <!-- Фрагменты -->
+      <!-- Fragments -->
       {#each $fragmentsStore as frag (frag.id)}
         <div 
-          class="absolute top-2 bottom-2 bg-indigo-500/20 border border-indigo-500/50 rounded flex flex-col group"
+          class="absolute top-2 bottom-2 bg-[#5865f2]/20 border border-[#5865f2] rounded-[2px] flex flex-col group transition-colors"
           style="left: {frag.start * scale}px; width: {(frag.end - frag.start) * scale}px;"
           on:click={(e) => handleFragmentClick(frag, e)}
           on:mousedown={(e) => startDrag(frag, e)}
@@ -201,7 +191,7 @@
         >
           <!-- Delete button -->
           <button 
-            class="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-400 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-[10px] z-10 shadow-lg"
+            class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 hover:bg-red-400 text-white rounded-none flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-mono z-10"
             aria-label="Удалить фрагмент"
             title="Удалить фрагмент"
             on:click={(e) => handleRemoveFragment(frag.id, e)}
@@ -210,33 +200,25 @@
           </button>
 
           <!-- Label -->
-          <div class="w-full text-center text-[10px] text-indigo-300 font-mono pointer-events-none pt-1 overflow-hidden truncate px-1">
+          <div class="w-full text-center text-[9px] text-[#e2e2e4] font-mono pointer-events-none pt-0.5 overflow-hidden truncate px-1 font-bold">
             {formatTime(frag.start)} - {formatTime(frag.end)}
           </div>
 
           <!-- Drag content -->
           <div class="flex-grow cursor-grab active:cursor-grabbing w-full h-full"></div>
 
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <!-- Left Resize Handle -->
           <div 
-            class="absolute top-0 bottom-0 left-0 w-2 cursor-w-resize bg-indigo-400/0 hover:bg-indigo-400/50 transition-colors z-10"
+            class="absolute top-0 bottom-0 left-0 w-2 cursor-w-resize bg-[#5865f2]/0 hover:bg-[#5865f2] transition-colors z-10"
             on:mousedown={(e) => startResizeLeft(frag, e)}
             on:click|stopPropagation
             role="separator"
             tabindex="0"
           ></div>
 
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <!-- Right Resize Handle -->
           <div 
-            class="absolute top-0 bottom-0 right-0 w-2 cursor-e-resize bg-indigo-400/0 hover:bg-indigo-400/50 transition-colors z-10"
+            class="absolute top-0 bottom-0 right-0 w-2 cursor-e-resize bg-[#5865f2]/0 hover:bg-[#5865f2] transition-colors z-10"
             on:mousedown={(e) => startResizeRight(frag, e)}
             on:click|stopPropagation
             role="separator"
@@ -245,15 +227,15 @@
         </div>
       {/each}
 
-      <!-- Линия текущего времени -->
+      <!-- Current Time Playhead -->
       <div 
-        class="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none shadow-[0_0_8px_rgba(239,68,68,0.8)] z-20"
+        class="absolute top-0 bottom-0 w-0.5 bg-[#5865f2] pointer-events-none z-20"
         style="left: {currentTime * scale}px"
       >
-        <div class="absolute -top-1 -left-1.5 w-3.5 h-3.5 rounded-full bg-red-500"></div>
+        <div class="absolute -top-0.5 -left-1 w-2.5 h-2.5 bg-[#5865f2]"></div>
       </div>
     {:else}
-      <div class="flex h-full items-center justify-center text-xs text-slate-500">
+      <div class="flex h-full items-center justify-center text-xs text-[rgba(226,226,224,0.4)] font-mono">
         Выберите видео для начала редактирования
       </div>
     {/if}

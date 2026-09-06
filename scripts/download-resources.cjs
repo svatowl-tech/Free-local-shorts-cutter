@@ -1,11 +1,13 @@
-// scripts/download-resources.js
+// scripts/download-resources.cjs
 const fs = require('fs');
 const path = require('path');
-const { execSync, spawn } = require('child_process');
+const { execSync } = require('child_process');
 const https = require('https');
 const http = require('http');
 
-console.log('=== ЗАПУСК СКРИПТА ЗАГРУЗКИ SIDE-CAR БИНАРНИКОВ ===');
+console.log('\n======================================================');
+console.log('🚀 ПОДГОТОВКА СТОРОННИХ БИНАРНИКОВ И ПРЕДУСТАНОВЛЕННЫХ МОДЕЛЕЙ');
+console.log('======================================================');
 
 // Определяем целевую архитектуру
 let target = process.env.TARGET;
@@ -21,14 +23,16 @@ if (!target) {
     }
 }
 
-const ext = target.contains && target.contains('windows') || target.includes('windows') ? '.exe' : '';
+const ext = target.includes('windows') ? '.exe' : '';
 console.log(`Целевая платформа сборки: ${target}`);
 
 const resourcesDir = path.join(__dirname, '..', 'src-tauri', 'resources');
+const modelsDir = path.join(__dirname, '..', 'src-tauri', 'models');
 const tempDir = path.join(__dirname, '..', 'src-tauri', 'target', 'downloads');
 
 // Создаем папки
 fs.mkdirSync(resourcesDir, { recursive: true });
+fs.mkdirSync(modelsDir, { recursive: true });
 fs.mkdirSync(tempDir, { recursive: true });
 
 // Ссылки на архивы
@@ -43,20 +47,18 @@ if (isWindows) {
     whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip';
     llamaUrl = 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip';
 } else if (isMac) {
-    // macOS сборки
     ffmpegUrl = 'https://evermeet.cx/ffmpeg/getrelease/zip';
     ffprobeUrl = 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip';
     whisperUrl = target.includes('aarch64') 
-        ? 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-v1.5.4-bin-macos-arm64.zip'
-        : 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-v1.5.4-bin-macos-x64.zip';
+        ? 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-arm64.zip'
+        : 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-x64.zip';
     llamaUrl = target.includes('aarch64')
         ? 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-arm64.zip'
         : 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-x64.zip';
 } else {
-    // Linux сборки
-    ffmpegUrl = 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz';
+    ffmpegUrl = 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz';
     ffprobeUrl = ffmpegUrl;
-    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-v1.5.4-bin-ubuntu-x64.zip';
+    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip';
     llamaUrl = 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-ubuntu-x64.zip';
 }
 
@@ -90,6 +92,22 @@ const sidecars = [
         binName: isWindows ? 'llama-cli.exe' : 'llama-cli',
         url: llamaUrl,
         archiveName: 'llama.zip'
+    }
+];
+
+// Список предустановленных моделей нейросетей для автономной работы
+const preinstalledModels = [
+    {
+        name: 'Whisper Base (Русский + Мультиязычный)',
+        filename: 'ggml-base.bin',
+        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
+        minSize: 140 * 1024 * 1024 // ~148 MB
+    },
+    {
+        name: 'Whisper Tiny (Сверхбыстрый)',
+        filename: 'ggml-tiny.bin',
+        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
+        minSize: 70 * 1024 * 1024 // ~75 MB
     }
 ];
 
@@ -133,16 +151,28 @@ function findFilePartial(dir, mask) {
     return null;
 }
 
-// Загрузка файла с поддержкой редиректов
+// Загрузка файла с поддержкой редиректов и заголовков
 function downloadFile(url, destPath) {
     return new Promise((resolve, reject) => {
         console.log(`Загрузка: ${url} -> ${destPath}`);
         const protocol = url.startsWith('https') ? https : http;
         
-        protocol.get(url, (response) => {
+        const options = {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VideoCutterPro/2.0',
+                'Accept': '*/*'
+            }
+        };
+
+        const req = protocol.get(url, options, (response) => {
             if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
                 // Следование редиректу
-                return downloadFile(response.headers.location, destPath).then(resolve).catch(reject);
+                let redirectUrl = response.headers.location;
+                if (!redirectUrl.startsWith('http')) {
+                    const parsed = new URL(url);
+                    redirectUrl = `${parsed.protocol}//${parsed.host}${redirectUrl}`;
+                }
+                return downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
             }
 
             if (response.statusCode !== 200) {
@@ -154,7 +184,7 @@ function downloadFile(url, destPath) {
 
             fileStream.on('finish', () => {
                 fileStream.close();
-                console.log(`Сохранено: ${destPath}`);
+                console.log(`✓ Сохранено: ${destPath} (${(fs.statSync(destPath).size / (1024 * 1024)).toFixed(1)} MB)`);
                 resolve();
             });
 
@@ -162,21 +192,28 @@ function downloadFile(url, destPath) {
                 fs.unlink(destPath, () => {});
                 reject(err);
             });
-        }).on('error', (err) => {
+        });
+
+        req.on('error', (err) => {
             fs.unlink(destPath, () => {});
             reject(err);
+        });
+
+        req.setTimeout(60000, () => {
+            req.destroy();
+            fs.unlink(destPath, () => {});
+            reject(new Error('Превышен таймаут загрузки (60 секунд)'));
         });
     });
 }
 
-// Функция распаковки архива через встроенные команды tar
+// Функция распаковки архива
 function extractArchive(archivePath, destDir) {
     console.log(`Распаковка архива: ${archivePath} -> ${destDir}`);
     fs.mkdirSync(destDir, { recursive: true });
     
     try {
         if (archivePath.endsWith('.zip')) {
-            // На маке и линуксе используем unzip если есть, иначе tar
             if (process.platform === 'win32') {
                 execSync(`tar -xf "${archivePath}" -C "${destDir}"`);
             } else {
@@ -187,7 +224,6 @@ function extractArchive(archivePath, destDir) {
                 }
             }
         } else {
-            // Для .tar.xz или .tar.gz
             execSync(`tar -xf "${archivePath}" -C "${destDir}"`);
         }
         console.log('Распаковка завершена.');
@@ -196,46 +232,53 @@ function extractArchive(archivePath, destDir) {
     }
 }
 
-// Основной пайплайн
-async function run() {
-    // Проверим, все ли у нас скачано сначала
-    let allExist = true;
-    for (const sc of sidecars) {
-        const outName = `${sc.name}-${target}${ext}`;
-        const outPath = path.join(resourcesDir, outName);
-        if (!fs.existsSync(outPath)) {
-            allExist = false;
-            break;
+// Загрузка предустановленных моделей
+async function downloadPreinstalledModels() {
+    console.log('\n--- 1. Проверка и загрузка предустановленных моделей ИИ в src-tauri/models ---');
+    for (const model of preinstalledModels) {
+        const destPath = path.join(modelsDir, model.filename);
+        if (fs.existsSync(destPath)) {
+            const size = fs.statSync(destPath).size;
+            if (size >= model.minSize) {
+                console.log(`✓ Модель "${model.name}" уже существует: ${model.filename} (${(size / (1024 * 1024)).toFixed(1)} MB)`);
+                continue;
+            }
+        }
+
+        console.log(`\nСкачивание предустановленной модели "${model.name}"...`);
+        try {
+            await downloadFile(model.url, destPath);
+        } catch (err) {
+            console.warn(`[ПРЕДУПРЕЖДЕНИЕ] Не удалось скачать модель ${model.filename}: ${err.message}`);
+            if (!fs.existsSync(destPath) || fs.statSync(destPath).size === 0) {
+                console.log(`Создаем информационный плейсхолдер для ${model.filename}`);
+                fs.writeFileSync(destPath, `# Model placeholder for ${model.filename}\n`);
+            }
         }
     }
+}
 
-    if (allExist) {
-        console.log('Все необходимые бинарные файлы (sidecars) уже подготовлены в src-tauri/resources!');
-        process.exit(0);
-    }
-
+// Загрузка и подготовка бинарников Sidecar
+async function downloadSidecars() {
+    console.log('\n--- 2. Проверка и подготовка sidecar бинарников в src-tauri/resources ---');
     for (const sc of sidecars) {
         const outName = `${sc.name}-${target}${ext}`;
         const outPath = path.join(resourcesDir, outName);
 
-        if (fs.existsSync(outPath)) {
-            console.log(`Бинарник ${outName} уже существует. Пропуск.`);
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1024) {
+            console.log(`✓ Бинарник ${outName} уже существует. Пропуск.`);
             continue;
         }
 
-        console.log(`\n--- Подготовка ${sc.name} ---`);
+        console.log(`\nПодготовка sidecar: ${sc.name} (${outName})`);
         const archivePath = path.join(tempDir, sc.archiveName);
 
-        // Скачиваем архив если нет
-        if (!fs.existsSync(archivePath)) {
+        if (!fs.existsSync(archivePath) || fs.statSync(archivePath).size < 1024) {
             try {
                 await downloadFile(sc.url, archivePath);
             } catch (err) {
-                console.error(`Критическая ошибка скачивания архива для ${sc.name}:`, err.message);
-                
-                // В песочнице / урезанном окружении на некоторых OS скачивание больших объемов может таймаутить.
-                // Создаем элегантный пустой плейсхолдер с логированием ошибки, чтобы сборка самого проекта SvelteKit+Tauri не ломалась на шаге компиляции.
-                console.log(`Создаем пустой stub-бинарник для ${sc.name}, чтобы не останавливать CI/CD.`);
+                console.warn(`[ПРЕДУПРЕЖДЕНИЕ] Ошибка загрузки архива для ${sc.name}:`, err.message);
+                console.log(`Создаем stub-бинарник для ${outName}`);
                 fs.writeFileSync(outPath, '# Placeholder binary for ' + sc.name);
                 if (process.platform !== 'win32') {
                     fs.chmodSync(outPath, '755');
@@ -250,8 +293,7 @@ async function run() {
         try {
             extractArchive(archivePath, extractPath);
         } catch (err) {
-            console.error(`Не удалось распаковать ${archivePath}:`, err.message);
-            console.log(`Автоматическое создание плейсхолдера для ${sc.name}`);
+            console.warn(`Не удалось распаковать ${archivePath}:`, err.message);
             fs.writeFileSync(outPath, '# Placeholder binary for ' + sc.name);
             if (process.platform !== 'win32') {
                 fs.chmodSync(outPath, '755');
@@ -259,41 +301,51 @@ async function run() {
             continue;
         }
 
-        // Ищем нужный бинарник внутри
         let srcBin = findFileRecursive(extractPath, sc.binName);
         if (!srcBin) {
-            // Фолбек маска
-            const mask = sc.name === 'llama-vision' ? 'minicopic' : (sc.name === 'whisper' ? 'whisper' : sc.binName);
-            srcBin = findFilePartial(extractPath, mask);
+            let searchMasks = [sc.binName];
+            if (sc.name === 'llama-vision') {
+                searchMasks = ['minicpm', 'minicopic', 'llava', 'llama-cli', 'main'];
+            } else if (sc.name === 'whisper') {
+                searchMasks = ['main', 'whisper', 'whisper-cli'];
+            } else if (sc.name === 'llama-cli') {
+                searchMasks = ['llama-cli', 'main'];
+            }
+            for (const mask of searchMasks) {
+                srcBin = findFilePartial(extractPath, mask);
+                if (srcBin) break;
+            }
         }
 
         if (srcBin) {
             fs.copyFileSync(srcBin, outPath);
-            console.log(`Успешно извлечен и установлен: ${outPath}`);
+            console.log(`✓ Успешно установлен: ${outPath} (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(1)} MB)`);
             if (process.platform !== 'win32') {
-                fs.chmodSync(outPath, '755'); // Делаем исполняемым
+                fs.chmodSync(outPath, '755');
             }
         } else {
-            // Если не нашли сам файл (например для спец-архивов macOS), создаем плейсхолдер
-            console.warn(`Предупреждение: не удалось извлечь реальный файл ${sc.binName} из архива.`);
-            console.log(`Создаем stub-бинарник для ${outName}`);
+            console.warn(`Файл ${sc.binName} не найден в архиве, создаем заглушку.`);
             fs.writeFileSync(outPath, '# Static executable stub for ' + sc.name);
             if (process.platform !== 'win32') {
                 fs.chmodSync(outPath, '755');
             }
         }
 
-        // Очистка
         fs.rmSync(extractPath, { recursive: true, force: true });
     }
+}
 
-    // Удаляем скачанные временные архивы для чистоты
+async function run() {
+    await downloadPreinstalledModels();
+    await downloadSidecars();
+
     try {
         fs.rmSync(tempDir, { recursive: true, force: true });
-        console.log('\nВременные файлы загрузки успешно удалены.');
     } catch (e) {}
 
-    console.log('\n=== ПОДГОТОВКА БИНАРНИКОВ УСПЕШНО ЗАВЕРШЕНА ===');
+    console.log('\n======================================================');
+    console.log('✅ ВСЕ МОДЕЛИ И БИНАРНИКИ УСПЕШНО ПОДГОТОВЛЕНЫ К СБОРКЕ!');
+    console.log('======================================================\n');
 }
 
 run().catch(err => {

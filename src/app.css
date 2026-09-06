@@ -1,2 +1,88 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+
+:root {
+  --bg: #0c0c0e;
+  --ink: #e2e2e4;
+  --accent: #5865f2;
+  --surface: #16161a;
+  --border: rgba(226, 226, 224, 0.1);
+  --ink-dim: rgba(226, 226, 224, 0.5);
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-syne {
+  font-family: 'Syne', sans-serif;
+}
+
+.font-mono, .label-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.label-mono {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--ink-dim);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.panel-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+}
+
+.info-card {
+  padding: 1.25rem;
+  background: rgba(88, 101, 242, 0.05);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+/* Custom precision range slider */
+input[type="range"] {
+  appearance: none;
+  width: 100%;
+  height: 2px;
+  background: var(--border);
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  cursor: pointer;
+  border-radius: 0;
+  transition: transform 0.1s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  cursor: pointer;
+  border-radius: 0;
+  border: none;
+}

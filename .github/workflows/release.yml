@@ -218,7 +218,15 @@ jobs:
       - name: Установка Node.js зависимостей
         run: npm ci || npm install
 
-      - name: Подготовка бинарных зависимостей (sidecars) и иконок
+      - name: Кеширование предустановленных ИИ-моделей
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/models
+          key: ai-models-v2-${{ hashFiles('scripts/download-resources.cjs') }}
+          restore-keys: |
+            ai-models-v2-
+
+      - name: Подготовка бинарных зависимостей (sidecars), моделей и иконок
         run: npm run pretauri:build
         env:
           TARGET: ${{ matrix.target }}

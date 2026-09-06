@@ -26,22 +26,23 @@ pub async fn transcribe_audio(
     let command = shell.sidecar("whisper")
         .map_err(|e| AppError::Pipeline(format!("Бинарник whisper.cpp не найден в sidecar ресурсах. Проверьте настройки tauri.conf.json и наличие файлов. Ошибка: {}", e)))?;
 
-    // Ищем модель в папке ресурсов (внутри собранного приложения)
-    let model = model_path.unwrap_or_else(|| {
-        app_handle
-            .path()
-            .resource_dir()
-            .unwrap_or_default()
-            .join("models")
-            .join("ggml-base.bin")
-    });
-    
-    if !model.exists() {
-        return Err(AppError::Pipeline(format!(
-            "Модель не найдена по пути: {}. Скачайте модель (например, ggml-base.bin) и поместите её в папку src-tauri/models/",
-            model.display()
-        )));
+    // Ищем модель в папке ресурсов или рядом с бинарником с помощью умного резолвера
+    let model = match model_path {
+        Some(p) => crate::models::resolve_model_path(&app_handle, &p.to_string_lossy()),
+        None => None,
     }
+    .or_else(|| crate::models::resolve_model_path(&app_handle, "ggml-base.bin"))
+    .or_else(|| crate::models::resolve_model_path(&app_handle, "ggml-tiny.bin"))
+    .or_else(|| crate::models::resolve_model_path(&app_handle, "models/ggml-base.bin"));
+    
+    let model = match model {
+        Some(m) if m.exists() => m,
+        _ => {
+            return Err(AppError::Pipeline(
+                "Предустановленная модель Whisper (ggml-base.bin или ggml-tiny.bin) не найдена в папке models. Пожалуйста, убедитесь, что модель установлена или загрузите её во вкладке Моделей.".to_string(),
+            ));
+        }
+    };
 
     // Генерируем пути. Ожидается, что -of <base> сгенерирует <base>.srt
     let srt_base_name = audio_path.with_extension(""); 

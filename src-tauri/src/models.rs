@@ -41,12 +41,64 @@ pub fn init_models_state() -> ModelsState {
     }
 }
 
-fn get_models_dir(app_handle: &AppHandle) -> PathBuf {
+pub fn get_models_dir(app_handle: &AppHandle) -> PathBuf {
+    // Проверяем, существует ли папка models рядом с бинарником или в ресурсах
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let portable_models = exe_dir.join("models");
+            if portable_models.exists() {
+                return portable_models;
+            }
+        }
+    }
+
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        let res_models = resource_dir.join("models");
+        if res_models.exists() {
+            return res_models;
+        }
+    }
+
+    // Если нет, используем app_data_dir или resource_dir
     app_handle
         .path()
-        .resource_dir()
-        .unwrap_or_default()
+        .app_data_dir()
+        .unwrap_or_else(|_| app_handle.path().resource_dir().unwrap_or_default())
         .join("models")
+}
+
+pub fn resolve_model_path(app_handle: &AppHandle, model_name_or_path: &str) -> Option<PathBuf> {
+    let p = PathBuf::from(model_name_or_path);
+    if p.exists() {
+        return Some(p);
+    }
+    let filename = p.file_name().and_then(|f| f.to_str()).unwrap_or(model_name_or_path);
+
+    let candidates = vec![
+        // 1. Resource dir / models / filename
+        app_handle.path().resource_dir().map(|d| d.join("models").join(filename)).ok(),
+        // 2. Resource dir / filename
+        app_handle.path().resource_dir().map(|d| d.join(filename)).ok(),
+        // 3. Executable dir / models / filename (для Portable версий)
+        std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("models").join(filename))),
+        // 4. Executable dir / filename
+        std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(filename))),
+        // 5. App Data dir / models / filename
+        app_handle.path().app_data_dir().map(|d| d.join("models").join(filename)).ok(),
+        // 6. Current working directory / models / filename
+        std::env::current_dir().map(|d| d.join("models").join(filename)).ok(),
+        // 7. Current working directory / src-tauri / models / filename (dev режим)
+        std::env::current_dir().map(|d| d.join("src-tauri").join("models").join(filename)).ok(),
+    ];
+
+    for candidate in candidates.into_iter().flatten() {
+        if candidate.exists() {
+            log::info!("Успешно найдена модель: {}", candidate.display());
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 fn get_all_models_config() -> Vec<ModelInfo> {
@@ -67,7 +119,7 @@ fn get_all_models_config() -> Vec<ModelInfo> {
             filename: "ggml-base.bin".to_string(),
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin".to_string(),
             size_mb: 148.0,
-            description: "Стандартная и быстрая модель для большинства диалогов (148 MB)".to_string(),
+            description: "Предустановленная стандартная модель для распознавания русской и мировой речи (148 MB)".to_string(),
             exists: false,
             local_path: "".to_string(),
         },
@@ -77,7 +129,7 @@ fn get_all_models_config() -> Vec<ModelInfo> {
             filename: "ggml-small.bin".to_string(),
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin".to_string(),
             size_mb: 466.0,
-            description: "Высокоточная модель для сложных условий записи (466 MB)".to_string(),
+            description: "Высокоточная модель для сложных условий записи и шумных аудио (466 MB)".to_string(),
             exists: false,
             local_path: "".to_string(),
         },
@@ -96,14 +148,12 @@ fn get_all_models_config() -> Vec<ModelInfo> {
 
 #[tauri::command]
 pub async fn get_models_status(app_handle: AppHandle) -> AppResult<Vec<ModelInfo>> {
-    let models_dir = get_models_dir(&app_handle);
     let mut configured_models = get_all_models_config();
 
     for model in &mut configured_models {
-        let path = models_dir.join(&model.filename);
-        if path.exists() {
+        if let Some(resolved_path) = resolve_model_path(&app_handle, &model.filename) {
             model.exists = true;
-            model.local_path = path.to_string_lossy().to_string();
+            model.local_path = resolved_path.to_string_lossy().to_string();
         } else {
             model.exists = false;
         }

@@ -2,11 +2,12 @@
 <script lang="ts">
   import { pipelineStore } from '../stores/pipeline';
   import { fragmentsStore } from '../stores/fragments';
-  import { Settings, Sliders, Smartphone, Cpu, ShieldAlert, ChevronDown, ChevronUp, Play } from '@lucide/svelte';
+  import { ChevronDown, ChevronUp } from '@lucide/svelte';
+
+  export let onOpenModelManager: () => void = () => {};
 
   let showAdvanced = false;
 
-  // Локальные методы мутации стора
   function handleIntensityChange(e: Event) {
     const value = parseFloat((e.target as HTMLInputElement).value);
     pipelineStore.updateConfig({ min_intensity_threshold: value });
@@ -66,243 +67,246 @@
     showAdvanced = !showAdvanced;
   }
 
-
   function startProcess() {
     pipelineStore.startPipelineProcess();
   }
 </script>
 
-<div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-5 shadow-xl backdrop-blur-md flex flex-col gap-5">
-  <div class="flex items-center justify-between border-b border-slate-850 pb-3">
-    <div class="flex items-center gap-2">
-      <Settings class="h-5 w-5 text-indigo-400" />
-      <h2 class="text-sm font-bold tracking-widest text-slate-200 uppercase font-mono">Параметры обработки</h2>
-    </div>
-    <div class="px-2 py-0.5 bg-indigo-950/40 border border-indigo-900/30 rounded text-[10px] text-indigo-300 font-mono">
-      tokio-engine v2.0
-    </div>
-  </div>
-
-  <div class="space-y-4">
-    <!-- Ползунок 1: Порог интенсивности AI -->
-    <div class="space-y-1.5">
-      <div class="flex justify-between items-center text-xs">
-        <span class="text-slate-300 font-medium flex items-center gap-1">
-          <Sliders class="h-3.5 w-3.5 text-indigo-400" />
-          Порог интенсивности эмоций (AI)
-        </span>
-        <span class="text-indigo-400 font-bold font-mono bg-slate-950 px-2 py-0.5 rounded border border-slate-850">
-          {$pipelineStore.config.min_intensity_threshold}
-        </span>
-      </div>
-      <input 
-        type="range" 
-        min="0" 
-        max="1" 
-        step="0.05" 
-        value={$pipelineStore.config.min_intensity_threshold}
-        on:input={handleIntensityChange}
-        disabled={$pipelineStore.status === 'running'}
-        class="w-full h-1.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-40"
-      />
-      <div class="flex justify-between text-[10px] text-slate-500 font-mono">
-        <span>0.0 (Все подряд)</span>
-        <span>Рекомендуется: 0.6</span>
-        <span>1.0 (Только яркие пики)</span>
-      </div>
+<div class="panel p-6 sm:p-8 flex flex-col justify-between h-full">
+  <div>
+    <!-- Panel Header -->
+    <div class="panel-title flex items-center justify-between pb-4 mb-6 border-b border-[rgba(226,226,224,0.1)]">
+      <span>Параметры обработки</span>
+      <span class="label-mono font-mono">tokio-engine v2.0</span>
     </div>
 
-    <!-- Ползунок 2: Максимальная длительность клипа -->
-    <div class="space-y-1.5">
-      <div class="flex justify-between items-center text-xs">
-        <span class="text-slate-300 font-medium flex items-center gap-1">
-          <Smartphone class="h-3.5 w-3.5 text-indigo-400" />
-          Макс. длительность клипа (с)
-        </span>
-        <span class="text-indigo-400 font-bold font-mono bg-slate-950 px-2 py-0.5 rounded border border-slate-850">
-          {$pipelineStore.config.max_clip_duration_sec} сек
-        </span>
-      </div>
-      <input 
-        type="range" 
-        min="5" 
-        max="60" 
-        step="1" 
-        value={$pipelineStore.config.max_clip_duration_sec}
-        on:input={handleDurationChange}
-        disabled={$pipelineStore.status === 'running'}
-        class="w-full h-1.5 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-indigo-500 disabled:opacity-40"
-      />
-      <div class="flex justify-between text-[10px] text-slate-500 font-mono">
-        <span>5 с (Шортсы)</span>
-        <span>До 60 сек</span>
-      </div>
-    </div>
-
-    <!-- Чекбокс Вертикальный формат -->
-    <label class="flex items-center gap-3 p-3 bg-slate-950/60 border border-slate-850 rounded-xl cursor-pointer hover:bg-slate-950 transition-colors select-none">
-      <input 
-        type="checkbox" 
-        checked={$pipelineStore.config.vertical_format}
-        on:change={handleVerticalChange}
-        disabled={$pipelineStore.status === 'running'}
-        class="hidden peer"
-      />
-      <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 peer-checked:after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600 relative flex items-center">
-      </div>
-      <div class="flex flex-col">
-        <span class="text-xs font-semibold text-slate-200">Вертикальный формат (9:16 Shorts)</span>
-        <span class="text-[10px] text-slate-500">Автоматический кроп кадра AI-фокусировкой по лицам</span>
-      </div>
-    </label>
-  </div>
-
-  <!-- Расширенные настройки -->
-  <div class="border-t border-slate-850/60 pt-2">
-    <button 
-      on:click={toggleAdvanced}
-      class="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 font-mono transition-colors focus:outline-none"
-    >
-      {#if showAdvanced}
-        <ChevronUp class="h-3.5 w-3.5 text-indigo-400" />
-        Скрыть расширенные настройки
-      {:else}
-        <ChevronDown class="h-3.5 w-3.5 text-indigo-400" />
-        Показать расширенные настройки
-      {/if}
-    </button>
-
-    {#if showAdvanced}
-      <div class="space-y-3.5 mt-4 p-4 bg-slate-950/50 border border-slate-850/60 rounded-xl">
-        <!-- Whisper ASR путь -->
-        <div class="space-y-1">
-          <label for="asr_model" class="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-wider block">Путь к модели Whisper</label>
-          <input 
-            id="asr_model"
-            type="text" 
-            value={$pipelineStore.config.asr_model_path}
-            on:input={handleAsrModelChange}
-            disabled={$pipelineStore.status === 'running'}
-            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 font-mono placeholder-slate-700 focus:border-indigo-500 focus:outline-none"
-          />
+    <!-- Controls Stack -->
+    <div class="flex flex-col gap-6">
+      
+      <!-- Control 1: Emotion Intensity -->
+      <div class="flex flex-col gap-2">
+        <div class="flex justify-between items-baseline">
+          <span class="label-mono text-[#e2e2e4]">Интенсивность эмоций</span>
+          <span class="font-mono text-[#5865f2] text-xs font-semibold">
+            {$pipelineStore.config.min_intensity_threshold}
+          </span>
         </div>
-
-        <!-- Qwen3-VL путь -->
-        <div class="space-y-1">
-          <label for="vision_model" class="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-wider block">Путь к модели Qwen3-VL (llamа)</label>
-          <input 
-            id="vision_model"
-            type="text" 
-            value={$pipelineStore.config.vision_model_path}
-            on:input={handleVisionModelChange}
-            disabled={$pipelineStore.status === 'running'}
-            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 font-mono placeholder-slate-700 focus:border-indigo-500 focus:outline-none"
-          />
+        <input 
+          type="range" 
+          min="0" 
+          max="1" 
+          step="0.05" 
+          value={$pipelineStore.config.min_intensity_threshold}
+          on:input={handleIntensityChange}
+          disabled={$pipelineStore.status === 'running'}
+        />
+        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
+          <span>0.0 (Все подряд)</span>
+          <span>1.0 (Пики)</span>
         </div>
+      </div>
 
-        <!-- NLP Text Engine -->
-        <div class="space-y-1">
-          <label for="text_engine" class="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-wider block">Движок текстового анализа</label>
-          <select 
-            id="text_engine"
-            value={$pipelineStore.config.text_engine}
-            on:change={handleTextEngineChange}
-            disabled={$pipelineStore.status === 'running'}
-            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 font-mono focus:border-indigo-500 focus:outline-none"
+      <!-- Control 2: Max Clip Duration -->
+      <div class="flex flex-col gap-2">
+        <div class="flex justify-between items-baseline">
+          <span class="label-mono text-[#e2e2e4]">Макс. длительность</span>
+          <span class="font-mono text-[#5865f2] text-xs font-semibold">
+            {$pipelineStore.config.max_clip_duration_sec} сек
+          </span>
+        </div>
+        <input 
+          type="range" 
+          min="5" 
+          max="60" 
+          step="1" 
+          value={$pipelineStore.config.max_clip_duration_sec}
+          on:input={handleDurationChange}
+          disabled={$pipelineStore.status === 'running'}
+        />
+        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
+          <span>5 с (Шортсы)</span>
+          <span>60 сек</span>
+        </div>
+      </div>
+
+      <!-- Checkbox: Vertical Format (9:16) -->
+      <label class="flex items-center gap-3.5 p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] cursor-pointer hover:border-[rgba(226,226,224,0.2)] bg-[#0c0c0e]/60 transition-colors select-none">
+        <input 
+          type="checkbox" 
+          checked={$pipelineStore.config.vertical_format}
+          on:change={handleVerticalChange}
+          disabled={$pipelineStore.status === 'running'}
+          class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
+        />
+        <div>
+          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Вертикальный формат (9:16)</div>
+          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">AI-фокусировка по лицам</div>
+        </div>
+      </label>
+
+      <!-- Mode Selector -->
+      <div class="flex flex-col gap-2">
+        <div class="label-mono">Режим обработки</div>
+        <div class="grid grid-cols-3 gap-2">
+          <button 
+            type="button"
+            on:click={() => handleModeChange('auto')}
+            class="font-mono py-2.5 px-2 border-none uppercase text-xs font-bold tracking-wider cursor-pointer transition-colors rounded-[2px] {
+              $pipelineStore.config.mode === 'auto' 
+                ? 'bg-[#5865f2] text-white' 
+                : 'bg-[rgba(226,226,224,0.1)] text-[rgba(226,226,224,0.6)] hover:text-[#e2e2e4]'
+            }"
           >
-            <option value="auto">Автоопределение</option>
-            <option value="ollama">Ollama (Server)</option>
-            <option value="llama">llama-cli (Local)</option>
-          </select>
+            Авто
+          </button>
+          <button 
+            type="button"
+            on:click={() => handleModeChange('confirm')}
+            class="font-mono py-2.5 px-2 border-none uppercase text-xs font-bold tracking-wider cursor-pointer transition-colors rounded-[2px] {
+              $pipelineStore.config.mode === 'confirm' 
+                ? 'bg-[#5865f2] text-white' 
+                : 'bg-[rgba(226,226,224,0.1)] text-[rgba(226,226,224,0.6)] hover:text-[#e2e2e4]'
+            }"
+          >
+            Подтв.
+          </button>
+          <button 
+            type="button"
+            on:click={() => handleModeChange('manual')}
+            class="font-mono py-2.5 px-2 border-none uppercase text-xs font-bold tracking-wider cursor-pointer transition-colors rounded-[2px] {
+              $pipelineStore.config.mode === 'manual' 
+                ? 'bg-[#5865f2] text-white' 
+                : 'bg-[rgba(226,226,224,0.1)] text-[rgba(226,226,224,0.6)] hover:text-[#e2e2e4]'
+            }"
+          >
+            Ручной
+          </button>
         </div>
+      </div>
 
-        <!-- NLP Model path or name -->
-        <div class="space-y-1">
-          <label for="text_model" class="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-wider block">Модель текста (имя или путь GGUF)</label>
-          <input 
-            id="text_model"
-            type="text" 
-            value={$pipelineStore.config.text_model_name}
-            on:input={handleTextModelChange}
-            disabled={$pipelineStore.status === 'running'}
-            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 font-mono placeholder-slate-700 focus:border-indigo-500 focus:outline-none"
-          />
-        </div>
+    </div>
 
-        {#if $pipelineStore.config.text_engine === 'ollama' || $pipelineStore.config.text_engine === 'auto'}
-        <div class="space-y-1">
-          <label for="ollama_url" class="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-wider block">URL Ollama API</label>
-          <input 
-            id="ollama_url"
-            type="text" 
-            value={$pipelineStore.config.ollama_url}
-            on:input={handleOllamaUrlChange}
-            disabled={$pipelineStore.status === 'running'}
-            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 font-mono placeholder-slate-700 focus:border-indigo-500 focus:outline-none"
-          />
-        </div>
+    <!-- Advanced Settings Drawer -->
+    <div class="mt-4 pt-4 border-t border-[rgba(226,226,224,0.1)]">
+      <button 
+        type="button"
+        on:click={toggleAdvanced}
+        class="label-mono flex items-center justify-between w-full text-left cursor-pointer hover:text-[#e2e2e4] transition-colors"
+      >
+        <span>Расширенные настройки нейросетей</span>
+        {#if showAdvanced}
+          <ChevronUp class="h-3.5 w-3.5 text-[#5865f2]" />
+        {:else}
+          <ChevronDown class="h-3.5 w-3.5 text-[#5865f2]" />
         {/if}
+      </button>
 
-        <!-- Директория экспорта -->
-        <div class="space-y-1">
-          <label for="output_dir" class="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-wider block">Директория экспорта клипов</label>
-          <input 
-            id="output_dir"
-            type="text" 
-            value={$pipelineStore.config.output_dir}
-            on:input={handleOutputDirChange}
-            disabled={$pipelineStore.status === 'running'}
-            class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300 font-mono placeholder-slate-700 focus:border-indigo-500 focus:outline-none"
-          />
+      {#if showAdvanced}
+        <div class="mt-3.5 p-4 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <span class="label-mono text-[#5865f2]">Менеджер весов</span>
+            <button 
+              type="button"
+              on:click={onOpenModelManager}
+              class="label-mono text-[#5865f2] hover:underline cursor-pointer"
+            >
+              [ОТКРЫТЬ МЕНЕДЖЕР МОДЕЛЕЙ]
+            </button>
+          </div>
+
+          <!-- ASR model -->
+          <div class="flex flex-col gap-1">
+            <label for="asr_model" class="label-mono">Путь к модели Whisper</label>
+            <input 
+              id="asr_model"
+              type="text" 
+              value={$pipelineStore.config.asr_model_path}
+              on:input={handleAsrModelChange}
+              disabled={$pipelineStore.status === 'running'}
+              class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+            />
+          </div>
+
+          <!-- Vision model -->
+          <div class="flex flex-col gap-1">
+            <label for="vision_model" class="label-mono">Путь к модели Qwen-VL (llama)</label>
+            <input 
+              id="vision_model"
+              type="text" 
+              value={$pipelineStore.config.vision_model_path}
+              on:input={handleVisionModelChange}
+              disabled={$pipelineStore.status === 'running'}
+              class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+            />
+          </div>
+
+          <!-- NLP Text Engine -->
+          <div class="flex flex-col gap-1">
+            <label for="text_engine" class="label-mono">Движок текстового анализа</label>
+            <select 
+              id="text_engine"
+              value={$pipelineStore.config.text_engine}
+              on:change={handleTextEngineChange}
+              disabled={$pipelineStore.status === 'running'}
+              class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+            >
+              <option value="auto">Автоопределение</option>
+              <option value="ollama">Ollama (Server)</option>
+              <option value="llama">llama-cli (Local)</option>
+            </select>
+          </div>
+
+          <!-- NLP Model -->
+          <div class="flex flex-col gap-1">
+            <label for="text_model" class="label-mono">Имя модели текста</label>
+            <input 
+              id="text_model"
+              type="text" 
+              value={$pipelineStore.config.text_model_name}
+              on:input={handleTextModelChange}
+              disabled={$pipelineStore.status === 'running'}
+              class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+            />
+          </div>
+
+          <!-- Output dir -->
+          <div class="flex flex-col gap-1">
+            <label for="output_dir" class="label-mono">Папка сохранения</label>
+            <input 
+              id="output_dir"
+              type="text" 
+              value={$pipelineStore.config.output_dir}
+              on:input={handleOutputDirChange}
+              disabled={$pipelineStore.status === 'running'}
+              class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+            />
+          </div>
         </div>
-      </div>
-    {/if}
-
-    <!-- Режим работы -->
-    <div class="space-y-2 mt-4 pt-4 border-t border-slate-800">
-      <span class="text-[10px] font-bold font-mono text-slate-400 uppercase tracking-wider block">Режим обработки</span>
-      <div class="grid grid-cols-3 gap-2">
-        <label class="flex flex-col items-center justify-center p-3 rounded-xl border cursor-pointer transition-colors {$pipelineStore.config.mode === 'auto' ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'}">
-          <input type="radio" name="mode" value="auto" class="hidden" checked={$pipelineStore.config.mode === 'auto'} on:change={() => handleModeChange('auto')}>
-          <span class="text-xs font-semibold">Автоматический</span>
-        </label>
-        <label class="flex flex-col items-center justify-center p-3 rounded-xl border cursor-pointer transition-colors {$pipelineStore.config.mode === 'confirm' ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'}">
-          <input type="radio" name="mode" value="confirm" class="hidden" checked={$pipelineStore.config.mode === 'confirm'} on:change={() => handleModeChange('confirm')}>
-          <span class="text-xs font-semibold text-center leading-tight">С подтверждением</span>
-        </label>
-        <label class="flex flex-col items-center justify-center p-3 rounded-xl border cursor-pointer transition-colors {$pipelineStore.config.mode === 'manual' ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'}">
-          <input type="radio" name="mode" value="manual" class="hidden" checked={$pipelineStore.config.mode === 'manual'} on:change={() => handleModeChange('manual')}>
-          <span class="text-xs font-semibold">Ручной</span>
-        </label>
-      </div>
+      {/if}
     </div>
   </div>
 
-  <div class="flex flex-col gap-2 mt-2">
-    <!-- Кнопка запуска -->
+  <!-- Action Buttons Stack (Variation 2 Design) -->
+  <div class="mt-6 flex flex-col gap-3">
     <button 
       on:click={startProcess}
       disabled={!$pipelineStore.video || $pipelineStore.status === 'running' || $pipelineStore.config.mode === 'manual'}
-      class="w-full cursor-pointer bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-500 hover:to-indigo-600 active:from-indigo-700 disabled:from-slate-800 disabled:to-slate-850 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+      class="font-mono p-4 border-none uppercase text-xs font-bold tracking-[0.1em] cursor-pointer transition-opacity rounded-[2px] bg-[#5865f2] text-white disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
       {#if $pipelineStore.status === 'running'}
-        <div class="h-4 w-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
-        <span>ОБРАБОТКА...</span>
-      {:else if $pipelineStore.config.mode === 'manual'}
-        <Play class="h-4.5 w-4.5" />
-        <span class="tracking-wide text-xs">ИИ-АНАЛИЗ ОТКЛЮЧЕН</span>
+        <div class="h-3.5 w-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
+        <span>Идет обработка...</span>
       {:else}
-        <Play class="h-4.5 w-4.5" />
-        <span class="tracking-wide text-xs">ЗАПУСТИТЬ ИИ-АНАЛИЗ</span>
+        <span>Запустить ИИ-анализ</span>
       {/if}
     </button>
 
     <button 
       on:click={exportClips}
       disabled={!$pipelineStore.video || $pipelineStore.status === 'running' || ($pipelineStore.config.mode === 'auto' && $pipelineStore.status !== 'completed')}
-      class="w-full cursor-pointer bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed text-white font-semibold py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+      class="font-mono p-4 border-none uppercase text-xs font-bold tracking-[0.1em] cursor-pointer transition-opacity rounded-[2px] bg-[#23c55e] text-white disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
-      <span class="tracking-wide text-xs">ЭКСПОРТИРОВАТЬ КЛИПЫ</span>
+      <span>Экспортировать клипы</span>
     </button>
   </div>
 </div>
