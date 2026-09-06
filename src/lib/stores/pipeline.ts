@@ -19,6 +19,7 @@ export interface SelectedVideo {
   path: string;
   size: number;
   duration?: number;
+  objectUrl?: string;
 }
 
 export interface StageDetails {
@@ -46,8 +47,8 @@ const DEFAULT_CONFIG: PipelineConfig = {
   vertical_format: true,
   asr_model_path: 'models/ggml-base.bin',
   vision_model_path: 'models/qwen-vl-2b.gguf',
-  text_engine: 'auto',
-  text_model_name: 'qwen2.5:1.5b',
+  text_engine: 'builtin',
+  text_model_name: 'qwen-1.5b-chat.gguf',
   ollama_url: 'http://localhost:11434',
   output_dir: 'output_cuts/',
   subtitle_style: {
@@ -267,47 +268,62 @@ const createPipelineStore = () => {
       update(s => ({
         ...s,
         status: 'running',
-        currentStage: 'Инициализация и запуск конвейера экспорта...',
-        percentage: 0,
+        currentStage: 'Инициализация ручного экспорта Reels (9:16 + Whisper)...',
+        percentage: 5,
         error: null,
         clips: []
       }));
-      addLog('Запуск ручной/подтвержденной нарезки клипов...');
+      addLog(`Запуск ручного экспорта ${fragments.length} клипов в формате 9:16 с субтитрами Whisper...`);
 
       if (!isTauri) {
+        // Этап 1: Извлечение аудио
         update(s => ({
           ...s,
-          status: 'running',
-          currentStage: 'Экспорт и рендеринг клипов (BMF Engine)',
-          percentage: 85,
-          stageDetails: { ...s.stageDetails, renderer: { percent: 0, stage: 'Инициализация кодеков' } }
+          currentStage: 'Извлечение аудиодорожки (FFmpeg)...',
+          percentage: 20,
+          stageDetails: { ...s.stageDetails, ffmpeg: { currentTime: 60, duration: 180, percent: 100 } }
         }));
-        addLog('Запуск Babit Multimedia Framework (BMF) для экспорта нарезки...');
+        addLog('FFmpeg: Аудио успешно извлечено в WAV 16kHz mono');
+        await new Promise(resolve => setTimeout(resolve, 600));
 
-        // Симуляция рендеринга
+        // Этап 2: Транскрипция Whisper для субтитров
+        update(s => ({
+          ...s,
+          currentStage: 'Whisper ASR: распознавание речи и создание субтитров...',
+          percentage: 45,
+          stageDetails: { ...s.stageDetails, whisper: { percent: 100, stage: 'Генерация SRT субтитров' } }
+        }));
+        addLog('Whisper: Субтитры успешно сформированы для выделенных диапазонов');
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        // Этап 3: Нарезка и 9:16 кроппинг каждого клипа
         const count = fragments.length || 1;
         for (let clipNo = 1; clipNo <= count; clipNo++) {
-          await new Promise(resolve => setTimeout(resolve, 800));
-          const clipPct = Math.round((clipNo / count) * 100);
+          const frag = fragments[clipNo - 1] || { start: 0, end: 15 };
+          const dur = (frag.end - frag.start).toFixed(1);
           update(s => ({
             ...s,
-            percentage: 85 + Math.floor((clipPct / 100) * 14),
-            stageDetails: { ...s.stageDetails, renderer: { percent: clipPct, stage: `Генерация клипа ${clipNo}/${count}` } }
+            currentStage: `Рендеринг Reels ${clipNo} из ${count} (9:16 Vertical + Субтитры)...`,
+            percentage: 50 + Math.floor((clipNo / count) * 45),
+            stageDetails: { ...s.stageDetails, renderer: { percent: Math.round((clipNo / count) * 100), stage: `Клип #${clipNo} (${dur}с)` } }
           }));
-          addLog(`BMF: Успешно экспортирован клип ${clipNo} из ${count}`);
+          addLog(`FFmpeg: Кадрирование 9:16 [crop=ih*(9/16):ih,scale=1080:1920] и вшивание субтитров для клипа #${clipNo}`);
+          await new Promise(resolve => setTimeout(resolve, 700));
         }
 
-        await new Promise(resolve => setTimeout(resolve, 800));
-        const generatedClips = Array.from({ length: count }, (_, i) => `${config.output_dir || 'output_cuts/'}clip_00${i+1}_export.mp4`);
+        const baseDir = config.output_dir || 'output_reels/';
+        const generatedClips = fragments.map((f, i) => 
+          `${baseDir}reels_clip_${i + 1}_from_${Math.round(f.start)}s_to_${Math.round(f.end)}s_9x16.mp4`
+        );
 
         update(s => ({
           ...s,
           status: 'completed',
-          currentStage: 'Экспорт успешно завершен!',
+          currentStage: 'Экспорт всех Reels успешно завершен!',
           percentage: 100,
           clips: generatedClips
         }));
-        addLog(`Пайплайн успешно отработал! Сгенерировано клипов: ${generatedClips.length}`);
+        addLog(`Экспорт завершен! Готово ${generatedClips.length} клипов в формате 9:16 с субтитрами Whisper.`);
         return generatedClips;
       }
 
@@ -332,7 +348,7 @@ const createPipelineStore = () => {
         const unlistenWhisper = await onWhisperProgress((payload) => {
           update(s => ({
             ...s,
-            currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание'}`,
+            currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание речи'}`,
             percentage: 30 + Math.round(payload.percent * 0.3),
             stageDetails: {
               ...s.stageDetails,
@@ -348,7 +364,7 @@ const createPipelineStore = () => {
         const unlistenRender = await onRenderProgress((payload) => {
           update(s => ({
             ...s,
-            currentStage: `Рендеринг BMF: ${payload.stage}`,
+            currentStage: `Рендеринг Reels 9:16: ${payload.stage}`,
             percentage: 60 + Math.round(payload.percent * 0.4),
             stageDetails: {
               ...s.stageDetails,
@@ -358,7 +374,7 @@ const createPipelineStore = () => {
               }
             }
           }));
-          addLog(`BMF Рендеринг: ${payload.stage} - ${Math.round(payload.percent)}%`);
+          addLog(`Рендеринг: ${payload.stage} - ${Math.round(payload.percent)}%`);
         });
 
         const unlistenPipeline = await onPipelineProgress((payload) => {
@@ -374,7 +390,7 @@ const createPipelineStore = () => {
         const clipPaths = await renderClipsFromFragments(
           videoPath,
           formattedFragments,
-          config
+          { ...config, vertical_format: true }
         );
 
         unlistenFfmpeg();
@@ -385,11 +401,11 @@ const createPipelineStore = () => {
         update(s => ({
           ...s,
           status: 'completed',
-          currentStage: 'Успешно экспортировано!',
+          currentStage: 'Экспорт Reels успешно завершен!',
           percentage: 100,
           clips: clipPaths
         }));
-        addLog(`Экспорт успешно завершен! Сгенерировано клипов: ${clipPaths.length}`);
+        addLog(`Экспорт успешно завершен! Сгенерировано Reels: ${clipPaths.length}`);
         return clipPaths;
 
       } catch (err: any) {

@@ -20,13 +20,26 @@
     const files = target.files;
     if (files && files.length > 0) {
       const file = files[0];
+      const objectUrl = URL.createObjectURL(file);
       pipelineStore.setVideo({
         name: file.name,
-        path: file.webkitRelativePath || `/local/user/videos/${file.name}`,
+        path: (file as any).path || file.webkitRelativePath || `/local/user/videos/${file.name}`,
         size: file.size,
-        duration: 180
+        duration: 180,
+        objectUrl
       });
     }
+  }
+
+  function loadDemoVideo() {
+    // Демо-видео для быстрого тестирования разметки Reels в веб-окружении
+    pipelineStore.setVideo({
+      name: 'demo_interview_podcast.mp4',
+      path: '/demo_videos/demo_interview_podcast.mp4',
+      size: 142000000,
+      duration: 180,
+      objectUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
+    });
   }
 
   async function chooseVideoTauri() {
@@ -76,11 +89,13 @@
     if (files && files.length > 0) {
       const file = files[0];
       if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm)$/i.test(file.name)) {
+        const objectUrl = URL.createObjectURL(file);
         pipelineStore.setVideo({
           name: file.name,
-          path: file.webkitRelativePath || `/drag-drop/videos/${file.name}`,
+          path: (file as any).path || file.webkitRelativePath || `/drag-drop/videos/${file.name}`,
           size: file.size,
-          duration: 180
+          duration: 180,
+          objectUrl
         });
       } else {
         pipelineStore.updateError('Пожалуйста, перетащите видеофайл проверенных форматов (MP4, MKV, MOV)');
@@ -132,9 +147,18 @@
         </svg>
       </div>
       <h2 class="text-base font-semibold tracking-tight text-[#e2e2e4] mb-1.5 uppercase font-syne">ПЕРЕТАЩИТЕ ВИДЕО СЮДА</h2>
-      <p class="text-xs text-[rgba(226,226,224,0.5)] max-w-[280px] leading-relaxed">
+      <p class="text-xs text-[rgba(226,226,224,0.5)] max-w-[280px] leading-relaxed mb-4">
         Поддерживаются MP4, MOV, MKV, AVI, WEBM. Обработка локально.
       </p>
+
+      <button
+        type="button"
+        on:click|stopPropagation={loadDemoVideo}
+        class="label-mono px-3 py-1.5 bg-[#1e1e24] hover:bg-[#5865f2]/20 border border-[rgba(226,226,224,0.15)] hover:border-[#5865f2] rounded text-[#e2e2e4] text-xs transition-colors flex items-center gap-1.5"
+      >
+        <span>🎬</span>
+        <span>Загрузить тестовое видео для разметки</span>
+      </button>
     </div>
   {:else}
     <!-- Selected video card -->

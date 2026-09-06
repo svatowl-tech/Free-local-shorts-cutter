@@ -179,21 +179,37 @@ pub async fn render_clips_from_fragments(
         cancel_rx.resubscribe()
     ).await?;
 
-    // 2. Распознавание речи
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 40.0, stage: "ASR: транскрипция...".to_string() });
+    // 2. Распознавание речи через Whisper (субтитры для Reels)
+    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
+        percent: 40.0, 
+        stage: "ASR: распознавание речи и титров (Whisper)...".to_string() 
+    });
     let asr_model = config.asr_model_path.clone().map(PathBuf::from);
-    let srt_path = crate::whisper::transcribe_audio(
+    let srt_path = match crate::whisper::transcribe_audio(
         audio_output.clone(),
         asr_model,
         app.clone(),
         cancel_rx.resubscribe()
-    ).await?;
+    ).await {
+        Ok(path) => {
+            log::info!("Whisper субтитры успешно созданы: {:?}", path);
+            Some(path)
+        },
+        Err(e) => {
+            log::warn!("Whisper ASR завершился с предупреждением: {}. Рендеринг продолжится.", e);
+            None
+        }
+    };
 
-    // 3. Рендеринг клипов
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 70.0, stage: "Подготовка к рендерингу...".to_string() });
+    // 3. Рендеринг клипов в 9:16 с наложением субтитров
+    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
+        percent: 70.0, 
+        stage: "Подготовка к нарезке Reels (9:16 + Субтитры)...".to_string() 
+    });
 
+    // Для Reels всегда активируем вертикальный формат 9:16
     let render_config = crate::render::RenderConfig {
-        vertical_format: config.vertical_format,
+        vertical_format: true,
         subtitle_style: config.subtitle_style.clone(),
         hw_accel: true,
     };
@@ -208,24 +224,24 @@ pub async fn render_clips_from_fragments(
     let total_fragments = fragments.len();
 
     for (i, frag) in fragments.iter().enumerate() {
-        let pct = 70.0 + (i as f64 / total_fragments as f64) * 25.0;
+        let pct = 70.0 + ((i as f64 + 1.0) / total_fragments as f64) * 28.0;
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
             percent: pct, 
-            stage: format!("Рендеринг клипа {} из {}...", i + 1, total_fragments) 
+            stage: format!("Рендеринг Reels {} из {} (9:16)...", i + 1, total_fragments) 
         });
 
         let start_sec = frag.start;
-        let duration = frag.end - frag.start;
+        let duration = (frag.end - frag.start).max(0.5);
 
         let mut clip_path = base_out_dir.clone();
-        clip_path.push(format!("{}_clip_manual_{}_start_{}s.mp4", file_stem, i, start_sec as u32));
+        clip_path.push(format!("{}_reels_{}_start_{}s.mp4", file_stem, i + 1, start_sec as u32));
 
         crate::render::render_clip(
             video_buf.clone(),
             start_sec,
             duration,
             clip_path.clone(),
-            Some(srt_path.clone()),
+            srt_path.clone(),
             render_config.clone(),
             app.clone(),
             cancel_rx.resubscribe()
@@ -237,7 +253,10 @@ pub async fn render_clips_from_fragments(
     // Очистка временного аудио
     let _ = tokio::fs::remove_file(&audio_output).await;
 
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 100.0, stage: "Рендеринг завершен".to_string() });
+    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
+        percent: 100.0, 
+        stage: "Экспорт всех Reels успешно завершен!".to_string() 
+    });
 
     Ok(generated_clips)
 }

@@ -4,7 +4,14 @@
 
 [![Release](https://img.shields.io/github/v/release/OWNER/REPO?label=Версия&color=blue)](https://github.com/OWNER/REPO/releases)
 [![Build Status](https://img.shields.io/github/actions/workflow/status/OWNER/REPO/release.yml?branch=main&label=Сборка%20всех%20платформ)](https://github.com/OWNER/REPO/actions)
+[![Status](https://img.shields.io/badge/Статус-В%20активной%20разработке%20(WIP)-orange.svg)](https://github.com/OWNER/REPO)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+> [!WARNING]
+> **Внимание: Проект находится в стадии активной разработки (WIP / Beta)!**
+> 
+> Приложение активно дорабатывается и тестируется. Вы можете столкнуться с ошибками, недоработками, временной нестабильностью некоторых функций или изменением интерфейса.
+> Если вы обнаружили баг или у вас есть предложение по улучшению — пожалуйста, создайте [Issue](https://github.com/OWNER/REPO/issues) в репозитории. Обратная связь очень важна!
 
 ---
 

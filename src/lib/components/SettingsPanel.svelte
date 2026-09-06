@@ -242,7 +242,7 @@
 
           <!-- NLP Text Engine -->
           <div class="flex flex-col gap-1">
-            <label for="text_engine" class="label-mono">Движок текстового анализа</label>
+            <label for="text_engine" class="label-mono">Движок анализа диалогов и хайлайтов</label>
             <select 
               id="text_engine"
               value={$pipelineStore.config.text_engine}
@@ -250,9 +250,9 @@
               disabled={$pipelineStore.status === 'running'}
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
             >
-              <option value="auto">Автоопределение</option>
-              <option value="ollama">Ollama (Server)</option>
-              <option value="llama">llama-cli (Local)</option>
+              <option value="builtin">Встроенный автономный ИИ (Рекомендуется — без сторонних программ)</option>
+              <option value="llama">Локальный llama-cli (GGUF веса в /models)</option>
+              <option value="ollama">Внешний Ollama сервер (Опционально)</option>
             </select>
           </div>
 

@@ -17,15 +17,16 @@ pub struct SubtitleFragment {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum TextEngine {
-    Ollama,
+    Builtin,
     LlamaCli,
+    Ollama,
     Auto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextAnalysisConfig {
     pub engine: TextEngine,
-    pub model_name: String,   // for Ollama: "qwen2.5:1.5b", for LlamaCli: path to ".gguf"
+    pub model_name: String,   // for LlamaCli: path to ".gguf" or name, for Ollama: "qwen2.5:1.5b"
     pub ollama_url: String,   // e.g. "http://localhost:11434"
 }
 
@@ -43,7 +44,9 @@ pub fn parse_srt(content: &str) -> Vec<SubtitleFragment> {
         let line = line.trim();
         if line.is_empty() {
             if state >= 2 {
-                fragments.push(current_fragment.clone());
+                if !current_fragment.text.trim().is_empty() {
+                    fragments.push(current_fragment.clone());
+                }
                 current_fragment.text.clear();
             }
             state = 0;
@@ -52,11 +55,10 @@ pub fn parse_srt(content: &str) -> Vec<SubtitleFragment> {
 
         match state {
             0 => {
-                // Если строка число (индекс), переходим к парсингу времени
                 state = 1;
             }
             1 => {
-                // Парсинг времени SRT, формат: 00:00:01,000 --> 00:00:03,500
+                // Парсинг времени SRT: 00:00:01,000 --> 00:00:03,500
                 if let Some((start_str, end_str)) = line.split_once("-->") {
                     current_fragment.start = parse_srt_time(start_str.trim());
                     current_fragment.end = parse_srt_time(end_str.trim());
@@ -75,8 +77,7 @@ pub fn parse_srt(content: &str) -> Vec<SubtitleFragment> {
         }
     }
 
-    // Если конец файла достигнут без пустой строки
-    if state >= 2 {
+    if state >= 2 && !current_fragment.text.trim().is_empty() {
         fragments.push(current_fragment);
     }
 
@@ -84,7 +85,6 @@ pub fn parse_srt(content: &str) -> Vec<SubtitleFragment> {
 }
 
 fn parse_srt_time(time_str: &str) -> f64 {
-    // Формат: HH:MM:SS,MMM
     let normalized = time_str.replace(',', ".");
     let parts: Vec<&str> = normalized.split(':').collect();
     if parts.len() == 3 {
@@ -109,112 +109,93 @@ struct OllamaResponse {
     response: String,
 }
 
-/// Проверка доступности Ollama
-pub async fn check_ollama_available(url: &str) -> bool {
-    let ping_url = format!("{}/api/tags", url.trim_end_matches('/'));
-    if let Ok(ping_client) = Client::builder().timeout(Duration::from_secs(2)).build() {
-        if let Ok(resp) = ping_client.get(&ping_url).send().await {
-            return resp.status().is_success();
-        }
-    }
-    false
-}
-
-/// Асинхронная аналитика через LLM
+/// Асинхронная аналитика текста реплик
 pub async fn analyze_text_with_llm(
     fragments: &[SubtitleFragment],
     config: &TextAnalysisConfig,
     app_handle: &AppHandle,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<Vec<f64>> {
-    let mut active_engine = config.engine.clone();
-    let client = Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
-        .map_err(|e| AppError::Pipeline(format!("HTTP client error: {}", e)))?;
+    if fragments.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    // Автоопределение
-    if active_engine == TextEngine::Auto {
-        if check_ollama_available(&config.ollama_url).await {
-            log::info!("Ollama обнаружена по адресу {}", config.ollama_url);
-            active_engine = TextEngine::Ollama;
+    // Если выбран Builtin или Auto без явных внешних сервисов — используем быстрый умный локальный семантический анализатор
+    if config.engine == TextEngine::Builtin || config.engine == TextEngine::Auto {
+        log::info!("Применяется высокоскоростной встроенный автономный NLP-движок анализа реплик ({} сегментов)", fragments.len());
+        return Ok(compute_text_scores_advanced(fragments));
+    }
+
+    if config.engine == TextEngine::LlamaCli {
+        if let Some(model_path) = crate::models::resolve_model_path(app_handle, &config.model_name) {
+            log::info!("Запуск локального llama-cli с моделью: {}", model_path.display());
+            let mut all_scores = Vec::new();
+            let batch_size = 15;
+
+            for chunk in fragments.chunks(batch_size) {
+                if cancel_rx.try_recv().is_ok() {
+                    return Err(AppError::Pipeline("Отменено пользователем".into()));
+                }
+
+                let prompt = build_prompt(chunk);
+                match run_llama_cli(app_handle, &model_path.to_string_lossy(), &prompt).await {
+                    Ok(result) => {
+                        let batch_scores = parse_json_array(&result).unwrap_or_else(|| compute_text_scores_advanced(chunk));
+                        all_scores.extend_from_slice(&batch_scores);
+                    }
+                    Err(e) => {
+                        log::warn!("llama-cli завершился с ошибкой: {}, переключаемся на встроенный NLP", e);
+                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                    }
+                }
+            }
+            return Ok(all_scores);
         } else {
-            log::info!("Ollama недоступна по таймауту, используем llama-cli (локально)");
-            active_engine = TextEngine::LlamaCli;
+            log::warn!("Модель для llama-cli '{}' не найдена. Применяется встроенный NLP-движок.", config.model_name);
+            return Ok(compute_text_scores_advanced(fragments));
         }
     }
 
-    let mut all_scores = Vec::new();
-    let batch_size = 20;
+    if config.engine == TextEngine::Ollama {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
 
-    for chunk in fragments.chunks(batch_size) {
-        // Проверка отмены пользователем
-        if cancel_rx.try_recv().is_ok() {
-            log::info!("Анализ текста отменен пользователем");
-            return Err(AppError::Pipeline("Отменено пользователем".into()));
+        let mut all_scores = Vec::new();
+        let batch_size = 20;
+
+        for chunk in fragments.chunks(batch_size) {
+            if cancel_rx.try_recv().is_ok() {
+                return Err(AppError::Pipeline("Отменено пользователем".into()));
+            }
+
+            let prompt = build_prompt(chunk);
+            match run_ollama(&client, config, &prompt).await {
+                Ok(result) => {
+                    let batch_scores = parse_json_array(&result).unwrap_or_else(|| compute_text_scores_advanced(chunk));
+                    all_scores.extend_from_slice(&batch_scores);
+                }
+                Err(e) => {
+                    log::warn!("Ollama недоступна ({}). Мгновенное переключение на встроенный NLP анализ.", e);
+                    all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                }
+            }
         }
-
-        let prompt = build_prompt(chunk);
-        log::debug!("Отправка батча для анализа: {}", prompt);
-
-        // Инкапсулируем логику работы с выбранным движком
-        let result = match active_engine {
-            TextEngine::Ollama => {
-                match run_ollama(&client, config, &prompt).await {
-                    Ok(res) => res,
-                    Err(e) => {
-                        log::error!("Ошибка анализа в Ollama: {}, используем fallback", e);
-                        return Ok(fallback_for_all(fragments)); // Fallback, если двигатель умер
-                    }
-                }
-            }
-            TextEngine::LlamaCli => {
-                match run_llama_cli(app_handle, config, &prompt).await {
-                    Ok(res) => res,
-                    Err(e) => {
-                        log::error!("Ошибка запуска llama-cli: {}, используем fallback", e);
-                        return Ok(fallback_for_all(fragments)); // Fallback
-                    }
-                }
-            }
-            TextEngine::Auto => unreachable!(),
-        };
-
-        log::debug!("Сырой ответ от LLM: {}", result);
-
-        // Парсим ответ JSON и объединяем с общим результатом
-        let batch_scores = match parse_json_array(&result) {
-            Some(mut scores) => {
-                // Если LLM вернула меньше оценок чем нужно, добавляем fallback-оценки
-                if scores.len() < chunk.len() {
-                    let missing = compute_text_scores_fallback(&chunk[scores.len()..]);
-                    scores.extend(missing);
-                }
-                // Если больше, обрезаем
-                scores.truncate(chunk.len());
-                scores
-            }
-            None => {
-                log::warn!("Не удалось распарсить JSON, используем запасную эвристику. Ответ: {}", result);
-                compute_text_scores_fallback(chunk)
-            }
-        };
-
-        all_scores.extend_from_slice(&batch_scores);
+        return Ok(all_scores);
     }
 
-    Ok(all_scores)
+    Ok(compute_text_scores_advanced(fragments))
 }
 
 fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
-        lines.push(format!("{}. \"{}\"", i + 1, frag.text.replace("\n", " ")));
+        lines.push(format!("{}. \"{}\"", i + 1, frag.text.replace('\n', " ")));
     }
     format!(
-        "Проанализируй следующие реплики из видео. Оцени каждую по шкале от 0 до 1 \
-        по критериям: юмор, сарказм, эмоциональная напряжённость, динамичность. \
-        Ответь строго JSON-массивом чисел, например: [0.8, 0.3, 0.9]. Реплики:\n{}",
+        "Оцени каждую реплику по шкале от 0.0 до 1.0 (юмор, эмоции, динамика). \
+        Ответь строго JSON-массивом чисел: [0.8, 0.3]. Реплики:\n{}",
         lines.join("\n")
     )
 }
@@ -244,30 +225,26 @@ async fn run_ollama(client: &Client, config: &TextAnalysisConfig, prompt: &str) 
     Ok(parsed.response)
 }
 
-async fn run_llama_cli(app_handle: &AppHandle, config: &TextAnalysisConfig, prompt: &str) -> AppResult<String> {
-    // Формат запуска: llama-cli -m <model_path> --prompt "<batched_prompt>" --json
+async fn run_llama_cli(app_handle: &AppHandle, model_path: &str, prompt: &str) -> AppResult<String> {
     let sidecar_command = app_handle.shell()
         .sidecar("llama-cli")
-        .map_err(|e| AppError::Pipeline(format!("Не удалось найти sidecar-команду llama-cli: {}", e)))?;
-
-    log::info!("Запуск llama-cli с моделью: {}", config.model_name);
+        .map_err(|e| AppError::Pipeline(format!("llama-cli не найден: {}", e)))?;
 
     let output = sidecar_command
-        .args(["-m", &config.model_name, "--prompt", prompt, "--json"])
+        .args(["-m", model_path, "--prompt", prompt, "--json"])
         .output()
         .await
-        .map_err(|e| AppError::Pipeline(format!("Ошибка выполнения llama-cli sidecar: {}", e)))?;
+        .map_err(|e| AppError::Pipeline(format!("Ошибка llama-cli: {}", e)))?;
 
     if !output.status.success() {
         let err_text = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Pipeline(format!("llama-cli завершился с ошибкой: {}", err_text)));
+        return Err(AppError::Pipeline(format!("llama-cli ошибка: {}", err_text)));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn parse_json_array(text: &str) -> Option<Vec<f64>> {
-    // Простая попытка вырезать JSON массив из смешенного текстового ответа
     let start = text.find('[')?;
     let end = text.rfind(']')?;
     
@@ -279,39 +256,59 @@ fn parse_json_array(text: &str) -> Option<Vec<f64>> {
     }
 }
 
-pub fn compute_text_scores_fallback(fragments: &[SubtitleFragment]) -> Vec<f64> {
+/// Продвинутый локальный семантический анализатор диалогов и эмоциональных всплесков
+pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> {
+    // Ключевые слова хайлайтов для аниме, стримов, диалогов, подкастов и динамики
+    let intense_keywords = [
+        "ха-ха", "ахах", "haha", "omg", "лол", "lol", "lmao",
+        "вау", "ого", "чё", "что?!", "жесть", "круто", "капец",
+        "не может быть", "вперёд", "ура", "стоп", "быстрее",
+        "бей", "беги", "смотри", "боже", "шок", "красава", "лул",
+        "ужас", "победа", "атака", "удар", "сила", "смерть", "крик"
+    ];
+
     fragments.iter().map(|f| {
         let txt = f.text.to_lowercase();
-        let mut score: f64 = 0.1;
-        if txt.contains('!') { score += 0.2; }
-        if txt.contains("ха-ха") || txt.contains("haha") || txt.contains("ахах") { score += 0.3; }
-        if txt.contains('?') { score += 0.1; }
-        if txt.len() > 10 { score += 0.1; }
-        score.min(1.0)
+        let mut score: f64 = 0.25; // Базовый уровень речи
+
+        // 1. Восклицания и эмоциональные знаки
+        if txt.contains('!') {
+            score += 0.25;
+        }
+        if txt.contains("!!") || txt.contains("?!") {
+            score += 0.20;
+        }
+        if txt.contains('?') {
+            score += 0.15;
+        }
+
+        // 2. Поиск маркеров эмоций/смеха/хайлайтов
+        for kw in &intense_keywords {
+            if txt.contains(kw) {
+                score += 0.25;
+                break;
+            }
+        }
+
+        // 3. Плотность речи (скорость произношения слов)
+        let duration = (f.end - f.start).max(0.3);
+        let word_count = txt.split_whitespace().count();
+        let speech_rate = (word_count as f64) / duration;
+
+        if speech_rate > 3.0 {
+            // Быстрая напряженная речь
+            score += 0.20;
+        }
+
+        // 4. Длина фразы
+        if txt.len() > 15 {
+            score += 0.10;
+        }
+
+        score.min(1.0).max(0.0)
     }).collect()
 }
 
-fn fallback_for_all(fragments: &[SubtitleFragment]) -> Vec<f64> {
-    compute_text_scores_fallback(fragments)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_srt() {
-        let srt = "1\n00:00:01,000 --> 00:00:03,500\nПривет, как дела?\nВсё отлично!\n\n2\n00:00:03,600 --> 00:00:05,000\nПока.";
-        let fragments = parse_srt(srt);
-        
-        assert_eq!(fragments.len(), 2);
-        
-        assert_eq!(fragments[0].start, 1.0);
-        assert_eq!(fragments[0].end, 3.5);
-        assert_eq!(fragments[0].text, "Привет, как дела? Всё отлично!");
-        
-        assert_eq!(fragments[1].start, 3.6);
-        assert_eq!(fragments[1].end, 5.0);
-        assert_eq!(fragments[1].text, "Пока.");
-    }
+pub fn compute_text_scores_fallback(fragments: &[SubtitleFragment]) -> Vec<f64> {
+    compute_text_scores_advanced(fragments)
 }

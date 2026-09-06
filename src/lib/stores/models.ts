@@ -55,17 +55,17 @@ const createModelsStore = () => {
         },
         {
           id: 'whisper-base',
-          name: 'Whisper Base',
+          name: 'Whisper Base (Рекомендуется)',
           filename: 'ggml-base.bin',
           url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
           size_mb: 148,
           description: 'Стандартная и быстрая модель для большинства диалогов (148 MB)',
-          exists: true, // Сделаем одну модель "из коробки" существующей для удобства
+          exists: true,
           local_path: '/stub/models/ggml-base.bin'
         },
         {
           id: 'whisper-small',
-          name: 'Whisper Small',
+          name: 'Whisper Small (Высокая точность)',
           filename: 'ggml-small.bin',
           url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
           size_mb: 466,
@@ -75,11 +75,31 @@ const createModelsStore = () => {
         },
         {
           id: 'qwen-vl-2b',
-          name: 'Qwen3-VL 2B',
+          name: 'Qwen2-VL 2B (Vision AI)',
           filename: 'qwen-vl-2b.gguf',
           url: 'https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf',
           size_mb: 1700,
-          description: 'Интеллектуальный ИИ-анализатор кадров и поведения лиц (1.7 GB)',
+          description: 'Локальный визуальный анализатор кадров и лиц (1.7 GB)',
+          exists: false,
+          local_path: ''
+        },
+        {
+          id: 'qwen-1.5b-chat',
+          name: 'Qwen2.5 1.5B Chat (Быстрый текст)',
+          filename: 'qwen-1.5b-chat.gguf',
+          url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
+          size_mb: 986,
+          description: 'Легковесная автономная модель анализа диалогов и хайлайтов (986 MB)',
+          exists: false,
+          local_path: ''
+        },
+        {
+          id: 'qwen-7b-chat',
+          name: 'Qwen2.5 7B Chat (Продвинутый ИИ)',
+          filename: 'qwen-7b-chat.gguf',
+          url: 'https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf',
+          size_mb: 4680,
+          description: 'Мощная автономная языковая модель глубокого анализа юмора и сюжета (4.6 GB)',
           exists: false,
           local_path: ''
         }
