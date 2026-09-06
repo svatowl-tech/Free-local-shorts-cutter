@@ -230,17 +230,19 @@ jobs:
 
       - name: Упаковка Установочных и Portable версий
         run: npm run package:portable
+        env:
+          TARGET: ${{ matrix.target }}
 
       - name: Показать созданные дистрибутивы
         shell: bash
-        run: ls -la dist-releases || echo "Директория dist-releases не найдена"
+        run: ls -la dist-releases
 
       - name: Выгрузка файлов сборки в артефакты GitHub Actions
         uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.target }}
           path: dist-releases/*
-          if-no-files-found: warn
+          if-no-files-found: error
 
   # 3. Финализация релиза: публикация из черновика и сводная таблица
   finalize-release:
@@ -261,7 +263,9 @@ jobs:
 
       - name: Список скачанных файлов релиза
         shell: bash
-        run: ls -la all-dist-releases || echo "No files downloaded"
+        run: |
+          echo "=== СОДЕРЖИМОЕ all-dist-releases ==="
+          ls -la all-dist-releases
 
       - name: Опубликовать релиз
         uses: softprops/action-gh-release@v2
@@ -270,7 +274,9 @@ jobs:
           target_commitish: ${{ github.ref_name }}
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
-          files: all-dist-releases/**/*
+          files: |
+            all-dist-releases/*
+            all-dist-releases/**/*
           body: |
             ## 🎬 Video Cutter Pro ${{ needs.prepare-release.outputs.tag }}
 
