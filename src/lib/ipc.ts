@@ -184,3 +184,13 @@ export async function onModelDownloadProgress(callback: (payload: ModelDownloadP
   return await listen<ModelDownloadProgressPayload>('model-download-progress', (event) => callback(event.payload));
 }
 
+export interface VideoMetadata {
+  duration: number;
+  codec?: string;
+}
+
+export async function getVideoMetadata(videoPath: string): Promise<VideoMetadata> {
+  return await invoke<VideoMetadata>('get_video_metadata', { videoPath });
+}
+
+

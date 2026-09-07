@@ -1,6 +1,7 @@
 <!-- src/lib/components/FileUpload.svelte -->
 <script lang="ts">
   import { pipelineStore } from '../stores/pipeline';
+  import { getVideoMetadata } from '../ipc';
   import { HardDrive, Trash2 } from '@lucide/svelte';
 
   let dragOver = false;
@@ -21,13 +22,29 @@
     if (files && files.length > 0) {
       const file = files[0];
       const objectUrl = URL.createObjectURL(file);
+      const filePath = (file as any).path || file.name;
       pipelineStore.setVideo({
         name: file.name,
-        path: (file as any).path || file.webkitRelativePath || `/local/user/videos/${file.name}`,
+        path: filePath,
         size: file.size,
-        duration: 180,
+        duration: 0,
         objectUrl
       });
+
+      // Если в среде Tauri и есть путь к файлу — пробуем получить метаданные через FFmpeg
+      if ((file as any).path) {
+        getVideoMetadata((file as any).path).then(meta => {
+          if (meta && meta.duration > 0) {
+            pipelineStore.setVideo({
+              name: file.name,
+              path: (file as any).path,
+              size: file.size,
+              duration: meta.duration,
+              objectUrl
+            });
+          }
+        }).catch(() => {});
+      }
     }
   }
 
@@ -51,7 +68,7 @@
           multiple: false,
           filters: [{
             name: 'Video',
-            extensions: ['mp4', 'avi', 'mkv', 'mov', 'webm']
+            extensions: ['mp4', 'avi', 'mkv', 'mov', 'webm', 'ts', 'm4v']
           }]
         });
 
@@ -60,9 +77,24 @@
           pipelineStore.setVideo({
             name: fileName,
             path: selected,
-            size: 345220000,
-            duration: 180
+            size: 0,
+            duration: 0
           });
+
+          // Сразу запрашиваем реальную длительность и кодек через FFmpeg IPC
+          try {
+            const meta = await getVideoMetadata(selected);
+            if (meta && meta.duration > 0) {
+              pipelineStore.setVideo({
+                name: fileName,
+                path: selected,
+                size: 0,
+                duration: meta.duration
+              });
+            }
+          } catch (e) {
+            console.log('FFmpeg метаданные пропущены:', e);
+          }
         }
       } else {
         fileInput?.click();

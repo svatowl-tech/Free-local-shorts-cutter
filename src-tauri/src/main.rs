@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
             commands::start_pipeline,
             commands::render_clips_from_fragments,
             commands::generate_subtitles_only,
+            commands::get_video_metadata,
             models::get_models_status,
             models::download_model
         ])

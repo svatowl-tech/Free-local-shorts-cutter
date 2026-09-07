@@ -18,6 +18,9 @@
   let selectionStartTime: number = 0;
   let selectionCurrentTime: number = 0;
 
+  // Предпросмотр времени при наведении мыши (Hover scrubber)
+  let hoverTime: number | null = null;
+
   // Состояние перемещения и изменения размера фрагментов
   let isDragging = false;
   let isResizingLeft = false;
@@ -47,6 +50,18 @@
     const x = e.clientX - rect.left;
     const time = x / scale;
     return Math.max(0, Math.min(videoDuration, time));
+  }
+
+  function onTimelineMouseMoveHover(e: MouseEvent) {
+    if (isSelecting || isDragging || isResizingLeft || isResizingRight) {
+      hoverTime = null;
+      return;
+    }
+    hoverTime = getMouseTime(e);
+  }
+
+  function onTimelineMouseLeave() {
+    hoverTime = null;
   }
 
   // 1. Начало выделения области мышкой на шкале времени
@@ -216,6 +231,8 @@
     bind:this={timelineEl}
     class="relative h-24 w-full bg-[#0c0c0e] border border-[rgba(226,226,224,0.15)] rounded-[4px] overflow-hidden cursor-crosshair shadow-inner"
     on:mousedown={onTimelineMouseDown}
+    on:mousemove={onTimelineMouseMoveHover}
+    on:mouseleave={onTimelineMouseLeave}
     role="slider"
     tabindex="0"
     aria-valuenow={currentTime}
@@ -227,6 +244,18 @@
     }}
   >
     {#if videoDuration > 0}
+      <!-- Линия предпросмотра при наведении курсора (Hover scrubber) -->
+      {#if hoverTime !== null && !isSelecting}
+        <div 
+          class="absolute top-0 bottom-0 w-[1px] bg-white/50 pointer-events-none z-15"
+          style="left: {hoverTime * scale}px"
+        >
+          <div class="absolute top-1 left-1.5 bg-[#1a1a24] border border-white/20 text-[#e2e2e4] font-mono text-[9px] px-1.5 py-0.5 rounded shadow whitespace-nowrap">
+            {formatTime(hoverTime)}
+          </div>
+        </div>
+      {/if}
+
       <!-- Временная сетка и секундные засечки -->
       {#each Array(Math.ceil(videoDuration / gridInterval) + 1) as _, i}
         {@const t = i * gridInterval}

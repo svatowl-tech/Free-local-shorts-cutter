@@ -18,7 +18,11 @@
     Download, 
     Check,
     Volume2,
-    VolumeX
+    VolumeX,
+    AlertTriangle,
+    FolderOpen,
+    Minus,
+    Plus
   } from '@lucide/svelte';
 
   let videoEl: HTMLVideoElement;
@@ -28,6 +32,10 @@
   let isPlaying = false;
   let isMuted = false;
   let playbackSpeed = 1;
+
+  // Ошибка загрузки/декодирования видео в WebView2
+  let videoLoadError = false;
+  let videoErrorMessage = '';
 
   // Рамка предпросмотра 9:16 Reels (кадрирование поверх 16:9)
   let showCropGuide = true;
@@ -45,21 +53,74 @@
     if ($pipelineStore.video) {
       if ($pipelineStore.video.objectUrl) {
         videoSrc = $pipelineStore.video.objectUrl;
+        videoLoadError = false;
       } else if ($pipelineStore.video.path) {
         try {
           const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
           if (isTauri) {
-            videoSrc = convertFileSrc($pipelineStore.video.path);
+            const rawPath = $pipelineStore.video.path;
+            videoSrc = convertFileSrc(rawPath);
           } else {
             videoSrc = '';
           }
+          videoLoadError = false;
         } catch (err) {
           console.error("Failed to convert file src", err);
         }
       }
+      if ($pipelineStore.video.duration && $pipelineStore.video.duration > 0) {
+        duration = $pipelineStore.video.duration;
+      }
     } else {
       videoSrc = '';
+      videoLoadError = false;
     }
+  }
+
+  function handleVideoError(e: Event) {
+    videoLoadError = true;
+    const mediaError = videoEl?.error;
+    let msg = 'Видео не может быть отображено встроенным движком WebView2';
+    if (mediaError) {
+      if (mediaError.code === 4) {
+        msg = 'Формат или кодек видеофайла (например, HEVC/H.265, 10-бит, AC3 аудио) не поддерживается встроенным движком WebView2.';
+      } else if (mediaError.code === 2) {
+        msg = 'Ошибка сетевого протокола asset.localhost при доступе к локальному диску.';
+      } else {
+        msg = `Ошибка воспроизведения (код ${mediaError.code}): ${mediaError.message || 'Media source error'}`;
+      }
+    }
+    videoErrorMessage = msg;
+    console.warn('Ошибка загрузки видео:', msg, mediaError);
+  }
+
+  function handleFallbackFileSelect(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (input.files && input.files.length > 0) {
+      const file = input.files[0];
+      const objectUrl = URL.createObjectURL(file);
+      if ($pipelineStore.video) {
+        pipelineStore.setVideo({
+          ...$pipelineStore.video,
+          objectUrl
+        });
+      }
+      videoLoadError = false;
+    }
+  }
+
+  function adjustFragmentStart(fragId: string, delta: number) {
+    const frag = $fragmentsStore.find(f => f.id === fragId);
+    if (!frag) return;
+    const newStart = Math.max(0, Math.min(frag.start + delta, frag.end - 0.5));
+    updateFragment(fragId, { start: newStart });
+  }
+
+  function adjustFragmentEnd(fragId: string, delta: number) {
+    const frag = $fragmentsStore.find(f => f.id === fragId);
+    if (!frag) return;
+    const newEnd = Math.min(duration || 999999, Math.max(frag.end + delta, frag.start + 0.5));
+    updateFragment(fragId, { end: newEnd });
   }
 
   function handleTimeUpdate() {
@@ -247,11 +308,42 @@
         on:click={togglePlay}
         on:timeupdate={handleTimeUpdate}
         on:loadedmetadata={handleLoadedMetadata}
+        on:error={handleVideoError}
         on:play={() => isPlaying = true}
         on:pause={() => isPlaying = false}
       >
         Ваш браузер не поддерживает видео.
       </video>
+
+      <!-- Диагностический оверлей при ошибке кодеков или доступа в WebView2 -->
+      {#if videoLoadError}
+        <div class="absolute inset-0 bg-[#0e0e14]/95 z-30 flex flex-col items-center justify-center p-6 text-center">
+          <div class="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-3 text-amber-400">
+            <AlertTriangle class="w-6 h-6" />
+          </div>
+          <h4 class="text-sm font-semibold text-[#e2e2e4] mb-1 font-mono">Превью видео недоступно в системном плеере WebView2</h4>
+          <p class="text-xs text-[rgba(226,226,224,0.7)] max-w-md mb-4 leading-relaxed font-mono">
+            {videoErrorMessage}
+          </p>
+          <div class="flex flex-wrap items-center justify-center gap-3">
+            <label class="btn-primary text-xs cursor-pointer inline-flex items-center gap-2">
+              <FolderOpen class="w-3.5 h-3.5" />
+              <span>Выбрать файл через Blob-плеер</span>
+              <input type="file" accept="video/*" class="hidden" on:change={handleFallbackFileSelect} />
+            </label>
+            <button
+              type="button"
+              class="btn-secondary text-xs"
+              on:click={() => videoLoadError = false}
+            >
+              Скрыть сообщение
+            </button>
+          </div>
+          <p class="text-[11px] text-[rgba(226,226,224,0.4)] mt-4 font-mono max-w-md">
+            💡 <strong>Экспорт клипов всё равно работает:</strong> даже без встроенного превью в плеере, вы можете выделять временные отрезки на таймлайне и экспортировать их. Бэкенд FFmpeg обработает видео напрямую с диска!
+          </p>
+        </div>
+      {/if}
 
       <!-- Визуальный оверлей каше 9:16 для вертикальных Reels -->
       {#if showCropGuide}
@@ -484,10 +576,11 @@
           {@const dur = (frag.end - frag.start).toFixed(1)}
           {@const isPlayingThis = activePlayingFragment?.id === frag.id}
           <div class="p-3 bg-[#15151b] border {isPlayingThis ? 'border-[#23c55e] shadow-[0_0_10px_rgba(35,197,94,0.3)]' : 'border-[rgba(226,226,224,0.1)]'} rounded-[3px] flex flex-col justify-between gap-2.5 transition-all">
+            <!-- Шапка карточки фрагмента -->
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-1.5">
                 <span class="px-1.5 py-0.5 rounded bg-[#5865f2] text-white font-mono text-[10px] font-bold">
-                  #{idx + 1}
+                  Клип #{idx + 1}
                 </span>
                 <span class="font-mono text-xs font-semibold text-[#e2e2e4]">
                   {formatTime(frag.start)} → {formatTime(frag.end)}
@@ -498,19 +591,57 @@
               </span>
             </div>
 
-            <!-- Тонкая подгонка секунд -->
+            <!-- Микро-подгонка начала и конца фрагмента по секундам -->
+            <div class="grid grid-cols-2 gap-2 text-[10px] font-mono text-[rgba(226,226,224,0.7)] bg-[#0e0e12] p-1.5 rounded-[2px]">
+              <div class="flex items-center justify-between">
+                <span>Старт:</span>
+                <div class="flex items-center gap-1">
+                  <button 
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
+                    title="Сдвинуть начало на 1с раньше"
+                    on:click={() => adjustFragmentStart(frag.id, -1)}
+                  >-1с</button>
+                  <button 
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
+                    title="Сдвинуть начало на 1с позже"
+                    on:click={() => adjustFragmentStart(frag.id, 1)}
+                  >+1с</button>
+                </div>
+              </div>
+              <div class="flex items-center justify-between">
+                <span>Конец:</span>
+                <div class="flex items-center gap-1">
+                  <button 
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
+                    title="Сдвинуть конец на 1с раньше"
+                    on:click={() => adjustFragmentEnd(frag.id, -1)}
+                  >-1с</button>
+                  <button 
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
+                    title="Сдвинуть конец на 1с позже"
+                    on:click={() => adjustFragmentEnd(frag.id, 1)}
+                  >+1с</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Действия: предпросмотр и удаление -->
             <div class="flex items-center justify-between text-[10px] font-mono text-[rgba(226,226,224,0.5)] pt-1 border-t border-[rgba(226,226,224,0.06)]">
-              <span>9:16 + Сабы</span>
+              <span class="text-purple-400/80">9:16 + Субтитры</span>
               <div class="flex items-center gap-1.5">
                 <!-- Кнопка воспроизведения только этого фрагмента -->
                 <button
                   type="button"
                   on:click={() => playFragment(frag)}
-                  class="px-2 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white transition-colors flex items-center gap-1"
-                  title="Воспроизвести только этот клип"
+                  class="px-2 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black font-bold' : 'bg-[#1f1f28] hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white'} transition-colors flex items-center gap-1"
+                  title="Перейти к началу и воспроизвести клип"
                 >
                   <Play class="w-2.5 h-2.5" />
-                  <span>Превью</span>
+                  <span>{isPlayingThis ? 'Играет...' : 'Превью'}</span>
                 </button>
 
                 <!-- Кнопка удаления фрагмента -->

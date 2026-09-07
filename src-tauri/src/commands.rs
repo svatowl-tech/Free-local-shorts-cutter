@@ -315,3 +315,16 @@ pub async fn generate_subtitles_only(
 
     Ok(content)
 }
+
+/// Асинхронная команда: Получение реальной длительности и метаданных видео через FFmpeg
+#[tauri::command]
+pub async fn get_video_metadata(
+    app: AppHandle,
+    video_path: String,
+) -> AppResult<crate::ffmpeg::VideoMetadata> {
+    let video_buf = PathBuf::from(&video_path);
+    if !video_buf.exists() {
+        return Err(AppError::Anyhow(anyhow::anyhow!("Файл видео не найден: {}", video_path)));
+    }
+    crate::ffmpeg::probe_video(video_buf, app).await
+}

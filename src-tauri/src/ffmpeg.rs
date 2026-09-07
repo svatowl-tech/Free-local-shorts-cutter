@@ -91,3 +91,58 @@ pub async fn extract_audio(
         }
     }
 }
+
+#[derive(Serialize, Clone, Debug)]
+pub struct VideoMetadata {
+    pub duration: f64,
+    pub codec: Option<String>,
+}
+
+pub async fn probe_video(
+    video_path: PathBuf,
+    app_handle: AppHandle,
+) -> AppResult<VideoMetadata> {
+    let shell = app_handle.shell();
+    let command = shell.sidecar("ffmpeg")
+        .map_err(|e| AppError::Pipeline(format!("FFmpeg sidecar не найден: {}", e)))?;
+
+    let command = command.args([
+        "-i", &video_path.to_string_lossy(),
+        "-hide_banner",
+    ]);
+
+    let (mut rx, _child) = command.spawn()
+        .map_err(|e| AppError::Pipeline(format!("Не удалось запустить FFmpeg для анализа: {}", e)))?;
+
+    let mut total_duration = 0.0;
+    let mut codec = None;
+
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Stderr(bytes) = event {
+            let log_line = String::from_utf8_lossy(&bytes);
+            if total_duration == 0.0 {
+                if let Some(pos) = log_line.find("Duration: ") {
+                    let duration_part = &log_line[pos + 10..];
+                    if let Some(end_pos) = duration_part.find(',') {
+                        if let Some(secs) = parse_time_to_seconds(&duration_part[..end_pos]) {
+                            total_duration = secs;
+                        }
+                    }
+                }
+            }
+            if codec.is_none() {
+                if let Some(pos) = log_line.find("Video: ") {
+                    let video_part = &log_line[pos + 7..];
+                    if let Some(end_pos) = video_part.find(',') {
+                        codec = Some(video_part[..end_pos].trim().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(VideoMetadata {
+        duration: total_duration,
+        codec,
+    })
+}
