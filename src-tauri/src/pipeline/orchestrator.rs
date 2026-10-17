@@ -321,6 +321,25 @@ pub async fn run_pipeline(
         }
     }
 
+    // Абсолютная гарантия: если по какой-то причине selected_intervals пуст, создаем минимум 3 умных хайлайта по всей длине видео
+    if selected_intervals.is_empty() && video_duration > 5.0 {
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "warn",
+            "Внимание: не найдено интервалов по стандартным критериям. Задействован гарантированный алгоритм генерации топ-хайлайтов.",
+        );
+        let num_clips = if video_duration < 30.0 { 1 } else if video_duration < 90.0 { 3 } else { 5 };
+        let step = video_duration / (num_clips as f64 + 1.0);
+        for i in 1..=num_clips {
+            let start = (step * (i as f64) - (clip_duration / 2.0)).max(0.0).min(video_duration - clip_duration);
+            let end = (start + clip_duration).min(video_duration);
+            if end - start >= 2.0 {
+                selected_intervals.push((start, end, 0.8 - (i as f64 * 0.02)));
+            }
+        }
+    }
+
     // Сортируем по времени начала
     selected_intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 

@@ -1,126 +1,17 @@
-# Комплексная система сквозного логирования подсистем Video Cutter Pro
+# Build Resolution Plan
 
-Архитектурный план внедрения глубокого сквозного логирования всех фоновых и вычислительных процессов (FFmpeg, Whisper ASR, LLM/Ollama, Qwen-VL Analyzer, Render) с трансляцией полного потока stdout/stderr в консоль браузера, сохранением в файл по кнопке и копированием в буфер обмена.
+The current build is failing because SvelteKit's Vite build process is attempting to generate server-side artifacts that are not needed for this static Tauri application, leading to missing file errors.
 
-## User Review & Critical Decisions
+### Proposed Changes
 
-> [!IMPORTANT]
-> **Решения, подтвержденные пользователем на этапе интервью:**
-> - **Точки вывода логов**: Системная консоль браузера (DevTools Console) с цветовой дифференциацией подсистем и сохранение в файл без загромождения основного экрана тяжелыми терминальными виджетами.
-> - **Степень детализации**: Максимальная (полный непрерывный поток `stdout`/`stderr` утилит FFmpeg, Whisper, LLM/Ollama, аргументы запуска, тайминги этапов и трассировки ошибок).
-> - **Управление экспортом**: Добавление аккуратных кнопок быстрого действия («Копировать лог в буфер обмена» и «Сохранить лог в файл») в панели управления и статусных зонах.
+1.  **Remove Hacky Workarounds**:
+    *   Revert `package.json` changes (remove the `prebuild` script and associated file generation).
+    *   Delete the `scripts/prebuild.cjs` file.
+2.  **Properly Configure SvelteKit**:
+    *   Ensure `svelte.config.js` is correctly configured for a purely static SPA application.
+    *   Verify `src/routes/+page.ts` is configured for static prerendering.
+3.  **Clean & Rebuild**:
+    *   Completely remove the stale `.svelte-kit` and `build` output directories.
+    *   Perform a clean sync and build to regenerate the necessary files based on the static configuration.
 
----
-
-## 1. Overview & Core Concept
-
-- **Что делает система**: Обеспечивает 100% прозрачность работы приложения при запуске «Разделения ИИ» и экспорта клипов. Каждая команда sidecar (FFmpeg, Whisper, llama-cli), сетевой запрос к Ollama и вычислительный шаг конвейера транслируют сырые строки вывода, прогресс и возможные ошибки в единый диспетчер логов Tauri, передающий события на фронтенд в реальном времени.
-- **Целевая аудитория**: Видеомонтажеры и контент-мейкеры, которым требуется точное понимание происходящего: загружается ли модель, на каком кадре находится рендер или почему процесс замедлился.
-- **Ключевая ценность**: Устранение эффекта «зависания вслепую». Любой сбой (отсутствие кодека, таймаут сокета, нехватка VRAM, синтаксический сбой парсера) мгновенно виден в консоли браузера с таймстемпом и доступен для экспорта одним кликом для диагностики.
-
----
-
-## 2. User Experience & Visual Design
-
-### Ключевые пользовательские сценарии
-
-1. **Запуск ИИ-нарезки с открытой консолью**:
-   - Пользователь нажимает «Разделить ИИ» или запускает конвейер.
-   - В DevTools консоли (`F12` / Web Inspector) немедленно начинают появляться структурированные записи с тегами подсистем: `[FFMPEG]`, `[WHISPER]`, `[OLLAMA]`, `[ORCHESTRATOR]`.
-   - В интерфейсе приложения отображается лаконичный статус-бар с текущим шагом, таймингом и кнопками быстрого действия.
-2. **Копирование полного диагностического лога**:
-   - Пользователь нажимает кнопку `Скопировать лог` (иконка `Copy` с лаконичной подписью).
-   - В буфер обмена попадает форматированный отчет с системной информацией (версия ОС, пути к моделям, все логи с метками времени). Кнопка на 1.5 секунды меняет состояние на «Скопировано!».
-3. **Сохранение лога в файл**:
-   - Пользователь нажимает `Сохранить лог` (иконка `Download`).
-   - Открывается нативный системный диалог сохранения файла (`video_cutter_session_YYYY-MM-DD.log`), куда записывается весь накопленный буфер.
-
-### Визуальный стиль и размещение элементов управления
-
-В соответствии с правилами `frontend-design` и спецификацией `3_saas_dashboard.md`:
-- **Без визуального шума**: Никаких декоративных пульсирующих точек или лишних рамок. Панель кнопок экспорта логов интегрируется в компактную сервисную строку под прогресс-баром конвейера либо в нижний колонтитул рабочей области.
-- **Кнопки управления**: Однострочные (`whitespace-nowrap`), четкий контраст, нейтральная тёмная палитра (#0c0c0e / #16161a) с аккуратными hairline-границами (`border border-[rgba(226,226,224,0.1)]`).
-- **Стилизация вывода в DevTools Console**: Использование CSS-стилей в `console.log` (`%c[FFMPEG] ...`, `%c[WHISPER] ...`) для легкой визуальной навигации по источникам.
-
----
-
-## 3. Key Product Decisions & Trade-Offs
-
-- **Решение 1: Трансляция stdout/stderr через специализированное Tauri-событие `app-system-log`**
-  - *Выбранный подход*: Создание в Rust централизованного диспетчера логов, который перехватывает `CommandEvent::Stdout` и `CommandEvent::Stderr` от всех дочерних процессов и через `app_handle.emit("app-system-log", payload)` отправляет их в UI, одновременно записывая в консоль терминала.
-  - *Почему*: Это гарантирует, что вывод процессов не теряется внутри Tokio-потоков, а мгновенно передается в JavaScript-консоль.
-  - *Альтернативы*: Использование только стандартного крейта `tauri-plugin-log`. Отклонено, так как стандартный плагин не перехватывает сырой `stderr` внешних бинарников (FFmpeg и llama-cli), которые пишут напрямую в файловые дескрипторы ОС.
-
-- **Решение 2: Кольцевой буфер логов в памяти фронтенда (LogStore)**
-  - *Выбранный подход*: Хранение до 5,000 последних записей логов в реактивном Svelte-хранилище `logStore.ts` с поддержкой мгновенной сериализации в текстовый файл и буфер обмена.
-  - *Почему*: 5,000 строк достаточно для детальной отладки любого многочасового рендера, не вызывая утечек памяти в браузере.
-  - *Альтернативы*: Писать напрямую в файл на диске при каждой строке. Отклонено как основной метод, так как непрерывные дисковые I/O операции в цикле FFmpeg могут снижать производительность кодирования. Запись в файл производится по нажатию кнопки либо при завершении сессии.
-
----
-
-## 4. Technical Architecture & Data Strategy
-
-### Архитектурная схема потока логов
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        Subprocesses & Engines                          │
-│                                                                        │
-│   FFmpeg Sidecar        Whisper.cpp Sidecar       llama-cli / Ollama   │
-│   [stdout / stderr]     [stdout / stderr]         [HTTP / CLI Stream]  │
-└───────────┬──────────────────────┬─────────────────────────┬───────────┘
-            │                      │                         │
-            ▼                      ▼                         ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                   Rust Backend (Tokio Async Pipeline)                  │
-│                                                                        │
-│   Central Log Broadcaster & Tauri Event Emitter:                       │
-│   emit("app-system-log", { subsystem, level, message, timestamp })     │
-└──────────────────────────────────┬─────────────────────────────────────┘
-                                   │  Tauri IPC Event ("app-system-log")
-                                   ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                   Frontend (Svelte + LogStore)                         │
-│                                                                        │
-│   1. Browser DevTools Console Logger (Styled console.log / warn)       │
-│   2. Memory Buffer Store (Recent session events)                       │
-│   3. Actions:                                                          │
-│      ├── [📋 Копировать лог] -> navigator.clipboard.writeText(...)    │
-│      └── [💾 Сохранить в файл] -> Tauri save dialog / Blob download    │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-### Формат контракта данных логов (`SystemLogPayload`)
-
-```typescript
-export interface SystemLogPayload {
-  timestamp: string;      // ISO-8601 (например: 2026-10-17T02:25:31.104Z)
-  subsystem: 'ffmpeg' | 'whisper' | 'llm' | 'analyzer' | 'orchestrator' | 'render' | 'ui';
-  level: 'debug' | 'info' | 'warn' | 'error';
-  message: string;
-  details?: Record<string, unknown>;
-}
-```
-
-### Этапы реализации
-
-1. **Rust Backend Logging Infrastructure**:
-   - Реализация макроса/функции `emit_log(app: &AppHandle, subsystem: &str, level: &str, message: impl Into<String>)`.
-   - Внедрение перехвата всех строк `CommandEvent::Stdout` и `CommandEvent::Stderr` в `src-tauri/src/ffmpeg.rs`, `src-tauri/src/whisper.rs`, `src-tauri/src/text_analyzer.rs`, `src-tauri/src/render.rs` и `src-tauri/src/analyzer.rs`.
-   - Логирование аргументов запуска процессов, точных путей к моделям и кодов возврата.
-   - Добавление команды сохранения файла лога `save_log_file(content: String, default_filename: Option<String>)` через нативный диалог Tauri.
-
-2. **Frontend Logging Subsystem (`src/lib/stores/logStore.ts`)**:
-   - Подписка на событие `app-system-log` при инициализации приложения.
-   - Вывод в браузерную консоль с цветовыми префиксами:
-     - `FFmpeg`: синий цвет `#3b82f6`
-     - `Whisper`: фиолетовый `#8b5cf6`
-     - `LLM/Ollama`: изумрудный `#10b981`
-     - `Analyzer`: янтарный `#f59e0b`
-     - `Errors`: ярко-красный `#ef4444`
-   - Функции экспорта: `copyLogsToClipboard()` и `saveLogsToFile()`.
-
-3. **UI Integration**:
-   - Размещение панели быстрых действий (кнопки «Копировать лог» и «Сохранить лог») в `ProgressDisplay.svelte` и в нижней сервисной строке страницы.
-   - Индикация успешного копирования (toast / временная смена иконки).
-   - Тестирование компиляции и проверка отсутствия регрессий в пайплайне.
+This approach resolves the build errors by correctly aligning the configuration with the intended output, rather than attempting to bypass the checks with file stubs.

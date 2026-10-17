@@ -44,7 +44,7 @@ let ffmpegUrl, whisperUrl, llamaUrl, ffprobeUrl;
 if (isWindows) {
     ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
     ffprobeUrl = ffmpegUrl;
-    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip';
+    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip';
     llamaUrl = 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip';
 } else if (isMac) {
     ffmpegUrl = 'https://evermeet.cx/ffmpeg/getrelease/zip';

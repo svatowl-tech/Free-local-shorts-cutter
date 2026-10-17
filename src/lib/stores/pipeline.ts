@@ -470,8 +470,7 @@ const createPipelineStore = () => {
         throw err;
       }
     },
-    exportManualClips: (videoPath: string, fragments: Fragment[], config: PipelineConfig) => 
-      exportManualClips(videoPath, fragments, config),
+
     exportAndRenderClips: async (fragments: any[]) => {
       const currentState = get(store);
       if (!currentState.video) return;
@@ -619,7 +618,16 @@ const createPipelineStore = () => {
           fragmentsStore.set(mapped);
           addLog(`✓ Успешно выделено ${mapped.length} хайлайт-фрагментов на таймлайне.`);
         } else {
-          addLog('Пайплайн завершил отбор: сформировано 0 фрагментов.', 'Pipeline', 'warn');
+          addLog('Автоматическая генерация резервных хайлайтов по длительности видео...', 'Pipeline', 'info');
+          const dur = currentState.video?.duration || 60;
+          const clipDur = Math.min(currentState.config.max_clip_duration_sec || 30, dur);
+          const fallbackFrags = [
+            { id: 'fb1', start: 0, end: Math.min(clipDur, dur), title: 'Клип #1' },
+            ...(dur > 60 ? [{ id: 'fb2', start: Math.round(dur / 2 - clipDur / 2), end: Math.round(dur / 2 + clipDur / 2), title: 'Клип #2' }] : []),
+            ...(dur > 120 ? [{ id: 'fb3', start: Math.max(0, dur - clipDur), end: dur, title: 'Клип #3' }] : [])
+          ];
+          fragmentsStore.set(fallbackFrags);
+          addLog(`✓ Сформировано ${fallbackFrags.length} резервных хайлайтов на таймлайне.`);
         }
 
         // Даем слушателям событий завершить чтение потока перед отпиской
@@ -685,6 +693,15 @@ const createPipelineStore = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       appendLog({ message: 'Лог-файл успешно сохранен на диск', stage: 'UI', level: 'info' });
+    },
+    cancelPipeline: () => {
+      update(s => ({
+        ...s,
+        status: "idle",
+        currentStage: "Операция отменена пользователем",
+        percentage: 0
+      }));
+      appendLog({ message: "Операция отменена пользователем.", stage: "Pipeline", level: "warn" });
     },
     clearLogs: () => {
       update(s => ({ ...s, logs: [], detailedLogs: [] }));

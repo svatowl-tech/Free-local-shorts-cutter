@@ -209,4 +209,12 @@ export async function getVideoMetadata(videoPath: string): Promise<VideoMetadata
   return await invoke<VideoMetadata>('get_video_metadata', { videoPath });
 }
 
+export async function cancelPipeline(): Promise<void> {
+  try {
+    return await invoke<void>('cancel_pipeline');
+  } catch (err) {
+    throw new Error(`Ошибка отмены пайплайна: ${err}`);
+  }
+}
+
 
