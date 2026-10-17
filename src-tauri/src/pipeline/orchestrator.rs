@@ -2,7 +2,7 @@
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 use serde::{Deserialize, Serialize};
-use crate::error::{AppResult, AppError};
+use crate::error::AppResult;
 use tokio::sync::broadcast::Receiver;
 use crate::render::{RenderConfig, SubtitleStyle};
 
@@ -58,7 +58,7 @@ pub async fn run_pipeline(
                 &app_handle,
                 "Pipeline",
                 "info",
-                &format!("Метаданные видео: длительность {:.2} сек, разрешение {}x{}", meta.duration, meta.width, meta.height),
+                &format!("Метаданные видео: длительность {:.2} сек, кодек: {}", meta.duration, meta.codec.as_deref().unwrap_or("unknown")),
             );
             meta.duration
         },

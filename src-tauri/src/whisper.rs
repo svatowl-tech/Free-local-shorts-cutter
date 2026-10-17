@@ -1,6 +1,6 @@
 // src-tauri/src/whisper.rs
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use serde::Serialize;

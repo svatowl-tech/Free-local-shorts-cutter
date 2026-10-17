@@ -1,7 +1,7 @@
 // src-tauri/src/analyzer.rs
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use serde::{Deserialize, Serialize};
