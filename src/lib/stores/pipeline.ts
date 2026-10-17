@@ -1,5 +1,5 @@
 // src/lib/stores/pipeline.ts
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 import { 
   startPipeline, 
   renderClipsFromFragments,
@@ -61,7 +61,7 @@ const DEFAULT_CONFIG: PipelineConfig = {
 };
 
 const createPipelineStore = () => {
-  const { subscribe, set, update } = writable<PipelineState>({
+  const store = writable<PipelineState>({
     video: null,
     config: { ...DEFAULT_CONFIG },
     status: 'idle',
@@ -72,6 +72,7 @@ const createPipelineStore = () => {
     error: null,
     logs: []
   });
+  const { subscribe, set, update } = store;
 
   // Вспомогательная функция добавления логов
   const addLog = (text: string) => {
@@ -204,7 +205,7 @@ const createPipelineStore = () => {
         percentage: 85 + Math.floor((clipPct / 100) * 14),
         stageDetails: { ...s.stageDetails, renderer: { percent: clipPct, stage: `Генерация клипа ${clipNo}/3` } }
       }));
-      addLog(`BMF: Успешно экспортирован клип ${clipNo} из 3`);
+      addLog(`FFmpeg: Успешно экспортирован клип ${clipNo} из 3`);
     }
 
     // Завершено
@@ -420,21 +421,20 @@ const createPipelineStore = () => {
         throw err;
       }
     },
+    exportManualClips: (videoPath: string, fragments: Fragment[], config: PipelineConfig) => 
+      exportManualClips(videoPath, fragments, config),
     exportAndRenderClips: async (fragments: any[]) => {
-      let currentState!: PipelineState;
-      subscribe(s => { currentState = s; })();
-
+      const currentState = get(store);
       if (!currentState.video) return;
 
-      return await pipelineStore.exportManualClips(
+      return await exportManualClips(
         currentState.video.path,
         fragments,
         currentState.config
       );
     },
     startPipelineProcess: async () => {
-      let currentState!: PipelineState;
-      subscribe(s => { currentState = s; })();
+      const currentState = get(store);
 
       if (!currentState.video) {
         update(s => ({ ...s, error: 'Пожалуйста, выберите видеофайл для обработки!' }));
@@ -467,7 +467,7 @@ const createPipelineStore = () => {
           update(s => ({
             ...s,
             currentStage: 'Извлечение аудио (FFmpeg)',
-            percentage: Math.round(payload.percent * 0.25), // займет первые 25% общего прогресса
+            percentage: Math.round(payload.percent * 0.20), // 0 - 20%
             stageDetails: {
               ...s.stageDetails,
               ffmpeg: {
@@ -484,7 +484,7 @@ const createPipelineStore = () => {
           update(s => ({
             ...s,
             currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание'}`,
-            percentage: 25 + Math.round(payload.percent * 0.2), // займет 25% - 45% общего прогресса
+            percentage: 20 + Math.round(payload.percent * 0.30), // 20% - 50%
             stageDetails: {
               ...s.stageDetails,
               whisper: {
@@ -499,8 +499,8 @@ const createPipelineStore = () => {
         const unlistenAnalyzer = await onAnalyzerProgress((payload) => {
           update(s => ({
             ...s,
-            currentStage: `Qwen3-VL Анализ: ${payload.stage}`,
-            percentage: 45 + Math.round(payload.percent * 0.3), // займет 45% - 75% общего прогресса
+            currentStage: `Qwen-VL Анализ: ${payload.stage}`,
+            percentage: 50 + Math.round(payload.percent * 0.25), // 50% - 75%
             stageDetails: {
               ...s.stageDetails,
               analyzer: {
@@ -511,14 +511,14 @@ const createPipelineStore = () => {
               }
             }
           }));
-          addLog(`Qwen3-VL: Шаг ${payload.stage} (${payload.current_frame}/${payload.total_frames} кадров)`);
+          addLog(`Qwen-VL: Шаг ${payload.stage} (${payload.current_frame}/${payload.total_frames} кадров)`);
         });
 
         const unlistenPipeline = await onPipelineProgress((payload) => {
           update(s => ({
             ...s,
             currentStage: payload.stage,
-            percentage: 75 + Math.round(payload.percent * 0.1) // займет 75% - 85% общего прогресса
+            percentage: 75 + Math.round(payload.percent * 0.10)
           }));
           addLog(`Пайплайн [${payload.stage}]: Прогресс ${Math.round(payload.percent)}%`);
         });
@@ -538,8 +538,8 @@ const createPipelineStore = () => {
         const unlistenRender = await onRenderProgress((payload) => {
           update(s => ({
             ...s,
-            currentStage: `Рендеринг BMF: ${payload.stage}`,
-            percentage: 85 + Math.round(payload.percent * 0.15), // займет последние 85% - 100%
+            currentStage: `Рендеринг (FFmpeg): ${payload.stage}`,
+            percentage: 75 + Math.round(payload.percent * 0.25), // 75% - 100%
             stageDetails: {
               ...s.stageDetails,
               renderer: {
@@ -548,7 +548,7 @@ const createPipelineStore = () => {
               }
             }
           }));
-          addLog(`BMF Рендеринг: ${payload.stage} - ${Math.round(payload.percent)}%`);
+          addLog(`FFmpeg Рендеринг: ${payload.stage} - ${Math.round(payload.percent)}%`);
         });
 
         // Запускаем сам пайплайн

@@ -98,7 +98,7 @@
         {@const r = $pipelineStore.stageDetails.renderer}
         <div class="p-3.5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] space-y-2">
           <div class="flex justify-between items-center text-xs font-mono">
-            <span class="text-[rgba(226,226,224,0.7)]">BMF Рендер: {r.stage}</span>
+            <span class="text-[rgba(226,226,224,0.7)]">FFmpeg Рендер: {r.stage}</span>
             <span class="text-[#23c55e]">{Math.round(r.percent)}%</span>
           </div>
           <div class="w-full bg-[#16161a] h-1.5 overflow-hidden">

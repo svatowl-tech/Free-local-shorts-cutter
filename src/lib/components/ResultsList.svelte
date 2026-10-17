@@ -3,16 +3,14 @@
   import { pipelineStore } from '../stores/pipeline';
   import { FolderInput, ArrowLeft, Play } from '@lucide/svelte';
 
+  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+
   async function revealInFolder(filePath: string) {
+    if (!isTauri) return;
     try {
-      const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-      if (isTauri) {
-        const { open } = await import('@tauri-apps/plugin-shell');
-        const parentDir = filePath.substring(0, filePath.lastIndexOf('/')) || filePath.substring(0, filePath.lastIndexOf('\\')) || '.';
-        await open(parentDir);
-      } else {
-        alert(`[Симулятор] Открываем директорию файла: ${filePath}`);
-      }
+      const { open } = await import('@tauri-apps/plugin-shell');
+      const parentDir = filePath.substring(0, filePath.lastIndexOf('/')) || filePath.substring(0, filePath.lastIndexOf('\\')) || '.';
+      await open(parentDir);
     } catch (err) {
       console.error('Не удалось открыть локальную директорию:', err);
     }
@@ -60,13 +58,15 @@
             </div>
           </div>
 
-          <button 
-            on:click={() => revealInFolder(clip)}
-            class="btn py-2 px-3 border border-[rgba(226,226,224,0.15)] bg-transparent hover:bg-[#5865f2]/10 hover:border-[#5865f2] text-xs font-mono text-[rgba(226,226,224,0.7)] hover:text-[#e2e2e4] rounded-[2px] flex items-center gap-2 cursor-pointer transition-colors"
-          >
-            <FolderInput class="h-3.5 w-3.5 text-[#5865f2]" />
-            <span>Открыть папку</span>
-          </button>
+          {#if isTauri}
+            <button 
+              on:click={() => revealInFolder(clip)}
+              class="btn py-2 px-3 border border-[rgba(226,226,224,0.15)] bg-transparent hover:bg-[#5865f2]/10 hover:border-[#5865f2] text-xs font-mono text-[rgba(226,226,224,0.7)] hover:text-[#e2e2e4] rounded-[2px] flex items-center gap-2 cursor-pointer transition-colors"
+            >
+              <FolderInput class="h-3.5 w-3.5 text-[#5865f2]" />
+              <span>Открыть папку</span>
+            </button>
+          {/if}
         </div>
       {/each}
     </div>

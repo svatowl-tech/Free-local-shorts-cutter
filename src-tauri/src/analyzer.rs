@@ -58,25 +58,54 @@ pub async fn analyze_video(
 
     // Если модели нет или sidecar не установлен — генерируем быстрые эвристические ключевые точки сцен
     if !has_vision_model || !has_vision_sidecar {
-        log::info!("Модель qwen-vl-2b или llama-vision не обнаружены. Применяется быстрый энерго-анализ сцен без задержек.");
+        log::info!("Модель qwen-vl-2b или llama-vision не обнаружены. Применяется адаптивный анализ сцен с учетом длительности видео.");
         let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
             percent: 100.0,
-            stage: "fast_heuristic_pass".to_string(),
+            stage: "adaptive_scene_pass".to_string(),
             current_frame: 1,
             total_frames: 1,
         });
 
-        // Возвращаем базовые опорные метки с интервалом
+        // Получаем реальную длительность видео через probe_video
+        let duration = match crate::ffmpeg::probe_video(video_path.clone(), app_handle.clone()).await {
+            Ok(meta) if meta.duration > 3.0 => meta.duration,
+            _ => 180.0,
+        };
+
+        // Адаптивный шаг разбиения сцен
+        let step = if duration <= 60.0 {
+            10.0
+        } else if duration <= 300.0 {
+            20.0
+        } else if duration <= 1200.0 {
+            35.0
+        } else {
+            60.0
+        };
+
         let mut fallback_scenes = Vec::new();
-        // Генерируем несколько кандидатов для структуры
-        for i in 1..=12 {
+        let mut t = step / 2.0;
+        let mut scene_idx = 1;
+        while t < duration - 1.0 {
             fallback_scenes.push(SceneCandidate {
-                timestamp_sec: (i as f64) * 30.0,
-                description: "Сцена видео (энерго-детектор речи и звука)".to_string(),
+                timestamp_sec: t,
+                description: format!("Сцена #{} (ключевой момент {:.0}с)", scene_idx, t),
                 intensity: 0.65,
                 actions: vec!["диалог".to_string(), "динамика".to_string()],
             });
+            t += step;
+            scene_idx += 1;
         }
+
+        if fallback_scenes.is_empty() {
+            fallback_scenes.push(SceneCandidate {
+                timestamp_sec: duration / 2.0,
+                description: "Центральная сцена видео".to_string(),
+                intensity: 0.70,
+                actions: vec!["динамика".to_string()],
+            });
+        }
+
         return Ok(fallback_scenes);
     }
 

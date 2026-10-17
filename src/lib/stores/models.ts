@@ -40,74 +40,9 @@ const createModelsStore = () => {
     const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
 
     if (!isTauri) {
-      // Имитируем модели в браузере для демо-превью
-      console.log('Браузерная среда: Подключаем демонстрационные модели');
-      const demoModels: ModelInfo[] = [
-        {
-          id: 'whisper-tiny',
-          name: 'Whisper Tiny',
-          filename: 'ggml-tiny.bin',
-          url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
-          size_mb: 75,
-          description: 'Сверхбыстрая компактная модель для распознавания речи (75 MB)',
-          exists: false,
-          local_path: ''
-        },
-        {
-          id: 'whisper-base',
-          name: 'Whisper Base (Рекомендуется)',
-          filename: 'ggml-base.bin',
-          url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
-          size_mb: 148,
-          description: 'Стандартная и быстрая модель для большинства диалогов (148 MB)',
-          exists: true,
-          local_path: '/stub/models/ggml-base.bin'
-        },
-        {
-          id: 'whisper-small',
-          name: 'Whisper Small (Высокая точность)',
-          filename: 'ggml-small.bin',
-          url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
-          size_mb: 466,
-          description: 'Высокоточная модель для сложных условий записи (466 MB)',
-          exists: false,
-          local_path: ''
-        },
-        {
-          id: 'qwen-vl-2b',
-          name: 'Qwen2-VL 2B (Vision AI)',
-          filename: 'qwen-vl-2b.gguf',
-          url: 'https://huggingface.co/Qwen/Qwen2-VL-2B-Instruct-GGUF/resolve/main/qwen2-vl-2b-instruct-q4_k_m.gguf',
-          size_mb: 1700,
-          description: 'Локальный визуальный анализатор кадров и лиц (1.7 GB)',
-          exists: false,
-          local_path: ''
-        },
-        {
-          id: 'qwen-1.5b-chat',
-          name: 'Qwen2.5 1.5B Chat (Быстрый текст)',
-          filename: 'qwen-1.5b-chat.gguf',
-          url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
-          size_mb: 986,
-          description: 'Легковесная автономная модель анализа диалогов и хайлайтов (986 MB)',
-          exists: false,
-          local_path: ''
-        },
-        {
-          id: 'qwen-7b-chat',
-          name: 'Qwen2.5 7B Chat (Продвинутый ИИ)',
-          filename: 'qwen-7b-chat.gguf',
-          url: 'https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf',
-          size_mb: 4680,
-          description: 'Мощная автономная языковая модель глубокого анализа юмора и сюжета (4.6 GB)',
-          exists: false,
-          local_path: ''
-        }
-      ];
-
       update(s => ({
         ...s,
-        models: demoModels,
+        models: [],
         loading: false
       }));
       return;
@@ -155,45 +90,7 @@ const createModelsStore = () => {
     const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
 
     if (!isTauri) {
-      // Имитируем скачивание в браузере с постепенным прогрессом
-      update(s => {
-        const nextDownloads = { ...s.downloads };
-        nextDownloads[modelId] = {
-          progress: 0,
-          downloadedBytes: 0,
-          totalBytes: 100 * 1024 * 1024,
-          status: 'downloading'
-        };
-        return { ...s, downloads: nextDownloads };
-      });
-
-      let currentPct = 0;
-      const interval = setInterval(() => {
-        currentPct += 10;
-        update(s => {
-          const nextDownloads = { ...s.downloads };
-          if (currentPct >= 100) {
-            clearInterval(interval);
-            nextDownloads[modelId] = {
-              progress: 100,
-              downloadedBytes: 100 * 1024 * 1024,
-              totalBytes: 100 * 1024 * 1024,
-              status: 'completed'
-            };
-            const nextModels = s.models.map(m => m.id === modelId ? { ...m, exists: true, local_path: `/stub/models/${m.filename}` } : m);
-            return { ...s, downloads: nextDownloads, models: nextModels };
-          } else {
-            nextDownloads[modelId] = {
-              progress: currentPct,
-              downloadedBytes: Math.round((currentPct / 100) * 100 * 1024 * 1024),
-              totalBytes: 100 * 1024 * 1024,
-              status: 'downloading'
-            };
-            return { ...s, downloads: nextDownloads };
-          }
-        });
-      }, 300);
-
+      console.warn('Скачивание моделей доступно только в десктопном приложении Tauri');
       return;
     }
 

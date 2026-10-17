@@ -138,7 +138,7 @@ pub async fn analyze_text_with_llm(
                 }
 
                 let prompt = build_prompt(chunk);
-                match run_llama_cli(app_handle, &model_path.to_string_lossy(), &prompt).await {
+                match run_llama_cli(app_handle, &model_path.to_string_lossy(), &prompt, cancel_rx.resubscribe()).await {
                     Ok(result) => {
                         let batch_scores = parse_json_array(&result).unwrap_or_else(|| compute_text_scores_advanced(chunk));
                         all_scores.extend_from_slice(&batch_scores);
@@ -158,7 +158,7 @@ pub async fn analyze_text_with_llm(
 
     if config.engine == TextEngine::Ollama {
         let client = Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(60))
             .build()
             .unwrap_or_default();
 
@@ -191,12 +191,21 @@ pub async fn analyze_text_with_llm(
 fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
-        lines.push(format!("{}. \"{}\"", i + 1, frag.text.replace('\n', " ")));
+        lines.push(format!("{}. \"{}\"", i + 1, frag.text.replace(['\n', '\r'], " ")));
     }
+    let input_list = lines.join("\n");
     format!(
-        "Оцени каждую реплику по шкале от 0.0 до 1.0 (юмор, эмоции, динамика). \
-        Ответь строго JSON-массивом чисел: [0.8, 0.3]. Реплики:\n{}",
-        lines.join("\n")
+        "<|im_start|>system\n\
+        Ты профессиональный видеомонтажер и аналитик вовлекающего контента. \
+        Твоя задача — оценить каждую реплику по шкале от 0.0 до 1.0 на предмет виральности, эмоций, юмора, панчлайна или кульминации.\n\
+        ПРАВИЛО: Выведи ИСКЛЮЧИТЕЛЬНО валидный JSON-массив из {} чисел. Без пояснений, без вводных слов. Пример: [0.85, 0.20]\n\
+        <|im_end|>\n\
+        <|im_start|>user\n\
+        Оцени следующие реплики:\n{}\n\
+        <|im_end|>\n\
+        <|im_start|>assistant\n[",
+        fragments.len(),
+        input_list
     )
 }
 
@@ -225,32 +234,104 @@ async fn run_ollama(client: &Client, config: &TextAnalysisConfig, prompt: &str) 
     Ok(parsed.response)
 }
 
-async fn run_llama_cli(app_handle: &AppHandle, model_path: &str, prompt: &str) -> AppResult<String> {
+async fn run_llama_cli(
+    app_handle: &AppHandle, 
+    model_path: &str, 
+    prompt: &str,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<String> {
+    use tauri_plugin_shell::process::CommandEvent;
+
     let sidecar_command = app_handle.shell()
         .sidecar("llama-cli")
         .map_err(|e| AppError::Pipeline(format!("llama-cli не найден: {}", e)))?;
 
-    let output = sidecar_command
-        .args(["-m", model_path, "--prompt", prompt, "--json"])
-        .output()
-        .await
-        .map_err(|e| AppError::Pipeline(format!("Ошибка llama-cli: {}", e)))?;
+    let cmd = sidecar_command
+        .args([
+            "-m", model_path,
+            "-p", prompt,
+            "-n", "512",
+            "--temp", "0.2",
+            "--no-display-prompt"
+        ]);
 
-    if !output.status.success() {
-        let err_text = String::from_utf8_lossy(&output.stderr);
-        return Err(AppError::Pipeline(format!("llama-cli ошибка: {}", err_text)));
+    let (mut rx, child) = cmd.spawn()
+        .map_err(|e| AppError::Pipeline(format!("Не удалось запустить llama-cli: {}", e)))?;
+
+    let run_future = async {
+        let mut stdout_accum = String::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(bytes) => {
+                    stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
+                }
+                CommandEvent::Stderr(bytes) => {
+                    log::debug!("llama-cli stderr: {}", String::from_utf8_lossy(&bytes));
+                }
+                CommandEvent::Terminated(payload) => {
+                    if payload.code == Some(0) || !stdout_accum.trim().is_empty() {
+                        return Ok(stdout_accum);
+                    } else {
+                        return Err(AppError::Pipeline(format!("llama-cli завершился с ошибкой: {:?}", payload.code)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !stdout_accum.trim().is_empty() {
+            Ok(stdout_accum)
+        } else {
+            Err(AppError::Pipeline("Процесс llama-cli неожиданно прервался.".to_string()))
+        }
+    };
+
+    tokio::select! {
+        res = run_future => res,
+        _ = cancel_rx.recv() => {
+            let _ = child.kill();
+            Err(AppError::Pipeline("Анализ llama-cli отменен пользователем.".to_string()))
+        }
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 fn parse_json_array(text: &str) -> Option<Vec<f64>> {
-    let start = text.find('[')?;
-    let end = text.rfind(']')?;
-    
-    if start <= end {
-        let json_str = &text[start..=end];
-        serde_json::from_str(json_str).ok()
+    let cleaned = text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    // 1. Полноценный JSON-массив в квадратных скобках
+    if let (Some(start), Some(end)) = (cleaned.find('['), cleaned.rfind(']')) {
+        if start <= end {
+            let json_str = &cleaned[start..=end];
+            if let Ok(nums) = serde_json::from_str::<Vec<f64>>(json_str) {
+                return Some(nums);
+            }
+        }
+    }
+
+    // 2. Если ответ начинается с массива, но закрывающая скобка отсутствует из-за обрезки токенов
+    if cleaned.starts_with('[') && !cleaned.ends_with(']') {
+        let with_closing = format!("{}]", cleaned.trim_end().trim_end_matches(','));
+        if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_closing) {
+            return Some(nums);
+        }
+    }
+
+    // 3. Fallback: извлечение отдельных чисел через разделители
+    let inner = cleaned
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    let numbers: Vec<f64> = inner
+        .split(',')
+        .filter_map(|s| s.trim().parse::<f64>().ok())
+        .map(|n| n.max(0.0).min(1.0))
+        .collect();
+
+    if !numbers.is_empty() {
+        Some(numbers)
     } else {
         None
     }

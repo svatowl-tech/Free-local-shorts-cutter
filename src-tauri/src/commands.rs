@@ -214,11 +214,24 @@ pub async fn render_clips_from_fragments(
         hw_accel: true,
     };
 
-    let base_out_dir = config.output_dir.clone().map(PathBuf::from).unwrap_or_else(|| {
-        let mut d = video_buf.clone();
-        d.pop();
-        d
-    });
+    let base_out_dir = match config.output_dir.as_ref() {
+        Some(dir_str) if !dir_str.trim().is_empty() => {
+            let p = PathBuf::from(dir_str);
+            if p.is_absolute() {
+                p
+            } else {
+                let mut d = video_buf.clone();
+                d.pop();
+                d.join(p)
+            }
+        }
+        _ => {
+            let mut d = video_buf.clone();
+            d.pop();
+            d.join("output_cuts")
+        }
+    };
+    let _ = tokio::fs::create_dir_all(&base_out_dir).await;
 
     let mut generated_clips = Vec::new();
     let total_fragments = fragments.len();

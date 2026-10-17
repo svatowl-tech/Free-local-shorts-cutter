@@ -48,16 +48,6 @@
     }
   }
 
-  function loadDemoVideo() {
-    // Демо-видео для быстрого тестирования разметки Reels в веб-окружении
-    pipelineStore.setVideo({
-      name: 'demo_interview_podcast.mp4',
-      path: '/demo_videos/demo_interview_podcast.mp4',
-      size: 142000000,
-      duration: 180,
-      objectUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4'
-    });
-  }
 
   async function chooseVideoTauri() {
     try {
@@ -122,13 +112,29 @@
       const file = files[0];
       if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm)$/i.test(file.name)) {
         const objectUrl = URL.createObjectURL(file);
+        const filePath = (file as any).path || file.name;
         pipelineStore.setVideo({
           name: file.name,
-          path: (file as any).path || file.webkitRelativePath || `/drag-drop/videos/${file.name}`,
+          path: filePath,
           size: file.size,
-          duration: 180,
+          duration: 0,
           objectUrl
         });
+
+        // Если в среде Tauri и есть локальный путь — получаем метаданные через FFmpeg
+        if ((file as any).path) {
+          getVideoMetadata((file as any).path).then(meta => {
+            if (meta && meta.duration > 0) {
+              pipelineStore.setVideo({
+                name: file.name,
+                path: (file as any).path,
+                size: file.size,
+                duration: meta.duration,
+                objectUrl
+              });
+            }
+          }).catch(() => {});
+        }
       } else {
         pipelineStore.updateError('Пожалуйста, перетащите видеофайл проверенных форматов (MP4, MKV, MOV)');
       }
@@ -183,14 +189,10 @@
         Поддерживаются MP4, MOV, MKV, AVI, WEBM. Обработка локально.
       </p>
 
-      <button
-        type="button"
-        on:click|stopPropagation={loadDemoVideo}
-        class="label-mono px-3 py-1.5 bg-[#1e1e24] hover:bg-[#5865f2]/20 border border-[rgba(226,226,224,0.15)] hover:border-[#5865f2] rounded text-[#e2e2e4] text-xs transition-colors flex items-center gap-1.5"
-      >
-        <span>🎬</span>
-        <span>Загрузить тестовое видео для разметки</span>
-      </button>
+      <div class="label-mono px-3 py-1.5 bg-[#16161a] border border-[rgba(226,226,224,0.1)] rounded text-[rgba(226,226,224,0.7)] text-xs flex items-center gap-1.5">
+        <span>📁</span>
+        <span>Нажмите или перетащите файл для монтажа</span>
+      </div>
     </div>
   {:else}
     <!-- Selected video card -->
@@ -212,7 +214,9 @@
               <HardDrive class="h-3 w-3" />
               {formatBytes($pipelineStore.video.size)}
             </span>
-            <span>• Длительность: ~3 мин</span>
+            {#if $pipelineStore.video.duration && $pipelineStore.video.duration > 0}
+              <span>• Длительность: {Math.round($pipelineStore.video.duration)} сек</span>
+            {/if}
           </div>
           <p class="text-[10px] text-[rgba(226,226,224,0.4)] truncate font-mono mt-1.5 p-1 bg-[#16161a] border border-[rgba(226,226,224,0.08)] rounded-[2px]">
             {$pipelineStore.video.path}
