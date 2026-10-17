@@ -113,6 +113,18 @@ pub async fn analyze_video(
     ).await
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+pub struct FragmentDto {
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+pub struct PipelineResult {
+    pub clips: Vec<String>,
+    pub suggested_fragments: Vec<FragmentDto>,
+}
+
 /// Асинхронная команда: Оркестратор полного процесса от загрузки до клипов.
 #[tauri::command]
 pub async fn start_pipeline(
@@ -120,7 +132,7 @@ pub async fn start_pipeline(
     state: State<'_, AppState>,
     video_path: String,
     config: PipelineConfig,
-) -> AppResult<Vec<String>> {
+) -> AppResult<PipelineResult> {
     crate::logger::emit_log(&app, "IPC", "info", &format!("IPC: Получена команда start_pipeline для '{}'", video_path));
     
     let video_buf = PathBuf::from(&video_path);
@@ -132,20 +144,17 @@ pub async fn start_pipeline(
     
     let cancel_rx = state.cancel_tx.subscribe();
     
-    let results = crate::pipeline::orchestrator::run_pipeline(
+    let (results, suggested) = crate::pipeline::orchestrator::run_pipeline(
         video_buf, 
         config, 
         app, 
         cancel_rx
     ).await?;
 
-    Ok(results.into_iter().map(|p| p.to_string_lossy().to_string()).collect())
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
-pub struct FragmentDto {
-    pub start: f64,
-    pub end: f64,
+    Ok(PipelineResult {
+        clips: results.into_iter().map(|p| p.to_string_lossy().to_string()).collect(),
+        suggested_fragments: suggested,
+    })
 }
 
 /// Асинхронная команда: Ручной экспорт фрагментов (без ИИ анализа видео)

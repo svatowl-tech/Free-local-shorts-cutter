@@ -453,13 +453,15 @@ fn parse_json_array(text: &str) -> Option<Vec<f64>> {
         }
     }
 
-    // 3. Fallback: извлечение отдельных чисел через разделители
+    // 3. Fallback: извлечение отдельных чисел через любые стандартные разделители
     let inner = cleaned
         .trim_start_matches('[')
         .trim_end_matches(']');
     let numbers: Vec<f64> = inner
-        .split(',')
-        .filter_map(|s| s.trim().parse::<f64>().ok())
+        .split(|c: char| c == ',' || c == ';' || c == '\n' || c == ' ')
+        .map(|s| s.trim().trim_matches(|c: char| !c.is_numeric() && c != '.'))
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<f64>().ok())
         .map(|n| n.max(0.0).min(1.0))
         .collect();
 
@@ -483,17 +485,17 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
 
     fragments.iter().map(|f| {
         let txt = f.text.to_lowercase();
-        let mut score: f64 = 0.25; // Базовый уровень речи
+        let mut score: f64 = 0.45; // Базовый уровень значимости диалогов
 
         // 1. Восклицания и эмоциональные знаки
         if txt.contains('!') {
-            score += 0.25;
-        }
-        if txt.contains("!!") || txt.contains("?!") {
             score += 0.20;
         }
-        if txt.contains('?') {
+        if txt.contains("!!") || txt.contains("?!") {
             score += 0.15;
+        }
+        if txt.contains('?') {
+            score += 0.10;
         }
 
         // 2. Поиск маркеров эмоций/смеха/хайлайтов
@@ -511,15 +513,15 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
 
         if speech_rate > 3.0 {
             // Быстрая напряженная речь
-            score += 0.20;
+            score += 0.15;
         }
 
         // 4. Длина фразы
-        if txt.len() > 15 {
+        if txt.len() > 20 {
             score += 0.10;
         }
 
-        score.min(1.0).max(0.0)
+        score.min(0.95).max(0.20)
     }).collect()
 }
 

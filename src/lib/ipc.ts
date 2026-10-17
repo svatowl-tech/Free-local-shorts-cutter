@@ -99,9 +99,14 @@ export async function onAnalyzerProgress(callback: (payload: AnalyzerProgressPay
   return await listen<AnalyzerProgressPayload>('analyzer-progress', (event) => callback(event.payload));
 }
 
-export async function startPipeline(videoPath: string, config: PipelineConfig): Promise<string[]> {
+export interface PipelineResult {
+  clips: string[];
+  suggested_fragments: FragmentDto[];
+}
+
+export async function startPipeline(videoPath: string, config: PipelineConfig): Promise<PipelineResult> {
   try {
-    return await invoke<string[]>('start_pipeline', { videoPath, config });
+    return await invoke<PipelineResult>('start_pipeline', { videoPath, config });
   } catch (err) {
     throw new Error(`Ошибка pipeline: ${err}`);
   }
