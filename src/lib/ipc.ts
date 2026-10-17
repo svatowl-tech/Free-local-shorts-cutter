@@ -144,6 +144,17 @@ export async function onRenderProgress(callback: (payload: { percent: number; st
   return await listen<{ percent: number; stage: string }>('render-progress', (event) => callback(event.payload));
 }
 
+export interface PipelineLogPayload {
+  level: 'info' | 'warn' | 'error' | 'debug';
+  stage: string;
+  message: string;
+  timestamp: string;
+}
+
+export async function onPipelineLog(callback: (payload: PipelineLogPayload) => void) {
+  return await listen<PipelineLogPayload>('pipeline-log', (event) => callback(event.payload));
+}
+
 // РАЗДЕЛ: ИНТЕЛЛЕКТУАЛЬНЫЕ МОДЕЛИ И ИХ ЗАГРУЗКА
 export interface ModelInfo {
   id: string;

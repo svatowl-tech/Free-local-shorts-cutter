@@ -30,8 +30,19 @@ pub async fn extract_audio(
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<()> {
     let shell = app_handle.shell();
+    crate::logger::emit_log(
+        &app_handle,
+        "FFmpeg",
+        "info",
+        &format!("Запуск извлечения аудио дорожки: '{}' -> '{}'", video_path.display(), output_audio_path.display()),
+    );
+
     let command = shell.sidecar("ffmpeg")
-        .map_err(|e| AppError::Pipeline(format!("FFmpeg не обнаружен в ресурсах sidecar: {}. Убедитесь, что ресурсы настроены в tauri.conf.json", e)))?;
+        .map_err(|e| {
+            let err_msg = format!("FFmpeg не обнаружен в ресурсах sidecar: {}. Убедитесь, что бинарник настроен в tauri.conf.json", e);
+            crate::logger::emit_log(&app_handle, "FFmpeg", "error", &err_msg);
+            AppError::Pipeline(err_msg)
+        })?;
 
     let command = command.args([
         "-y", "-i", &video_path.to_string_lossy(),
@@ -40,13 +51,19 @@ pub async fn extract_audio(
     ]);
 
     let (mut rx, child) = command.spawn()
-        .map_err(|e| AppError::Pipeline(format!("Не удалось запустить процесс FFmpeg: {}", e)))?;
+        .map_err(|e| {
+            let err_msg = format!("Не удалось запустить процесс FFmpeg: {}", e);
+            crate::logger::emit_log(&app_handle, "FFmpeg", "error", &err_msg);
+            AppError::Pipeline(err_msg)
+        })?;
 
+    let app_handle_clone = app_handle.clone();
     let progress_future = async move {
         let mut total_duration: Option<f64> = None;
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stderr(bytes) => {
+                    crate::logger::emit_stream_lines(&app_handle_clone, "FFmpeg", "debug", &bytes);
                     let log_line = String::from_utf8_lossy(&bytes);
                     if total_duration.is_none() {
                         if let Some(pos) = log_line.find("Duration: ") {
@@ -54,6 +71,12 @@ pub async fn extract_audio(
                             if let Some(end_pos) = duration_part.find(',') {
                                 if let Some(secs) = parse_time_to_seconds(&duration_part[..end_pos]) {
                                     total_duration = Some(secs);
+                                    crate::logger::emit_log(
+                                        &app_handle_clone,
+                                        "FFmpeg",
+                                        "info",
+                                        &format!("Определена длительность аудиопотока: {:.2} сек", secs),
+                                    );
                                 }
                             }
                         }
@@ -64,7 +87,7 @@ pub async fn extract_audio(
                         if let Some(current_secs) = parse_time_to_seconds(&time_part[..space_pos]) {
                             if let Some(duration_secs) = total_duration {
                                 let percent = (current_secs / duration_secs * 100.0).min(100.0).max(0.0);
-                                let _ = app_handle.emit("ffmpeg-progress", FfmpegProgressPayload {
+                                let _ = app_handle_clone.emit("ffmpeg-progress", FfmpegProgressPayload {
                                     current_time: current_secs,
                                     duration: duration_secs,
                                     percent,
@@ -73,14 +96,30 @@ pub async fn extract_audio(
                         }
                     }
                 }
+                CommandEvent::Stdout(bytes) => {
+                    crate::logger::emit_stream_lines(&app_handle_clone, "FFmpeg", "debug", &bytes);
+                }
                 CommandEvent::Terminated(payload) => {
-                    if payload.code == Some(0) { return Ok(()); } 
-                    else { return Err(AppError::Pipeline(format!("FFmpeg завершился с кодом: {:?}", payload.code))); }
+                    if payload.code == Some(0) {
+                        crate::logger::emit_log(
+                            &app_handle_clone,
+                            "FFmpeg",
+                            "info",
+                            "Аудио дорожка 16kHz PCM успешно извлечена.",
+                        );
+                        return Ok(());
+                    } else {
+                        let err_msg = format!("FFmpeg завершился с кодом ошибки: {:?}", payload.code);
+                        crate::logger::emit_log(&app_handle_clone, "FFmpeg", "error", &err_msg);
+                        return Err(AppError::Pipeline(err_msg));
+                    }
                 }
                 _ => {}
             }
         }
-        Err(AppError::Pipeline("Процесс конвертации неожиданно прервался.".to_string()))
+        let err_msg = "Процесс конвертации FFmpeg неожиданно прервался.".to_string();
+        crate::logger::emit_log(&app_handle_clone, "FFmpeg", "error", &err_msg);
+        Err(AppError::Pipeline(err_msg))
     };
 
     tokio::select! {
@@ -106,19 +145,31 @@ pub async fn probe_video(
     let command = shell.sidecar("ffmpeg")
         .map_err(|e| AppError::Pipeline(format!("FFmpeg sidecar не найден: {}", e)))?;
 
+    crate::logger::emit_log(
+        &app_handle,
+        "FFmpeg",
+        "info",
+        &format!("Анализ метаданных исходного видео: '{}'", video_path.display()),
+    );
+
     let command = command.args([
         "-i", &video_path.to_string_lossy(),
         "-hide_banner",
     ]);
 
     let (mut rx, _child) = command.spawn()
-        .map_err(|e| AppError::Pipeline(format!("Не удалось запустить FFmpeg для анализа: {}", e)))?;
+        .map_err(|e| {
+            let err = format!("Не удалось запустить FFmpeg для анализа: {}", e);
+            crate::logger::emit_log(&app_handle, "FFmpeg", "error", &err);
+            AppError::Pipeline(err)
+        })?;
 
     let mut total_duration = 0.0;
     let mut codec = None;
 
     while let Some(event) = rx.recv().await {
         if let CommandEvent::Stderr(bytes) = event {
+            crate::logger::emit_stream_lines(&app_handle, "FFmpeg", "debug", &bytes);
             let log_line = String::from_utf8_lossy(&bytes);
             if total_duration == 0.0 {
                 if let Some(pos) = log_line.find("Duration: ") {
@@ -140,6 +191,13 @@ pub async fn probe_video(
             }
         }
     }
+
+    crate::logger::emit_log(
+        &app_handle,
+        "FFmpeg",
+        "info",
+        &format!("Метаданные видео определены: длительность = {:.2} сек, кодек = {:?}", total_duration, codec),
+    );
 
     Ok(VideoMetadata {
         duration: total_duration,

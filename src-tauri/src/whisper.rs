@@ -20,11 +20,20 @@ pub async fn transcribe_audio(
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<PathBuf> {
     let shell = app_handle.shell();
+    crate::logger::emit_log(
+        &app_handle,
+        "Whisper",
+        "info",
+        &format!("Инициализация ASR для аудиофайла: '{}'", audio_path.display()),
+    );
     
-    // Пытаемся получить команду sidecar "whisper". Для этого файл должен лежать
-    // в папке src-tauri/resources и называться, например, whisper-x86_64-pc-windows-msvc.exe
+    // Пытаемся получить команду sidecar "whisper".
     let command = shell.sidecar("whisper")
-        .map_err(|e| AppError::Pipeline(format!("Бинарник whisper.cpp не найден в sidecar ресурсах. Проверьте настройки tauri.conf.json и наличие файлов. Ошибка: {}", e)))?;
+        .map_err(|e| {
+            let err_msg = format!("Бинарник whisper.cpp не найден в sidecar ресурсах. Проверьте настройки tauri.conf.json: {}", e);
+            crate::logger::emit_log(&app_handle, "Whisper", "error", &err_msg);
+            AppError::Pipeline(err_msg)
+        })?;
 
     // Ищем модель в папке ресурсов или рядом с бинарником с помощью умного резолвера
     let model = match model_path {
@@ -36,11 +45,19 @@ pub async fn transcribe_audio(
     .or_else(|| crate::models::resolve_model_path(&app_handle, "models/ggml-base.bin"));
     
     let model = match model {
-        Some(m) if m.exists() => m,
+        Some(m) if m.exists() => {
+            crate::logger::emit_log(
+                &app_handle,
+                "Whisper",
+                "info",
+                &format!("Найдена модель распознавания речи: '{}'", m.display()),
+            );
+            m
+        },
         _ => {
-            return Err(AppError::Pipeline(
-                "Предустановленная модель Whisper (ggml-base.bin или ggml-tiny.bin) не найдена в папке models. Пожалуйста, убедитесь, что модель установлена или загрузите её во вкладке Моделей.".to_string(),
-            ));
+            let err_msg = "Предустановленная модель Whisper (ggml-base.bin / ggml-tiny.bin) не найдена в папке models. Загрузите модель во вкладке Моделей.".to_string();
+            crate::logger::emit_log(&app_handle, "Whisper", "error", &err_msg);
+            return Err(AppError::Pipeline(err_msg));
         }
     };
 
@@ -49,8 +66,13 @@ pub async fn transcribe_audio(
     let base_out = srt_base_name.to_string_lossy().to_string();
     let expected_srt_output = PathBuf::from(format!("{}.srt", base_out));
     
-    // Формируем аргументы для whisper.cpp (или whisper-cli)
-    // -m <model_file> -osrt -of <output_srt> <audio_path>
+    crate::logger::emit_log(
+        &app_handle,
+        "Whisper",
+        "info",
+        &format!("Запуск whisper.cpp (модель: {}, вывод: {}.srt)...", model.display(), base_out),
+    );
+
     let command = command.args([
         "-m", &model.to_string_lossy(),
         "-osrt", 
@@ -59,12 +81,15 @@ pub async fn transcribe_audio(
     ]);
 
     let (mut rx, child) = command.spawn()
-        .map_err(|e| AppError::Pipeline(format!("Не удалось запустить процесс whisper.cpp: {}", e)))?;
+        .map_err(|e| {
+            let err_msg = format!("Не удалось запустить процесс whisper.cpp: {}", e);
+            crate::logger::emit_log(&app_handle, "Whisper", "error", &err_msg);
+            AppError::Pipeline(err_msg)
+        })?;
 
-    // Запускаем асинхронное чтение событий процесса
+    let app_handle_clone = app_handle.clone();
     let progress_future = async move {
-        // Уведомление фронтенда о старте
-        let _ = app_handle.emit("whisper-progress", WhisperProgressPayload { 
+        let _ = app_handle_clone.emit("whisper-progress", WhisperProgressPayload { 
             percent: 0.0, 
             stage: "loading_model".to_string() 
         });
@@ -72,14 +97,14 @@ pub async fn transcribe_audio(
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stderr(bytes) | CommandEvent::Stdout(bytes) => {
+                    crate::logger::emit_stream_lines(&app_handle_clone, "Whisper", "debug", &bytes);
                     let log_line = String::from_utf8_lossy(&bytes);
                     
-                    // whisper.cpp выводит прогресс примерно как "progress = 42%"
                     if log_line.contains("progress =") {
                         if let Some(mut percent_str) = log_line.split("progress =").nth(1) {
                             percent_str = percent_str.trim().trim_end_matches('%');
                             if let Ok(pct) = percent_str.parse::<f64>() {
-                                let _ = app_handle.emit("whisper-progress", WhisperProgressPayload { 
+                                let _ = app_handle_clone.emit("whisper-progress", WhisperProgressPayload { 
                                     percent: pct, 
                                     stage: "transcribing".to_string() 
                                 });
@@ -89,19 +114,29 @@ pub async fn transcribe_audio(
                 }
                 CommandEvent::Terminated(payload) => {
                     if payload.code == Some(0) {
-                        let _ = app_handle.emit("whisper-progress", WhisperProgressPayload { 
+                        crate::logger::emit_log(
+                            &app_handle_clone,
+                            "Whisper",
+                            "info",
+                            &format!("Распознавание речи успешно завершено! Субтитры сохранены в '{}'", expected_srt_output.display()),
+                        );
+                        let _ = app_handle_clone.emit("whisper-progress", WhisperProgressPayload { 
                             percent: 100.0, 
                             stage: "saving".to_string() 
                         });
                         return Ok(expected_srt_output);
                     } else {
-                        return Err(AppError::Pipeline(format!("whisper.cpp завершился с ошибкой: {:?}", payload.code)));
+                        let err_msg = format!("whisper.cpp завершился с кодом ошибки: {:?}", payload.code);
+                        crate::logger::emit_log(&app_handle_clone, "Whisper", "error", &err_msg);
+                        return Err(AppError::Pipeline(err_msg));
                     }
                 }
                 _ => {}
             }
         }
-        Err(AppError::Pipeline("Процесс whisper неожиданно прервался.".to_string()))
+        let err_msg = "Процесс whisper неожиданно прервался.".to_string();
+        crate::logger::emit_log(&app_handle_clone, "Whisper", "error", &err_msg);
+        Err(AppError::Pipeline(err_msg))
     };
 
     // Ожидаем завершения или отмены

@@ -120,43 +120,101 @@ pub async fn analyze_text_with_llm(
         return Ok(Vec::new());
     }
 
-    // Если выбран Builtin или Auto без явных внешних сервисов — используем быстрый умный локальный семантический анализатор
-    if config.engine == TextEngine::Builtin || config.engine == TextEngine::Auto {
-        log::info!("Применяется высокоскоростной встроенный автономный NLP-движок анализа реплик ({} сегментов)", fragments.len());
+    // Если выбран Builtin или Auto — используем быстрый умный локальный семантический анализатор
+    if config.engine == TextEngine::Builtin {
+        crate::logger::emit_log(
+            app_handle,
+            "LLM",
+            "info",
+            &format!("Применяется высокоскоростной встроенный автономный NLP-движок анализа реплик (всего сегментов: {})", fragments.len()),
+        );
         return Ok(compute_text_scores_advanced(fragments));
     }
 
     if config.engine == TextEngine::LlamaCli {
+        crate::logger::emit_log(
+            app_handle,
+            "LLM",
+            "info",
+            &format!("Поиск весов модели для llama-cli: '{}'...", config.model_name),
+        );
         if let Some(model_path) = crate::models::resolve_model_path(app_handle, &config.model_name) {
-            log::info!("Запуск локального llama-cli с моделью: {}", model_path.display());
+            crate::logger::emit_log(
+                app_handle,
+                "LLM",
+                "info",
+                &format!("Запуск локального llama-cli с моделью: '{}'", model_path.display()),
+            );
             let mut all_scores = Vec::new();
             let batch_size = 15;
+            let total_batches = (fragments.len() + batch_size - 1) / batch_size;
 
-            for chunk in fragments.chunks(batch_size) {
+            for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
                 if cancel_rx.try_recv().is_ok() {
+                    crate::logger::emit_log(app_handle, "LLM", "warn", "Анализ отменен пользователем.");
                     return Err(AppError::Pipeline("Отменено пользователем".into()));
                 }
+
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "info",
+                    &format!("Пакет {}/{}: анализ {} реплик через llama-cli...", batch_idx + 1, total_batches, chunk.len()),
+                );
 
                 let prompt = build_prompt(chunk);
                 match run_llama_cli(app_handle, &model_path.to_string_lossy(), &prompt, cancel_rx.resubscribe()).await {
                     Ok(result) => {
-                        let batch_scores = parse_json_array(&result).unwrap_or_else(|| compute_text_scores_advanced(chunk));
-                        all_scores.extend_from_slice(&batch_scores);
+                        let parsed = parse_json_array(&result);
+                        if let Some(ref batch_scores) = parsed {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "info",
+                                &format!("Успешно получен JSON-ответ от llama-cli: {} оценок", batch_scores.len()),
+                            );
+                            all_scores.extend_from_slice(batch_scores);
+                        } else {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "warn",
+                                "Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.",
+                            );
+                            all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                        }
                     }
                     Err(e) => {
-                        log::warn!("llama-cli завершился с ошибкой: {}, переключаемся на встроенный NLP", e);
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "warn",
+                            &format!("llama-cli завершился с ошибкой: {}. Переключение на встроенный NLP для данного пакета.", e),
+                        );
                         all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
                     }
                 }
             }
             return Ok(all_scores);
         } else {
-            log::warn!("Модель для llama-cli '{}' не найдена. Применяется встроенный NLP-движок.", config.model_name);
+            crate::logger::emit_log(
+                app_handle,
+                "LLM",
+                "warn",
+                &format!("Модель для llama-cli '{}' не найдена. Применяется встроенный NLP-движок.", config.model_name),
+            );
             return Ok(compute_text_scores_advanced(fragments));
         }
     }
 
     if config.engine == TextEngine::Ollama {
+        crate::logger::emit_log(
+            app_handle,
+            "LLM",
+            "info",
+            &format!("Подключение к Ollama API: {} (модель: {})", config.ollama_url, config.model_name),
+        );
+
         let client = Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
@@ -164,20 +222,50 @@ pub async fn analyze_text_with_llm(
 
         let mut all_scores = Vec::new();
         let batch_size = 20;
+        let total_batches = (fragments.len() + batch_size - 1) / batch_size;
 
-        for chunk in fragments.chunks(batch_size) {
+        for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
             if cancel_rx.try_recv().is_ok() {
+                crate::logger::emit_log(app_handle, "LLM", "warn", "Анализ отменен пользователем.");
                 return Err(AppError::Pipeline("Отменено пользователем".into()));
             }
 
+            crate::logger::emit_log(
+                app_handle,
+                "LLM",
+                "info",
+                &format!("Пакет {}/{}: отправка {} реплик в Ollama...", batch_idx + 1, total_batches, chunk.len()),
+            );
+
             let prompt = build_prompt(chunk);
-            match run_ollama(&client, config, &prompt).await {
+            match run_ollama(&client, config, &prompt, app_handle).await {
                 Ok(result) => {
-                    let batch_scores = parse_json_array(&result).unwrap_or_else(|| compute_text_scores_advanced(chunk));
-                    all_scores.extend_from_slice(&batch_scores);
+                    let parsed = parse_json_array(&result);
+                    if let Some(ref batch_scores) = parsed {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "info",
+                            &format!("Успешный ответ от Ollama: получено {} оценок", batch_scores.len()),
+                        );
+                        all_scores.extend_from_slice(batch_scores);
+                    } else {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "warn",
+                            "Ollama вернула невалидный JSON. Применяется встроенный NLP анализ для пакета.",
+                        );
+                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                    }
                 }
                 Err(e) => {
-                    log::warn!("Ollama недоступна ({}). Мгновенное переключение на встроенный NLP анализ.", e);
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "warn",
+                        &format!("Ollama недоступна ({})! Переключение на встроенный NLP анализ для пакета.", e),
+                    );
                     all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
                 }
             }
@@ -185,6 +273,7 @@ pub async fn analyze_text_with_llm(
         return Ok(all_scores);
     }
 
+    crate::logger::emit_log(app_handle, "LLM", "info", "Расчет семантических оценок через встроенный NLP завершен.");
     Ok(compute_text_scores_advanced(fragments))
 }
 
@@ -209,7 +298,7 @@ fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     )
 }
 
-async fn run_ollama(client: &Client, config: &TextAnalysisConfig, prompt: &str) -> AppResult<String> {
+async fn run_ollama(client: &Client, config: &TextAnalysisConfig, prompt: &str, app_handle: &AppHandle) -> AppResult<String> {
     let url = format!("{}/api/generate", config.ollama_url.trim_end_matches('/'));
     
     let req_body = OllamaRequest {
@@ -218,18 +307,42 @@ async fn run_ollama(client: &Client, config: &TextAnalysisConfig, prompt: &str) 
         stream: false,
     };
 
+    crate::logger::emit_log(
+        app_handle,
+        "LLM",
+        "debug",
+        &format!("Ollama POST {} (длина промпта: {} символов)", url, prompt.len()),
+    );
+
     let resp = client.post(&url)
         .json(&req_body)
         .send()
         .await
-        .map_err(|e| AppError::Pipeline(format!("Ошибка POST-запроса Ollama: {}", e)))?;
+        .map_err(|e| {
+            let err_msg = format!("Ошибка POST-запроса Ollama: {}", e);
+            crate::logger::emit_log(app_handle, "LLM", "error", &err_msg);
+            AppError::Pipeline(err_msg)
+        })?;
 
     if !resp.status().is_success() {
-        return Err(AppError::Pipeline(format!("Неуспешный статус от Ollama: {}", resp.status())));
+        let err_msg = format!("Неуспешный HTTP-статус от Ollama: {}", resp.status());
+        crate::logger::emit_log(app_handle, "LLM", "error", &err_msg);
+        return Err(AppError::Pipeline(err_msg));
     }
 
     let parsed: OllamaResponse = resp.json().await
-        .map_err(|e| AppError::Pipeline(format!("Не удалось прочитать JSON от Ollama: {}", e)))?;
+        .map_err(|e| {
+            let err_msg = format!("Не удалось распарсить JSON-ответ от Ollama: {}", e);
+            crate::logger::emit_log(app_handle, "LLM", "error", &err_msg);
+            AppError::Pipeline(err_msg)
+        })?;
+
+    crate::logger::emit_log(
+        app_handle,
+        "LLM",
+        "debug",
+        &format!("Ollama ответ получен (длина: {} символов)", parsed.response.len()),
+    );
 
     Ok(parsed.response)
 }
@@ -244,7 +357,11 @@ async fn run_llama_cli(
 
     let sidecar_command = app_handle.shell()
         .sidecar("llama-cli")
-        .map_err(|e| AppError::Pipeline(format!("llama-cli не найден: {}", e)))?;
+        .map_err(|e| {
+            let err = format!("llama-cli не найден в sidecar ресурсах: {}", e);
+            crate::logger::emit_log(app_handle, "LLM", "error", &err);
+            AppError::Pipeline(err)
+        })?;
 
     let cmd = sidecar_command
         .args([
@@ -256,23 +373,37 @@ async fn run_llama_cli(
         ]);
 
     let (mut rx, child) = cmd.spawn()
-        .map_err(|e| AppError::Pipeline(format!("Не удалось запустить llama-cli: {}", e)))?;
+        .map_err(|e| {
+            let err = format!("Не удалось запустить процесс llama-cli: {}", e);
+            crate::logger::emit_log(app_handle, "LLM", "error", &err);
+            AppError::Pipeline(err)
+        })?;
 
-    let run_future = async {
+    let app_handle_clone = app_handle.clone();
+    let run_future = async move {
         let mut stdout_accum = String::new();
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
+                    crate::logger::emit_stream_lines(&app_handle_clone, "LLM", "debug", &bytes);
                     stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 CommandEvent::Stderr(bytes) => {
-                    log::debug!("llama-cli stderr: {}", String::from_utf8_lossy(&bytes));
+                    crate::logger::emit_stream_lines(&app_handle_clone, "LLM", "debug", &bytes);
                 }
                 CommandEvent::Terminated(payload) => {
                     if payload.code == Some(0) || !stdout_accum.trim().is_empty() {
+                        crate::logger::emit_log(
+                            &app_handle_clone,
+                            "LLM",
+                            "info",
+                            &format!("llama-cli завершился успешно (код {:?})", payload.code),
+                        );
                         return Ok(stdout_accum);
                     } else {
-                        return Err(AppError::Pipeline(format!("llama-cli завершился с ошибкой: {:?}", payload.code)));
+                        let err_msg = format!("llama-cli завершился с ошибкой: {:?}", payload.code);
+                        crate::logger::emit_log(&app_handle_clone, "LLM", "error", &err_msg);
+                        return Err(AppError::Pipeline(err_msg));
                     }
                 }
                 _ => {}
@@ -281,7 +412,9 @@ async fn run_llama_cli(
         if !stdout_accum.trim().is_empty() {
             Ok(stdout_accum)
         } else {
-            Err(AppError::Pipeline("Процесс llama-cli неожиданно прервался.".to_string()))
+            let err_msg = "Процесс llama-cli неожиданно прервался.".to_string();
+            crate::logger::emit_log(&app_handle_clone, "LLM", "error", &err_msg);
+            Err(AppError::Pipeline(err_msg))
         }
     };
 

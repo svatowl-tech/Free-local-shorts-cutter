@@ -41,7 +41,12 @@ pub async fn analyze_video(
     app_handle: AppHandle,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<Vec<SceneCandidate>> {
-    log::info!("Запуск адаптивного видео-анализа: {}", video_path.display());
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        &format!("Запуск анализа видео-сцен: '{}'", video_path.display()),
+    );
     
     let shell = app_handle.shell();
     
@@ -58,7 +63,12 @@ pub async fn analyze_video(
 
     // Если модели нет или sidecar не установлен — генерируем быстрые эвристические ключевые точки сцен
     if !has_vision_model || !has_vision_sidecar {
-        log::info!("Модель qwen-vl-2b или llama-vision не обнаружены. Применяется адаптивный анализ сцен с учетом длительности видео.");
+        crate::logger::emit_log(
+            &app_handle,
+            "Analyzer",
+            "info",
+            "Модель qwen-vl-2b или sidecar llama-vision не обнаружены. Применяется адаптивный расчет сцен по таймкодам.",
+        );
         let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
             percent: 100.0,
             stage: "adaptive_scene_pass".to_string(),

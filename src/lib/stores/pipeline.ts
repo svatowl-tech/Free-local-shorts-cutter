@@ -9,6 +9,8 @@ import {
   onPipelineProgress,
   onRenderProgress,
   onSuggestedFragments,
+  onPipelineLog,
+  type PipelineLogPayload,
   type PipelineConfig,
   type SubtitleStyle
 } from '../ipc';
@@ -29,6 +31,14 @@ export interface StageDetails {
   renderer?: { percent: number; stage: string };
 }
 
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  stage: string;
+  level: 'info' | 'warn' | 'error' | 'debug';
+  message: string;
+}
+
 export interface PipelineState {
   video: SelectedVideo | null;
   config: PipelineConfig;
@@ -39,6 +49,7 @@ export interface PipelineState {
   clips: string[];
   error: string | null;
   logs: string[];
+  detailedLogs: LogEntry[];
 }
 
 const DEFAULT_CONFIG: PipelineConfig = {
@@ -70,16 +81,48 @@ const createPipelineStore = () => {
     stageDetails: {},
     clips: [],
     error: null,
-    logs: []
+    logs: [],
+    detailedLogs: []
   });
   const { subscribe, set, update } = store;
 
-  // Вспомогательная функция добавления логов
-  const addLog = (text: string) => {
+  // Вспомогательная функция глубокого логирования с выводом в системную консоль браузера
+  const appendLog = (params: { message: string; stage?: string; level?: 'info' | 'warn' | 'error' | 'debug'; timestamp?: string }) => {
+    const ts = params.timestamp || new Date().toLocaleTimeString();
+    const stage = params.stage || 'Frontend';
+    const level = params.level || 'info';
+    const message = params.message;
+
+    // Вывод в системную консоль браузера (DevTools)
+    const prefix = `[${stage}][${ts}]`;
+    if (level === 'error') {
+      console.error(`%c${prefix}`, 'color: #ef4444; font-weight: bold;', message);
+    } else if (level === 'warn') {
+      console.warn(`%c${prefix}`, 'color: #f59e0b; font-weight: bold;', message);
+    } else if (level === 'debug') {
+      console.debug(`%c${prefix}`, 'color: #94a3b8;', message);
+    } else {
+      console.log(`%c${prefix}`, 'color: #3b82f6; font-weight: bold;', message);
+    }
+
+    const formattedLine = `[${ts}] [${stage}] ${message}`;
+    const entry: LogEntry = {
+      id: Math.random().toString(36).substring(2, 9),
+      timestamp: ts,
+      stage,
+      level,
+      message
+    };
+
     update(s => ({
       ...s,
-      logs: [...s.logs, `[${new Date().toLocaleTimeString()}] ${text}`]
+      logs: [...s.logs.slice(-2000), formattedLine],
+      detailedLogs: [...s.detailedLogs.slice(-2000), entry]
     }));
+  };
+
+  const addLog = (text: string, stage = 'App', level: 'info' | 'warn' | 'error' | 'debug' = 'info') => {
+    appendLog({ message: text, stage, level });
   };
 
   // Функция автоматической демо-симуляции процесса при запуске в браузере (не Tauri)
@@ -329,6 +372,10 @@ const createPipelineStore = () => {
       }
 
       try {
+        const unlistenPipelineLog = await onPipelineLog((p) => {
+          appendLog({ message: p.message, stage: p.stage, level: p.level, timestamp: p.timestamp });
+        });
+
         const unlistenFfmpeg = await onFfmpegProgress((payload) => {
           update(s => ({
             ...s,
@@ -389,11 +436,12 @@ const createPipelineStore = () => {
         const formattedFragments = fragments.map(f => ({ start: f.start, end: f.end }));
 
         const clipPaths = await renderClipsFromFragments(
-          videoPath,
-          formattedFragments,
-          { ...config, vertical_format: true }
+            videoPath,
+            formattedFragments,
+            { ...config, vertical_format: true }
         );
 
+        unlistenPipelineLog();
         unlistenFfmpeg();
         unlistenWhisper();
         unlistenRender();
@@ -462,6 +510,11 @@ const createPipelineStore = () => {
       addLog('Запуск профессионального видео-пайплайна в Rust-конвейере...');
 
       try {
+        // Подключаем сквозной сбор всех логов stdout/stderr бэкенда
+        const unlistenPipelineLog = await onPipelineLog((p) => {
+          appendLog({ message: p.message, stage: p.stage, level: p.level, timestamp: p.timestamp });
+        });
+
         // Подключаем слушатели событий прогресса Tauri
         const unlistenFfmpeg = await onFfmpegProgress((payload) => {
           update(s => ({
@@ -555,6 +608,7 @@ const createPipelineStore = () => {
         const clipPaths = await startPipeline(currentState.video.path, currentState.config);
 
         // Отписываемся от слушателей
+        unlistenPipelineLog();
         unlistenFfmpeg();
         unlistenWhisper();
         unlistenAnalyzer();
@@ -589,13 +643,51 @@ const createPipelineStore = () => {
           currentStage: 'Ошибка выполнения пайплайна',
           error: errorMsg
         }));
-        addLog(`КРИТИЧЕСКАЯ ОШИБКА: ${errorMsg}`);
+        addLog(`КРИТИЧЕСКАЯ ОШИБКА: ${errorMsg}`, 'Pipeline', 'error');
       }
+    },
+    copyLogsToClipboard: async () => {
+      const currentState = get(store);
+      const text = currentState.logs.join('\n');
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        appendLog({ message: 'Все логи успешно скопированы в буфер обмена', stage: 'UI', level: 'info' });
+      }
+    },
+    downloadLogsAsFile: () => {
+      const currentState = get(store);
+      const header = `=== Video Cutter Pro - Журнал логирования ===\nДата: ${new Date().toLocaleString()}\nВидео: ${currentState.video ? currentState.video.path : 'Не выбрано'}\nКонфигурация: ${JSON.stringify(currentState.config, null, 2)}\n===========================================\n\n`;
+      const text = header + currentState.logs.join('\n');
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `video_cutter_logs_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      appendLog({ message: 'Лог-файл успешно сохранен на диск', stage: 'UI', level: 'info' });
+    },
+    clearLogs: () => {
+      update(s => ({ ...s, logs: [], detailedLogs: [] }));
     }
   };
 };
 
 export const pipelineStore = createPipelineStore();
+
+export async function copyLogsToClipboard(): Promise<void> {
+  return await pipelineStore.copyLogsToClipboard();
+}
+
+export function downloadLogsAsFile(): void {
+  pipelineStore.downloadLogsAsFile();
+}
+
+export function clearLogs(): void {
+  pipelineStore.clearLogs();
+}
 
 export async function exportManualClips(videoPath: string, fragments: Fragment[], config: PipelineConfig): Promise<string[]> {
   return await pipelineStore.exportManualClips(videoPath, fragments, config);

@@ -12,8 +12,24 @@
     })();
   }
 
-  function handleCancel() {
-    pipelineStore.reset();
+  let copied = false;
+  let copiedTimeout: any = null;
+
+  async function handleCopyLogs() {
+    await pipelineStore.copyLogsToClipboard();
+    copied = true;
+    if (copiedTimeout) clearTimeout(copiedTimeout);
+    copiedTimeout = setTimeout(() => {
+      copied = false;
+    }, 2000);
+  }
+
+  function handleSaveLogs() {
+    pipelineStore.downloadLogsAsFile();
+  }
+
+  function handleClearLogs() {
+    pipelineStore.clearLogs();
   }
 </script>
 
@@ -112,15 +128,54 @@
     </div>
   {/if}
 
-  <!-- Monospace Log Terminal -->
-  <div class="space-y-2 flex-1 flex flex-col min-h-[160px]">
-    <div class="label-mono flex items-center justify-between">
-      <span>Консоль логирования бэкенда</span>
-      <span class="text-[#5865f2]">Tokio Channel</span>
+  <!-- Monospace Log Terminal with Action Toolbar -->
+  <div class="space-y-2 flex-1 flex flex-col min-h-[180px]">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <div class="label-mono flex items-center gap-2">
+        <span>Консоль логирования (FFmpeg / Whisper / LLM / Рендер)</span>
+        <span class="text-xs text-[rgba(226,226,224,0.4)] font-mono">({$pipelineStore.logs.length} строк)</span>
+      </div>
+      
+      <!-- Log Actions -->
+      <div class="flex items-center gap-2">
+        <button
+          type="button"
+          on:click={handleCopyLogs}
+          class="inline-flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-[2px] bg-[#16161a] hover:bg-[#202026] text-[#e2e2e4] border border-[rgba(226,226,224,0.15)] transition-colors cursor-pointer"
+          title="Скопировать весь лог в буфер обмена"
+        >
+          <svg class="w-3.5 h-3.5 text-[#5865f2]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+          </svg>
+          {copied ? 'Скопировано!' : 'Скопировать логи'}
+        </button>
+
+        <button
+          type="button"
+          on:click={handleSaveLogs}
+          class="inline-flex items-center gap-1.5 text-xs font-mono px-2.5 py-1 rounded-[2px] bg-[#16161a] hover:bg-[#202026] text-[#e2e2e4] border border-[rgba(226,226,224,0.15)] transition-colors cursor-pointer"
+          title="Сохранить лог в текстовый файл .txt"
+        >
+          <svg class="w-3.5 h-3.5 text-[#23c55e]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+          </svg>
+          Сохранить в файл
+        </button>
+
+        <button
+          type="button"
+          on:click={handleClearLogs}
+          class="text-xs font-mono px-2 py-1 rounded-[2px] bg-[#16161a] hover:bg-red-500/10 text-[rgba(226,226,224,0.5)] hover:text-red-400 border border-[rgba(226,226,224,0.1)] transition-colors cursor-pointer"
+          title="Очистить экран консоли"
+        >
+          Очистить
+        </button>
+      </div>
     </div>
+
     <div 
       bind:this={logContainer}
-      class="w-full flex-1 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] p-4 text-xs font-mono text-[rgba(226,226,224,0.7)] leading-relaxed overflow-y-auto max-h-[220px] space-y-1"
+      class="w-full flex-1 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] p-4 text-xs font-mono text-[rgba(226,226,224,0.7)] leading-relaxed overflow-y-auto max-h-[250px] space-y-1 select-text"
     >
       {#each $pipelineStore.logs as log}
         <div class="whitespace-pre-wrap select-text selection:bg-[#5865f2] selection:text-white">
@@ -128,7 +183,7 @@
         </div>
       {/each}
       {#if $pipelineStore.logs.length === 0}
-        <div class="text-[rgba(226,226,224,0.3)] italic">Ожидание инициализации логирования...</div>
+        <div class="text-[rgba(226,226,224,0.3)] italic">Ожидание событий процессов (FFmpeg, Whisper, LLM)...</div>
       {/if}
     </div>
   </div>

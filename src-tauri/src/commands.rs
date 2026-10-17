@@ -121,11 +121,13 @@ pub async fn start_pipeline(
     video_path: String,
     config: PipelineConfig,
 ) -> AppResult<Vec<String>> {
-    log::info!("IPC: start_pipeline: {}", video_path);
+    crate::logger::emit_log(&app, "IPC", "info", &format!("IPC: Получена команда start_pipeline для '{}'", video_path));
     
     let video_buf = PathBuf::from(&video_path);
     if !video_buf.exists() {
-        return Err(AppError::Anyhow(anyhow::anyhow!("Файл видео не найден: {}", video_path)));
+        let err = format!("Файл видео не найден: {}", video_path);
+        crate::logger::emit_log(&app, "IPC", "error", &err);
+        return Err(AppError::Anyhow(anyhow::anyhow!(err)));
     }
     
     let cancel_rx = state.cancel_tx.subscribe();

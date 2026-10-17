@@ -8,6 +8,7 @@ mod analyzer;
 mod text_analyzer;
 mod render;
 pub mod pipeline;
+pub mod logger;
 mod commands;
 mod models;
 

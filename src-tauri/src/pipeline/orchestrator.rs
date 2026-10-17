@@ -39,7 +39,12 @@ pub async fn run_pipeline(
     cancel_rx: Receiver<()>,
 ) -> AppResult<Vec<PathBuf>> {
     let mode = config.mode.clone().unwrap_or_else(|| "auto".to_string());
-    log::info!("Запуск надежного конвейера видео-обработки в режиме: {}", mode);
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        &format!("=== СТАРТ ПАЙПЛАЙНА ОБРАБОТКИ ВИДЕО: '{}' (Режим: {}, Текстовый движок: {}) ===", video_path.display(), mode, config.text_engine),
+    );
     
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 2.0, 
@@ -52,6 +57,12 @@ pub async fn run_pipeline(
     audio_output.set_file_name(format!("{}_pipeline_audio_{}.wav", file_stem, std::process::id()));
 
     // 1. Извлечение аудио-дорожки через FFmpeg (быстро и надежно)
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        "[Шаг 1/5] Извлечение аудио-дорожки в формат 16kHz WAV через FFmpeg...",
+    );
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 10.0, 
         stage: "Извлечение аудио дорожки (FFmpeg)...".to_string() 
@@ -65,6 +76,12 @@ pub async fn run_pipeline(
     ).await?;
 
     // 2. Распознавание речи через Whisper
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        "[Шаг 2/5] Распознавание речи и формирование субтитров (Whisper ASR)...",
+    );
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 30.0, 
         stage: "ASR: распознавание речи и титров (Whisper)...".to_string() 
@@ -77,9 +94,22 @@ pub async fn run_pipeline(
         app_handle.clone(),
         cancel_rx.resubscribe()
     ).await {
-        Ok(path) => Some(path),
+        Ok(path) => {
+            crate::logger::emit_log(
+                &app_handle,
+                "Pipeline",
+                "info",
+                &format!("Whisper успешно завершил транскрибацию: '{}'", path.display()),
+            );
+            Some(path)
+        },
         Err(e) => {
-            log::warn!("Whisper ASR завершился с предупреждением: {}. Продолжаем обработку.", e);
+            crate::logger::emit_log(
+                &app_handle,
+                "Pipeline",
+                "warn",
+                &format!("Whisper ASR завершился с предупреждением: {}. Продолжаем обработку на основе видео-сцен.", e),
+            );
             None
         }
     };
@@ -87,6 +117,7 @@ pub async fn run_pipeline(
     if mode == "manual" {
         // Очистка временного аудио
         let _ = tokio::fs::remove_file(&audio_output).await;
+        crate::logger::emit_log(&app_handle, "Pipeline", "info", "Ручной режим: аудио извлечено, готово к пользовательскому редактированию.");
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
             percent: 100.0, 
             stage: "Ручной режим готов к редактированию".to_string() 
@@ -95,6 +126,12 @@ pub async fn run_pipeline(
     }
 
     // 3. Анализ диалогов и семантики
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        &format!("[Шаг 3/5] Семантический ИИ-анализ реплик (Движок: {})...", config.text_engine),
+    );
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 60.0, 
         stage: "ИИ-анализ диалогов, эмоций и динамики...".to_string() 
@@ -217,6 +254,13 @@ pub async fn run_pipeline(
         .map(|(s, e, _)| crate::commands::FragmentDto { start: *s, end: *e })
         .collect();
 
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} лучших моментов", suggested_fragments.len()),
+    );
+
     // Отправляем найденные хайлайты во фронтенд для предпросмотра
     let _ = app_handle.emit("suggested-fragments", SuggestedPayload {
         fragments: suggested_fragments.clone(),
@@ -224,6 +268,12 @@ pub async fn run_pipeline(
 
     if mode == "confirm" {
         let _ = tokio::fs::remove_file(&audio_output).await;
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            "Режим подтверждения: фрагменты отправлены на таймлайн для подтверждения и экспорта пользователем.",
+        );
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
             percent: 100.0, 
             stage: "Хайлайты успешно найдены и готовы к предпросмотру".to_string() 
@@ -232,6 +282,12 @@ pub async fn run_pipeline(
     }
 
     // 6. Рендеринг клипов в автоматическом режиме
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        &format!("[Шаг 5/5] Автоматический рендеринг {} клипов (вертикально 9:16 = {})...", selected_intervals.len(), config.vertical_format),
+    );
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 88.0, 
         stage: "Рендеринг готовых видеоклипов (FFmpeg)...".to_string() 
@@ -262,6 +318,12 @@ pub async fn run_pipeline(
         }
     };
     let _ = tokio::fs::create_dir_all(&base_out_dir).await;
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        &format!("Директория сохранения клипов: '{}'", base_out_dir.display()),
+    );
 
     let total_clips = selected_intervals.len();
     for (i, (start_sec, end_sec, _)) in selected_intervals.iter().enumerate() {
@@ -274,6 +336,13 @@ pub async fn run_pipeline(
             percent: clip_percent,
             stage: format!("Рендеринг клипа {} из {}...", i + 1, total_clips),
         });
+
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            &format!("Запуск нарезки клипа {}/{}: {:.1}с -> {:.1}с (длительность {:.1}с)", i + 1, total_clips, start_sec, end_sec, duration),
+        );
 
         crate::render::render_clip(
             video_path.clone(),
@@ -291,6 +360,13 @@ pub async fn run_pipeline(
 
     // Очистка временного аудио
     let _ = tokio::fs::remove_file(&audio_output).await;
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        &format!("=== ПАЙПЛАЙН УСПЕШНО ЗАВЕРШЕН! Создано клипов: {} ===", generated_clips.len()),
+    );
 
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 100.0, 

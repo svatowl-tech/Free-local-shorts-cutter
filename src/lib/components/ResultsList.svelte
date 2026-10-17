@@ -72,6 +72,31 @@
     </div>
   </div>
 
+  <!-- Log Actions on Complete -->
+  <div class="p-3 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] flex flex-wrap items-center justify-between gap-3">
+    <div class="text-xs font-mono text-[rgba(226,226,224,0.6)]">
+      Журнал выполнения ({$pipelineStore.logs.length} записей)
+    </div>
+    <div class="flex items-center gap-2">
+      <button 
+        type="button"
+        on:click={() => pipelineStore.copyLogsToClipboard()}
+        class="btn py-1.5 px-3 border border-[rgba(226,226,224,0.15)] bg-[#16161a] hover:bg-[#202026] text-xs font-mono text-[#e2e2e4] rounded-[2px] flex items-center gap-1.5 cursor-pointer"
+      >
+        <span>📋</span>
+        <span>Скопировать логи</span>
+      </button>
+      <button 
+        type="button"
+        on:click={() => pipelineStore.downloadLogsAsFile()}
+        class="btn py-1.5 px-3 border border-[rgba(226,226,224,0.15)] bg-[#16161a] hover:bg-[#202026] text-xs font-mono text-[#e2e2e4] rounded-[2px] flex items-center gap-1.5 cursor-pointer"
+      >
+        <span>💾</span>
+        <span>Сохранить в файл</span>
+      </button>
+    </div>
+  </div>
+
   <!-- Reset Button -->
   <button 
     on:click={handleReset}
