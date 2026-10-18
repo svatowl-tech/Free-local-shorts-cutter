@@ -35,6 +35,12 @@ fs.mkdirSync(resourcesDir, { recursive: true });
 fs.mkdirSync(modelsDir, { recursive: true });
 fs.mkdirSync(tempDir, { recursive: true });
 
+// Гарантируем наличие placeholder.dll для маски resources/*.dll в tauri.conf.json на всех ОС
+const placeholderDll = path.join(resourcesDir, 'placeholder.dll');
+if (!fs.existsSync(placeholderDll)) {
+    fs.writeFileSync(placeholderDll, '# Placeholder DLL file for tauri glob matching\n');
+}
+
 // Ссылки на архивы
 const isWindows = target.includes('windows');
 const isMac = target.includes('apple-darwin');

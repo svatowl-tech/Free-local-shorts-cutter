@@ -494,11 +494,8 @@ const createPipelineStore = () => {
           error: errorMsg
         }));
         addLog(`ОШИБКА ЭКСПОРТА: ${errorMsg}`);
-        throw err;
       }
     },
-    exportManualClips: (videoPath: string, fragments: Fragment[], config: PipelineConfig) => 
-      exportManualClips(videoPath, fragments, config),
     exportAndRenderClips: async (fragments: any[]) => {
       const currentState = get(store);
       if (!currentState.video) return;

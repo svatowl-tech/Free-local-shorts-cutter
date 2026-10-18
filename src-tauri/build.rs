@@ -15,10 +15,15 @@ fn main() {
     fs::create_dir_all(models_dir).unwrap();
     fs::create_dir_all(temp_download_dir).unwrap();
 
-    // Создаем плейсхолдер в models/, чтобы glob models/* в tauri.conf.json никогда не падал в пустой сборке
+    // Создаем плейсхолдер в models/ и resources/, чтобы glob в tauri.conf.json никогда не падал
     let placeholder_path = models_dir.join("placeholder.txt");
     if !placeholder_path.exists() {
         let _ = fs::write(placeholder_path, "Local AI models go here.");
+    }
+
+    let dll_placeholder_path = resources_dir.join("placeholder.dll");
+    if !dll_placeholder_path.exists() {
+        let _ = fs::write(dll_placeholder_path, "Placeholder for DLL files.");
     }
 
     // Определяем текущий target triple (например, x86_64-pc-windows-msvc)
