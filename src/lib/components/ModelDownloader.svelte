@@ -40,13 +40,14 @@
   }
 </script>
 
-<!-- Backdrop -->
+<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions a11y_interactive_supports_focus -->
 <div 
   class="fixed inset-0 bg-[#0c0c0e]/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" 
   on:click|self={onClose} 
   role="dialog" 
   aria-modal="true" 
   aria-label="Менеджер моделей"
+  tabindex="0"
 >
   <div class="panel w-full max-w-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh] bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[4px]">
     

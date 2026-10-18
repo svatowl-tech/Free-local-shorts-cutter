@@ -325,6 +325,7 @@
           </div>
 
           <!-- Левая ручка изменения размера (Start Resize Handle) -->
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
           <div 
             class="resize-handle absolute top-0 bottom-0 left-0 w-3 cursor-ew-resize bg-white/5 hover:bg-[#5865f2] flex items-center justify-center transition-colors z-30"
             on:mousedown={(e) => startResizeLeft(frag, e)}
@@ -337,6 +338,7 @@
           </div>
 
           <!-- Правая ручка изменения размера (End Resize Handle) -->
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions a11y_click_events_have_key_events -->
           <div 
             class="resize-handle absolute top-0 bottom-0 right-0 w-3 cursor-ew-resize bg-white/5 hover:bg-[#5865f2] flex items-center justify-center transition-colors z-30"
             on:mousedown={(e) => startResizeRight(frag, e)}

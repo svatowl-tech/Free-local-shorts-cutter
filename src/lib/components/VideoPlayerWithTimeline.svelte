@@ -375,7 +375,7 @@
 
       <!-- Большой Play индикатор по центру при паузе -->
       {#if !isPlaying}
-        <!-- svelte-ignore a11y-no-static-element-interactions -->
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
         <div 
           on:click={togglePlay}
           class="absolute inset-0 flex items-center justify-center bg-black/20 cursor-pointer z-20"
