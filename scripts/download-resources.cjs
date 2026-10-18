@@ -44,7 +44,7 @@ let ffmpegUrl, whisperUrl, llamaUrl, ffprobeUrl;
 if (isWindows) {
     ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
     ffprobeUrl = ffmpegUrl;
-    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip';
+    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip';
     llamaUrl = 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip';
 } else if (isMac) {
     ffmpegUrl = 'https://evermeet.cx/ffmpeg/getrelease/zip';
@@ -317,6 +317,9 @@ async function downloadSidecars() {
             }
         }
 
+        // Копируем все зависимые DLL (whisper.dll, ggml.dll, cublas, cudart, SDL2 и т.д.)
+        copyAllDlls(extractPath, resourcesDir);
+
         if (srcBin) {
             fs.copyFileSync(srcBin, outPath);
             console.log(`✓ Успешно установлен: ${outPath} (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(1)} MB)`);
@@ -332,6 +335,22 @@ async function downloadSidecars() {
         }
 
         fs.rmSync(extractPath, { recursive: true, force: true });
+    }
+}
+
+// Рекурсивное копирование всех DLL библиотек из архива
+function copyAllDlls(fromDir, toDir) {
+    if (!fs.existsSync(fromDir)) return;
+    const entries = fs.readdirSync(fromDir, { withFileTypes: true });
+    for (const entry of entries) {
+        const fullPath = path.join(fromDir, entry.name);
+        if (entry.isDirectory()) {
+            copyAllDlls(fullPath, toDir);
+        } else if (entry.name.toLowerCase().endsWith('.dll')) {
+            const destDll = path.join(toDir, entry.name);
+            fs.copyFileSync(fullPath, destDll);
+            console.log(`✓ Скопирована зависимость DLL: ${entry.name} (${(fs.statSync(destDll).size / (1024 * 1024)).toFixed(1)} MB)`);
+        }
     }
 }
 

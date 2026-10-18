@@ -135,6 +135,7 @@ pub async fn extract_audio(
 pub struct VideoMetadata {
     pub duration: f64,
     pub codec: Option<String>,
+    pub size: u64,
 }
 
 pub async fn probe_video(
@@ -151,6 +152,11 @@ pub async fn probe_video(
         "info",
         &format!("Анализ метаданных исходного видео: '{}'", video_path.display()),
     );
+
+    let file_size = tokio::fs::metadata(&video_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
 
     let command = command.args([
         "-i", &video_path.to_string_lossy(),
@@ -196,11 +202,176 @@ pub async fn probe_video(
         &app_handle,
         "FFmpeg",
         "info",
-        &format!("Метаданные видео определены: длительность = {:.2} сек, кодек = {:?}", total_duration, codec),
+        &format!("Метаданные видео определены: длительность = {:.2} сек, размер = {} байт, кодек = {:?}", total_duration, file_size, codec),
     );
 
     Ok(VideoMetadata {
         duration: total_duration,
         codec,
+        size: file_size,
     })
+}
+
+/// Фактор 1: Детекция активных звуковых участков через FFmpeg silencedetect
+pub async fn detect_audio_activity(
+    audio_path: PathBuf,
+    total_duration: f64,
+    app_handle: AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<Vec<(f64, f64)>> {
+    let shell = app_handle.shell();
+    let command = shell.sidecar("ffmpeg")
+        .map_err(|e| AppError::Pipeline(format!("FFmpeg sidecar не найден: {}", e)))?;
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        "Анализ аудио-энергии и поиск речевой активности через FFmpeg silencedetect...",
+    );
+
+    let command = command.args([
+        "-y",
+        "-i", &audio_path.to_string_lossy(),
+        "-af", "silencedetect=noise=-32dB:d=0.6",
+        "-f", "null",
+        "-",
+    ]);
+
+    let (mut rx, child) = command.spawn()
+        .map_err(|e| AppError::Pipeline(format!("Ошибка запуска FFmpeg silencedetect: {}", e)))?;
+
+    let mut silence_starts: Vec<f64> = Vec::new();
+    let mut silence_ends: Vec<f64> = Vec::new();
+
+    let analyze_fut = async {
+        while let Some(event) = rx.recv().await {
+            if let CommandEvent::Stderr(bytes) = event {
+                let text = String::from_utf8_lossy(&bytes);
+                for line in text.lines() {
+                    if let Some(pos) = line.find("silence_start: ") {
+                        let sub = &line[pos + 15..];
+                        let val_str = sub.split_whitespace().next().unwrap_or("");
+                        if let Ok(t) = val_str.parse::<f64>() {
+                            silence_starts.push(t);
+                        }
+                    } else if let Some(pos) = line.find("silence_end: ") {
+                        let sub = &line[pos + 13..];
+                        let val_str = sub.split_whitespace().next().unwrap_or("");
+                        if let Ok(t) = val_str.parse::<f64>() {
+                            silence_ends.push(t);
+                        }
+                    }
+                }
+            } else if let CommandEvent::Terminated(_) = event {
+                break;
+            }
+        }
+        Ok::<(), AppError>(())
+    };
+
+    tokio::select! {
+        res = analyze_fut => res?,
+        _ = cancel_rx.recv() => {
+            let _ = child.kill();
+            return Err(AppError::Pipeline("Анализ звука отменен пользователем.".to_string()));
+        }
+    }
+
+    // Сопоставляем интервалы звучания (между паузами)
+    let mut active_ranges: Vec<(f64, f64)> = Vec::new();
+    let mut current_pos = 0.0;
+
+    for (i, &s_start) in silence_starts.iter().enumerate() {
+        if s_start > current_pos + 1.0 {
+            active_ranges.push((current_pos, s_start));
+        }
+        if let Some(&s_end) = silence_ends.get(i) {
+            current_pos = s_end;
+        } else {
+            current_pos = s_start + 1.0;
+        }
+    }
+    if current_pos < total_duration - 1.0 {
+        active_ranges.push((current_pos, total_duration));
+    }
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        &format!("Обнаружено {} активных эмоциональных звуковых сегментов.", active_ranges.len()),
+    );
+
+    Ok(active_ranges)
+}
+
+/// Фактор 2: Детекция смены сцен и динамических кадров через FFmpeg select='gt(scene,0.35)'
+pub async fn detect_scene_changes(
+    video_path: PathBuf,
+    app_handle: AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<Vec<f64>> {
+    let shell = app_handle.shell();
+    let command = shell.sidecar("ffmpeg")
+        .map_err(|e| AppError::Pipeline(format!("FFmpeg sidecar не найден: {}", e)))?;
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        "Поиск динамичных смен сцен через фильтр FFmpeg select='gt(scene,0.35)'...",
+    );
+
+    let command = command.args([
+        "-y",
+        "-i", &video_path.to_string_lossy(),
+        "-filter_complex", "select='gt(scene,0.35)',showinfo",
+        "-f", "null",
+        "-",
+    ]);
+
+    let (mut rx, child) = command.spawn()
+        .map_err(|e| AppError::Pipeline(format!("Ошибка запуска FFmpeg scene detect: {}", e)))?;
+
+    let mut scene_times: Vec<f64> = Vec::new();
+
+    let scene_fut = async {
+        while let Some(event) = rx.recv().await {
+            if let CommandEvent::Stderr(bytes) = event {
+                let text = String::from_utf8_lossy(&bytes);
+                for line in text.lines() {
+                    if line.contains("Parsed_showinfo") && line.contains("pts_time:") {
+                        if let Some(pos) = line.find("pts_time:") {
+                            let sub = &line[pos + 9..];
+                            let val_str = sub.split_whitespace().next().unwrap_or("");
+                            if let Ok(t) = val_str.parse::<f64>() {
+                                scene_times.push(t);
+                            }
+                        }
+                    }
+                }
+            } else if let CommandEvent::Terminated(_) = event {
+                break;
+            }
+        }
+        Ok::<(), AppError>(())
+    };
+
+    tokio::select! {
+        res = scene_fut => res?,
+        _ = cancel_rx.recv() => {
+            let _ = child.kill();
+            return Err(AppError::Pipeline("Анализ смены сцен отменен пользователем.".to_string()));
+        }
+    }
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        &format!("Обнаружено {} ключевых смен кадров/сцен.", scene_times.len()),
+    );
+
+    Ok(scene_times)
 }

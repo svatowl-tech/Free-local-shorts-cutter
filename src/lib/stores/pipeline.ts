@@ -10,6 +10,8 @@ import {
   onRenderProgress,
   onSuggestedFragments,
   onPipelineLog,
+  cancelPipeline as ipcCancelPipeline,
+  openFolder as ipcOpenFolder,
   type PipelineLogPayload,
   type PipelineConfig,
   type SubtitleStyle
@@ -278,7 +280,10 @@ const createPipelineStore = () => {
         return newState;
       });
       if (video) {
-        addLog(`Выбран исходный видеофайл: ${video.name} (${Math.round(video.size / (1024 * 1024))} МБ)`);
+        const sizeStr = video.size > 0 
+          ? ` (${(video.size / (1024 * 1024)).toFixed(1)} МБ)` 
+          : '';
+        addLog(`Выбран исходный видеофайл: ${video.name}${sizeStr}`);
       } else {
         addLog('Выбор видеофайла сброшен');
       }
@@ -292,6 +297,28 @@ const createPipelineStore = () => {
     },
     updateError: (error: string | null) => {
       update(s => ({ ...s, error }));
+    },
+    cancelPipeline: async () => {
+      try {
+        await ipcCancelPipeline();
+      } catch (err) {
+        console.warn('Ошибка вызова cancel_pipeline:', err);
+      }
+      update(s => ({
+        ...s,
+        status: 'idle',
+        currentStage: 'Операция отменена пользователем',
+        percentage: 0,
+        stageDetails: {}
+      }));
+      addLog('Операция отменена пользователем.', 'Pipeline', 'warn');
+    },
+    openFolder: async (folderPath: string) => {
+      try {
+        await ipcOpenFolder(folderPath);
+      } catch (err) {
+        console.error('Ошибка открытия папки:', err);
+      }
     },
     reset: () => {
       set({
@@ -470,7 +497,8 @@ const createPipelineStore = () => {
         throw err;
       }
     },
-
+    exportManualClips: (videoPath: string, fragments: Fragment[], config: PipelineConfig) => 
+      exportManualClips(videoPath, fragments, config),
     exportAndRenderClips: async (fragments: any[]) => {
       const currentState = get(store);
       if (!currentState.video) return;
@@ -618,16 +646,7 @@ const createPipelineStore = () => {
           fragmentsStore.set(mapped);
           addLog(`✓ Успешно выделено ${mapped.length} хайлайт-фрагментов на таймлайне.`);
         } else {
-          addLog('Автоматическая генерация резервных хайлайтов по длительности видео...', 'Pipeline', 'info');
-          const dur = currentState.video?.duration || 60;
-          const clipDur = Math.min(currentState.config.max_clip_duration_sec || 30, dur);
-          const fallbackFrags = [
-            { id: 'fb1', start: 0, end: Math.min(clipDur, dur), title: 'Клип #1' },
-            ...(dur > 60 ? [{ id: 'fb2', start: Math.round(dur / 2 - clipDur / 2), end: Math.round(dur / 2 + clipDur / 2), title: 'Клип #2' }] : []),
-            ...(dur > 120 ? [{ id: 'fb3', start: Math.max(0, dur - clipDur), end: dur, title: 'Клип #3' }] : [])
-          ];
-          fragmentsStore.set(fallbackFrags);
-          addLog(`✓ Сформировано ${fallbackFrags.length} резервных хайлайтов на таймлайне.`);
+          addLog('Пайплайн завершил отбор: сформировано 0 фрагментов.', 'Pipeline', 'warn');
         }
 
         // Даем слушателям событий завершить чтение потока перед отпиской
@@ -694,15 +713,6 @@ const createPipelineStore = () => {
       URL.revokeObjectURL(url);
       appendLog({ message: 'Лог-файл успешно сохранен на диск', stage: 'UI', level: 'info' });
     },
-    cancelPipeline: () => {
-      update(s => ({
-        ...s,
-        status: "idle",
-        currentStage: "Операция отменена пользователем",
-        percentage: 0
-      }));
-      appendLog({ message: "Операция отменена пользователем.", stage: "Pipeline", level: "warn" });
-    },
     clearLogs: () => {
       update(s => ({ ...s, logs: [], detailedLogs: [] }));
     }
@@ -725,4 +735,12 @@ export function clearLogs(): void {
 
 export async function exportManualClips(videoPath: string, fragments: Fragment[], config: PipelineConfig): Promise<string[]> {
   return await pipelineStore.exportManualClips(videoPath, fragments, config);
+}
+
+export async function cancelPipeline(): Promise<void> {
+  return await pipelineStore.cancelPipeline();
+}
+
+export async function openFolder(folderPath: string): Promise<void> {
+  return await pipelineStore.openFolder(folderPath);
 }

@@ -65,10 +65,10 @@ pub async fn run_pipeline(
         _ => 180.0,
     };
 
-    // Генерируем временный путь для аудио
-    let mut audio_output = video_path.clone();
+    // Генерируем временный путь для аудио в системной temp_dir
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     let file_stem = video_path.file_stem().and_then(|s| s.to_str()).unwrap_or("extracted");
-    audio_output.set_file_name(format!("{}_pipeline_audio_{}.wav", file_stem, std::process::id()));
+    let audio_output = std::env::temp_dir().join(format!("vc_pipe_audio_{}_{}.wav", std::process::id(), ts));
 
     // 1. Извлечение аудио-дорожки через FFmpeg (быстро и надежно)
     crate::logger::emit_log(
@@ -321,25 +321,6 @@ pub async fn run_pipeline(
         }
     }
 
-    // Абсолютная гарантия: если по какой-то причине selected_intervals пуст, создаем минимум 3 умных хайлайта по всей длине видео
-    if selected_intervals.is_empty() && video_duration > 5.0 {
-        crate::logger::emit_log(
-            &app_handle,
-            "Pipeline",
-            "warn",
-            "Внимание: не найдено интервалов по стандартным критериям. Задействован гарантированный алгоритм генерации топ-хайлайтов.",
-        );
-        let num_clips = if video_duration < 30.0 { 1 } else if video_duration < 90.0 { 3 } else { 5 };
-        let step = video_duration / (num_clips as f64 + 1.0);
-        for i in 1..=num_clips {
-            let start = (step * (i as f64) - (clip_duration / 2.0)).max(0.0).min(video_duration - clip_duration);
-            let end = (start + clip_duration).min(video_duration);
-            if end - start >= 2.0 {
-                selected_intervals.push((start, end, 0.8 - (i as f64 * 0.02)));
-            }
-        }
-    }
-
     // Сортируем по времени начала
     selected_intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -402,36 +383,46 @@ pub async fn run_pipeline(
         hw_accel: true,
     };
 
-    let base_out_dir = match config.output_dir.as_ref() {
-        Some(dir_str) if !dir_str.trim().is_empty() => {
-            let p = PathBuf::from(dir_str);
-            if p.is_absolute() {
-                p
-            } else {
-                let mut d = video_path.clone();
-                d.pop();
-                d.join(p)
-            }
+    let video_parent = video_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let project_dir = video_parent.join(format!("{}_Проект", file_stem));
+    let clips_dir = project_dir.join("Готовые клипы");
+    let _ = tokio::fs::create_dir_all(&clips_dir).await;
+
+    // Копируем файл субтитров в папку проекта, если они были созданы
+    if let Some(ref srt) = srt_path {
+        if srt.exists() {
+            let subs_dir = project_dir.join("Субтитры");
+            let _ = tokio::fs::create_dir_all(&subs_dir).await;
+            let dest_srt = subs_dir.join(format!("{}_Субтитры.srt", file_stem));
+            let _ = tokio::fs::copy(srt, &dest_srt).await;
         }
-        _ => {
-            let mut d = video_path.clone();
-            d.pop();
-            d.join("output_cuts")
-        }
-    };
-    let _ = tokio::fs::create_dir_all(&base_out_dir).await;
+    }
+
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
         "info",
-        &format!("Директория сохранения клипов: '{}'", base_out_dir.display()),
+        &format!("Директория сохранения клипов проекта: '{}'", clips_dir.display()),
     );
 
     let total_clips = selected_intervals.len();
     for (i, (start_sec, end_sec, _)) in selected_intervals.iter().enumerate() {
         let duration = end_sec - start_sec;
-        let mut clip_path = base_out_dir.clone();
-        clip_path.push(format!("{}_clip_{}_start_{}s.mp4", file_stem, i + 1, *start_sec as u32));
+
+        let start_min = (start_sec / 60.0) as u32;
+        let start_s = (start_sec % 60.0) as u32;
+        let end_min = (end_sec / 60.0) as u32;
+        let end_s = (end_sec % 60.0) as u32;
+
+        let clip_filename = format!(
+            "Клип {:02} [{:02}m{:02}s - {:02}m{:02}s].mp4",
+            i + 1,
+            start_min,
+            start_s,
+            end_min,
+            end_s
+        );
+        let clip_path = clips_dir.join(clip_filename);
 
         let clip_percent = 88.0 + ((i as f64 + 1.0) / total_clips as f64) * 10.0;
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
@@ -460,8 +451,11 @@ pub async fn run_pipeline(
         generated_clips.push(clip_path);
     }
 
-    // Очистка временного аудио
+    // Гарантированная очистка всех временных файлов
     let _ = tokio::fs::remove_file(&audio_output).await;
+    if let Some(ref srt) = srt_path {
+        let _ = tokio::fs::remove_file(srt).await;
+    }
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",

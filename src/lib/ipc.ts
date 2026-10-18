@@ -203,6 +203,7 @@ export async function onModelDownloadProgress(callback: (payload: ModelDownloadP
 export interface VideoMetadata {
   duration: number;
   codec?: string;
+  size?: number;
 }
 
 export async function getVideoMetadata(videoPath: string): Promise<VideoMetadata> {
@@ -211,9 +212,17 @@ export async function getVideoMetadata(videoPath: string): Promise<VideoMetadata
 
 export async function cancelPipeline(): Promise<void> {
   try {
-    return await invoke<void>('cancel_pipeline');
+    await invoke('cancel_pipeline');
   } catch (err) {
-    throw new Error(`Ошибка отмены пайплайна: ${err}`);
+    console.warn('cancel_pipeline invoke error:', err);
+  }
+}
+
+export async function openFolder(folderPath: string): Promise<void> {
+  try {
+    await invoke('open_folder', { folderPath });
+  } catch (err) {
+    console.error('open_folder invoke error:', err);
   }
 }
 

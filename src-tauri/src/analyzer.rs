@@ -61,62 +61,144 @@ pub async fn analyze_video(
     let has_vision_model = model.as_ref().map(|m| m.exists()).unwrap_or(false);
     let has_vision_sidecar = shell.sidecar("llama-vision").is_ok();
 
-    // Если модели нет или sidecar не установлен — генерируем быстрые эвристические ключевые точки сцен
+    // Если модели нет или sidecar не установлен — запускаем двухфакторный алгоритм (FFmpeg Scene Detect + Audio Energy)
     if !has_vision_model || !has_vision_sidecar {
         crate::logger::emit_log(
             &app_handle,
             "Analyzer",
             "info",
-            "Модель qwen-vl-2b или sidecar llama-vision не обнаружены. Применяется адаптивный расчет сцен по таймкодам.",
+            "Запуск двухфакторного алгоритма анализа хайлайтов (смена сцен FFmpeg + звуковая активность)...",
         );
+
         let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
-            percent: 100.0,
-            stage: "adaptive_scene_pass".to_string(),
-            current_frame: 1,
-            total_frames: 1,
+            percent: 10.0,
+            stage: "detecting_scene_cuts".to_string(),
+            current_frame: 0,
+            total_frames: 100,
         });
 
-        // Получаем реальную длительность видео через probe_video
+        // 1. Получаем реальную длительность видео
         let duration = match crate::ffmpeg::probe_video(video_path.clone(), app_handle.clone()).await {
             Ok(meta) if meta.duration > 3.0 => meta.duration,
             _ => 180.0,
         };
 
-        // Адаптивный шаг разбиения сцен
-        let step = if duration <= 60.0 {
-            10.0
-        } else if duration <= 300.0 {
-            20.0
-        } else if duration <= 1200.0 {
-            35.0
-        } else {
-            60.0
-        };
+        // 2. Детектируем точки смены сцен через FFmpeg
+        let scene_cuts = crate::ffmpeg::detect_scene_changes(
+            video_path.clone(), 
+            app_handle.clone(), 
+            cancel_rx.resubscribe()
+        ).await.unwrap_or_default();
 
-        let mut fallback_scenes = Vec::new();
-        let mut t = step / 2.0;
-        let mut scene_idx = 1;
-        while t < duration - 1.0 {
-            fallback_scenes.push(SceneCandidate {
-                timestamp_sec: t,
-                description: format!("Сцена #{} (ключевой момент {:.0}с)", scene_idx, t),
-                intensity: 0.65,
-                actions: vec!["диалог".to_string(), "динамика".to_string()],
+        let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
+            percent: 60.0,
+            stage: "detecting_audio_energy".to_string(),
+            current_frame: 60,
+            total_frames: 100,
+        });
+
+        // 3. Детектируем участки с эмоциональной звуковой активностью (поиск речи/всплесков громкости)
+        let audio_ranges = crate::ffmpeg::detect_audio_activity(
+            video_path.clone(), 
+            duration, 
+            app_handle.clone(), 
+            cancel_rx.resubscribe()
+        ).await.unwrap_or_default();
+
+        let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
+            percent: 90.0,
+            stage: "ranking_highlights".to_string(),
+            current_frame: 90,
+            total_frames: 100,
+        });
+
+        let mut candidate_scenes = Vec::new();
+
+        // А. Сопоставление смен сцен со звуковыми пиками
+        for (idx, &scene_t) in scene_cuts.iter().enumerate() {
+            if scene_t >= duration - 2.0 {
+                continue;
+            }
+            // Проверяем, попадает ли смена сцены в звуковую активность (или рядом с ней в пределах 3 сек)
+            let is_near_audio = audio_ranges.iter().any(|(a_start, a_end)| {
+                scene_t >= (a_start - 2.0) && scene_t <= (a_end + 2.0)
             });
-            t += step;
-            scene_idx += 1;
+
+            let intensity = if is_near_audio { 0.88 } else { 0.65 };
+            let actions = if is_near_audio {
+                vec!["динамика".to_string(), "реплика/эмоция".to_string()]
+            } else {
+                vec!["смена плана".to_string(), "движение".to_string()]
+            };
+
+            candidate_scenes.push(SceneCandidate {
+                timestamp_sec: scene_t,
+                description: format!("Сцена #{} (динамичный момент {:.1}с)", idx + 1, scene_t),
+                intensity,
+                actions,
+            });
         }
 
-        if fallback_scenes.is_empty() {
-            fallback_scenes.push(SceneCandidate {
-                timestamp_sec: duration / 2.0,
-                description: "Центральная сцена видео".to_string(),
-                intensity: 0.70,
-                actions: vec!["динамика".to_string()],
-            });
+        // Б. Если смен сцен мало, добавляем центры самых громких участков звука
+        if candidate_scenes.len() < 5 {
+            for (idx, (a_start, a_end)) in audio_ranges.iter().enumerate() {
+                let mid = ((a_start + a_end) / 2.0).min(duration - 2.0);
+                if !candidate_scenes.iter().any(|c| (c.timestamp_sec - mid).abs() < 10.0) {
+                    candidate_scenes.push(SceneCandidate {
+                        timestamp_sec: mid,
+                        description: format!("Звуковой пик #{} (активная речь {:.1}с)", idx + 1, mid),
+                        intensity: 0.82,
+                        actions: vec!["диалог".to_string(), "активность".to_string()],
+                    });
+                }
+            }
         }
 
-        return Ok(fallback_scenes);
+        // В. Сортируем по весу и устраняем скученность (Non-Maximum Suppression с окном 15с)
+        candidate_scenes.sort_by(|a, b| b.intensity.partial_cmp(&a.intensity).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut filtered_scenes = Vec::new();
+        for sc in candidate_scenes {
+            let too_close = filtered_scenes.iter().any(|f: &SceneCandidate| (f.timestamp_sec - sc.timestamp_sec).abs() < 15.0);
+            if !too_close {
+                filtered_scenes.push(sc);
+            }
+            if filtered_scenes.len() >= 12 {
+                break;
+            }
+        }
+
+        // Г. Если всё ещё пусто (крайне тихое и статичное видео) - создаем 3 ключевые точки
+        if filtered_scenes.is_empty() {
+            let step = duration / 4.0;
+            for i in 1..=3 {
+                let t = (step * (i as f64)).min(duration - 2.0);
+                filtered_scenes.push(SceneCandidate {
+                    timestamp_sec: t,
+                    description: format!("Ключевая сцена #{} ({:.0}с)", i, t),
+                    intensity: 0.70,
+                    actions: vec!["динамика".to_string()],
+                });
+            }
+        }
+
+        filtered_scenes.sort_by(|a, b| a.timestamp_sec.partial_cmp(&b.timestamp_sec).unwrap_or(std::cmp::Ordering::Equal));
+
+        crate::logger::emit_log(
+            &app_handle,
+            "Analyzer",
+            "info",
+            &format!("✓ Двухфакторный анализ завершен: найдено {} качественных сцен-хайлайтов.", filtered_scenes.len()),
+        );
+
+        let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
+            percent: 100.0,
+            stage: "complete".to_string(),
+            current_frame: filtered_scenes.len() as u32,
+            total_frames: filtered_scenes.len() as u32,
+        });
+
+        return Ok(filtered_scenes);
     }
 
     let resolved_model = model.unwrap();

@@ -176,10 +176,9 @@ pub async fn render_clips_from_fragments(
 
     let cancel_rx = state.cancel_tx.subscribe();
 
-    // 1. Извлечение аудио
-    let mut audio_output = video_buf.clone();
-    let file_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("extracted");
-    audio_output.set_file_name(format!("{}_manual_audio.wav", file_stem));
+    // 1. Извлечение аудио во временную системную директорию temp_dir
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let audio_output = std::env::temp_dir().join(format!("vc_manual_audio_{}_{}.wav", std::process::id(), ts));
 
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 10.0, stage: "Извлечение аудио...".to_string() });
     
@@ -225,24 +224,29 @@ pub async fn render_clips_from_fragments(
         hw_accel: true,
     };
 
-    let base_out_dir = match config.output_dir.as_ref() {
-        Some(dir_str) if !dir_str.trim().is_empty() => {
-            let p = PathBuf::from(dir_str);
-            if p.is_absolute() {
-                p
-            } else {
-                let mut d = video_buf.clone();
-                d.pop();
-                d.join(p)
-            }
+    // Создаем структурированную директорию проекта и папку «Готовые клипы»
+    let file_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
+    let video_parent = video_buf.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let project_dir = video_parent.join(format!("{}_Проект", file_stem));
+    let clips_dir = project_dir.join("Готовые клипы");
+    let _ = tokio::fs::create_dir_all(&clips_dir).await;
+
+    // Сохраняем субтитры в проект, если они получены
+    if let Some(ref srt) = srt_path {
+        if srt.exists() {
+            let subs_dir = project_dir.join("Субтитры");
+            let _ = tokio::fs::create_dir_all(&subs_dir).await;
+            let dest_srt = subs_dir.join(format!("{}_Субтитры.srt", file_stem));
+            let _ = tokio::fs::copy(srt, &dest_srt).await;
         }
-        _ => {
-            let mut d = video_buf.clone();
-            d.pop();
-            d.join("output_cuts")
-        }
-    };
-    let _ = tokio::fs::create_dir_all(&base_out_dir).await;
+    }
+
+    crate::logger::emit_log(
+        &app,
+        "Render",
+        "info",
+        &format!("Директория сохранения готовых клипов: '{}'", clips_dir.display()),
+    );
 
     let mut generated_clips = Vec::new();
     let total_fragments = fragments.len();
@@ -257,8 +261,20 @@ pub async fn render_clips_from_fragments(
         let start_sec = frag.start;
         let duration = (frag.end - frag.start).max(0.5);
 
-        let mut clip_path = base_out_dir.clone();
-        clip_path.push(format!("{}_reels_{}_start_{}s.mp4", file_stem, i + 1, start_sec as u32));
+        let start_min = (start_sec / 60.0) as u32;
+        let start_s = (start_sec % 60.0) as u32;
+        let end_min = (frag.end / 60.0) as u32;
+        let end_s = (frag.end % 60.0) as u32;
+
+        let clip_filename = format!(
+            "Клип {:02} [{:02}m{:02}s - {:02}m{:02}s].mp4",
+            i + 1,
+            start_min,
+            start_s,
+            end_min,
+            end_s
+        );
+        let clip_path = clips_dir.join(clip_filename);
 
         crate::render::render_clip(
             video_buf.clone(),
@@ -274,8 +290,11 @@ pub async fn render_clips_from_fragments(
         generated_clips.push(clip_path.to_string_lossy().to_string());
     }
 
-    // Очистка временного аудио
+    // Гарантированная очистка временных файлов
     let _ = tokio::fs::remove_file(&audio_output).await;
+    if let Some(ref srt) = srt_path {
+        let _ = tokio::fs::remove_file(srt).await;
+    }
 
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
         percent: 100.0, 
@@ -303,10 +322,9 @@ pub async fn generate_subtitles_only(
 
     let cancel_rx = state.cancel_tx.subscribe();
 
-    // 1. Извлечение аудио
-    let mut audio_output = video_buf.clone();
-    let file_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("extracted");
-    audio_output.set_file_name(format!("{}_subs_audio.wav", file_stem));
+    // 1. Извлечение аудио в системный temp_dir
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let audio_output = std::env::temp_dir().join(format!("vc_subs_audio_{}_{}.wav", std::process::id(), ts));
 
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 20.0, stage: "Извлечение аудио...".to_string() });
     
@@ -351,4 +369,52 @@ pub async fn get_video_metadata(
         return Err(AppError::Anyhow(anyhow::anyhow!("Файл видео не найден: {}", video_path)));
     }
     crate::ffmpeg::probe_video(video_buf, app).await
+}
+
+/// Асинхронная команда: Отмена выполнения конвейера и прерывание sidecar-процессов
+#[tauri::command]
+pub async fn cancel_pipeline(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> AppResult<()> {
+    crate::logger::emit_log(&app, "Pipeline", "warn", "IPC: Получен сигнал отмены операции от пользователя.");
+    let _ = state.cancel_tx.send(());
+    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload {
+        percent: 0.0,
+        stage: "Операция отменена".to_string(),
+    });
+    Ok(())
+}
+
+/// Асинхронная команда: Открытие директории в проводнике операционной системы
+#[tauri::command]
+pub async fn open_folder(
+    folder_path: String,
+) -> AppResult<()> {
+    let path = PathBuf::from(&folder_path);
+    let target_dir = if path.is_file() {
+        path.parent().map(|p| p.to_path_buf()).unwrap_or(path)
+    } else {
+        path
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(&target_dir)
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg(&target_dir)
+            .spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(&target_dir)
+            .spawn();
+    }
+    Ok(())
 }

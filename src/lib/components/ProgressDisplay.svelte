@@ -1,7 +1,6 @@
 <!-- src/lib/components/ProgressDisplay.svelte -->
 <script lang="ts">
   import { pipelineStore } from '../stores/pipeline';
-  import { cancelPipeline } from '../ipc';
   import { onDestroy, tick } from 'svelte';
 
   let logContainer: HTMLDivElement;
@@ -15,16 +14,6 @@
 
   let copied = false;
   let copiedTimeout: any = null;
-
-  async function handleCancel() {
-    try {
-      await cancelPipeline();
-      pipelineStore.reset();
-    } catch (e) {
-      console.error("Failed to cancel pipeline", e);
-      pipelineStore.updateError("Ошибка при отмене операции");
-    }
-  }
 
   async function handleCopyLogs() {
     await pipelineStore.copyLogsToClipboard();
@@ -41,6 +30,14 @@
 
   function handleClearLogs() {
     pipelineStore.clearLogs();
+  }
+
+  async function handleCancel() {
+    try {
+      await pipelineStore.cancelPipeline();
+    } catch (e) {
+      console.error('Ошибка отмены операции:', e);
+    }
   }
 </script>
 

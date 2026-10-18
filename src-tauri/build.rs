@@ -144,6 +144,9 @@ fn main() {
             }
         }
 
+        // Копируем все зависимые DLL (whisper.dll, ggml.dll, cublas, cudart, SDL2 и т.д.)
+        copy_all_dlls(&extract_dir, resources_dir);
+
         // Очищаем временную папку распаковки ради экономии места
         let _ = fs::remove_dir_all(&extract_dir);
     }
@@ -298,4 +301,21 @@ fn find_file_partial(dir: &Path, mask: &str) -> Option<PathBuf> {
 fn mut_is_windows_target() -> bool {
     let target = std::env::var("TARGET").unwrap_or_else(|_| "x86_64-pc-windows-msvc".to_string());
     target.contains("windows")
+}
+
+fn copy_all_dlls(from_dir: &Path, to_dir: &Path) {
+    if let Ok(entries) = fs::read_dir(from_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                copy_all_dlls(&path, to_dir);
+            } else if path.extension().and_then(|s| s.to_str()).map(|ext| ext.eq_ignore_ascii_case("dll")).unwrap_or(false) {
+                if let Some(file_name) = path.file_name() {
+                    let dest = to_dir.join(file_name);
+                    let _ = fs::copy(&path, &dest);
+                    println!("cargo:warning=Скопирована зависимая библиотека DLL: {:?}", file_name);
+                }
+            }
+        }
+    }
 }

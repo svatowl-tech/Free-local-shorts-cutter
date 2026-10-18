@@ -1,6 +1,6 @@
 {
-  "summary": "Plan to resolve SvelteKit build errors by properly configuring the static adapter and removing hacky workarounds.",
-  "updatedAt": "2026-10-17T17:40:10.786512798Z",
+  "summary": "Обновленный архитектурный план MVP: добавлены ограничения сборки для GitHub Actions (размер артефакта строго до 2 ГБ), структурированная директория проекта с папкой «Готовые клипы» и понятными именами файлов, а также умное центрирование лица персонажа (Auto-reframe / Face Tracking) при вертикальном кропе 9:16.",
+  "updatedAt": "2026-10-18T17:33:06.196637759Z",
   "requestFeedback": true,
   "userFacing": true
 }

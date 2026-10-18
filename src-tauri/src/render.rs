@@ -60,20 +60,34 @@ pub async fn render_clip(
 
     let mut vf_filters = vec![];
     
-    // Преобразование в вертикальный формат 9:16 (Shorts / Reels / TikTok)
+    // Преобразование в вертикальный формат 9:16 (Shorts / Reels / TikTok) с умным центрированием лица персонажа
     if config.vertical_format {
-        vf_filters.push("crop=ih*(9/16):ih,scale=1080:1920:flags=lanczos".to_string());
+        let sample_time = start_sec + (duration_sec / 2.0).min(2.0);
+        let center_ratio = detect_character_center_ratio(&video_path, sample_time, &app_handle).await;
+        crate::logger::emit_log(
+            &app_handle,
+            "Render",
+            "info",
+            &format!("Smart Face Centering: фокус персонажа определен в {:.1}% ширины кадра", center_ratio * 100.0),
+        );
+        // Формула сдвига окна 9:16 так, чтобы персонаж находился строго по центру вертикального клипа
+        let crop_filter = format!(
+            "crop=w='ih*(9/16)':h='ih':x='min(max(0, iw*{:.3} - (ih*(9/16))/2), iw-(ih*(9/16)))':y=0,scale=1080:1920:flags=lanczos",
+            center_ratio
+        );
+        vf_filters.push(crop_filter);
     }
 
-    // Наложение субтитров
+    // Наложение субтитров с безопасным экранированием спецсимволов для FFmpeg
     if let Some(srt) = srt_path {
         if srt.exists() {
-            // Экранирование для фильтра FFmpeg
             let srt_escaped = srt
                 .to_string_lossy()
                 .replace('\\', "/")
                 .replace(':', "\\:")
-                .replace('\'', "\\'");
+                .replace('\'', "\\'")
+                .replace('[', "\\[")
+                .replace(']', "\\]");
             
             let mut sub_filter = format!("subtitles='{}'", srt_escaped);
             
@@ -207,3 +221,108 @@ pub async fn render_clip(
         }
     }
 }
+
+/// Вычисляет коэффициент горизонтального положения лица/персонажа (0.0 .. 1.0) для центрирования 9:16
+async fn detect_character_center_ratio(
+    video_path: &PathBuf,
+    sample_time_sec: f64,
+    app_handle: &AppHandle,
+) -> f64 {
+    let shell = app_handle.shell();
+    let Ok(ffmpeg) = shell.sidecar("ffmpeg") else {
+        return 0.5;
+    };
+
+    let temp_frame = std::env::temp_dir().join(format!("crop_detect_{}_{}.bmp", std::process::id(), (sample_time_sec * 100.0) as u64));
+
+    // Извлекаем один уменьшенный кадр BMP для мгновенного анализа пикселей
+    let cmd = ffmpeg.args([
+        "-y",
+        "-ss", &format!("{:.3}", sample_time_sec),
+        "-i", &video_path.to_string_lossy(),
+        "-vframes", "1",
+        "-s", "320x180",
+        "-pix_fmt", "bgr24",
+        &temp_frame.to_string_lossy(),
+    ]);
+
+    let Ok((mut rx, _child)) = cmd.spawn() else {
+        return 0.5;
+    };
+
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Terminated(_) = event {
+            break;
+        }
+    }
+
+    if !temp_frame.exists() {
+        return 0.5;
+    }
+
+    let Ok(bytes) = tokio::fs::read(&temp_frame).await else {
+        let _ = tokio::fs::remove_file(&temp_frame).await;
+        return 0.5;
+    };
+    let _ = tokio::fs::remove_file(&temp_frame).await;
+
+    // В BMP заголовке смещение пикселей по смещению 0x0A (10)
+    if bytes.len() < 54 {
+        return 0.5;
+    }
+    let pixel_offset = if bytes.len() >= 14 {
+        u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]) as usize
+    } else {
+        54
+    };
+
+    let width = 320usize;
+    let height = 180usize;
+    let row_size = ((width * 3 + 3) / 4) * 4; // выравнивание 4 байта
+
+    let mut col_weights = vec![0.0f64; width];
+    let pixel_data = &bytes[pixel_offset.min(bytes.len())..];
+
+    for y in 0..height {
+        let row_start = y * row_size;
+        if row_start + width * 3 > pixel_data.len() {
+            break;
+        }
+        for x in 0..width {
+            let b = pixel_data[row_start + x * 3] as f64;
+            let g = pixel_data[row_start + x * 3 + 1] as f64;
+            let r = pixel_data[row_start + x * 3 + 2] as f64;
+
+            // Детекция оттенков кожи и лиц (RGB модель: R > 95, G > 40, B > 20, max-min > 15, |R-G| > 15, R > G, R > B)
+            let is_skin = r > 95.0 && g > 40.0 && b > 20.0 
+                && (r.max(g).max(b) - r.min(g).min(b)) > 15.0 
+                && (r - g).abs() > 15.0 
+                && r > g && r > b;
+
+            // Вес лица: верхняя треть/половина кадра имеет больший приоритет (там обычно голова)
+            let y_rel = (height - 1 - y) as f64 / height as f64;
+            let y_mult = if y_rel > 0.35 && y_rel < 0.95 { 2.5 } else { 0.5 };
+
+            if is_skin {
+                col_weights[x] += 3.0 * y_mult;
+            } else {
+                let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+                col_weights[x] += (luminance / 255.0) * 0.1 * y_mult;
+            }
+        }
+    }
+
+    let total_weight: f64 = col_weights.iter().sum();
+    if total_weight <= 1.0 {
+        return 0.5;
+    }
+
+    let mut center_of_mass = 0.0f64;
+    for (x, &w) in col_weights.iter().enumerate() {
+        center_of_mass += (x as f64) * w;
+    }
+
+    let calculated_ratio = (center_of_mass / total_weight) / (width as f64);
+    calculated_ratio.clamp(0.15, 0.85)
+}
+

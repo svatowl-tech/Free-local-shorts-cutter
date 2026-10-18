@@ -64,27 +64,26 @@
 
         if (selected && typeof selected === 'string') {
           const fileName = selected.split(/[/\\]/).pop() || 'selected_video.mp4';
-          pipelineStore.setVideo({
-            name: fileName,
-            path: selected,
-            size: 0,
-            duration: 0
-          });
+          
+          let duration = 0;
+          let size = 0;
 
-          // Сразу запрашиваем реальную длительность и кодек через FFmpeg IPC
           try {
             const meta = await getVideoMetadata(selected);
-            if (meta && meta.duration > 0) {
-              pipelineStore.setVideo({
-                name: fileName,
-                path: selected,
-                size: 0,
-                duration: meta.duration
-              });
+            if (meta) {
+              duration = meta.duration || 0;
+              size = meta.size || 0;
             }
           } catch (e) {
             console.log('FFmpeg метаданные пропущены:', e);
           }
+
+          pipelineStore.setVideo({
+            name: fileName,
+            path: selected,
+            size,
+            duration
+          });
         }
       } else {
         fileInput?.click();
