@@ -1,14 +1,16 @@
 <!-- src/lib/components/FileUpload.svelte -->
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import { pipelineStore } from '../stores/pipeline';
   import { getVideoMetadata } from '../ipc';
   import { HardDrive, Trash2 } from '@lucide/svelte';
 
   let dragOver = false;
   let fileInput: HTMLInputElement;
+  let unlistenDragDrop: (() => void) | null = null;
 
   function formatBytes(bytes: number, decimals = 2) {
-    if (bytes === 0) return '0 Байт';
+    if (!bytes || bytes === 0) return 'Размер определяется...';
     const k = 1024;
     const dm = decimals < 0 ? 0 : decimals;
     const sizes = ['Байт', 'КБ', 'МБ', 'ГБ', 'ТБ'];
@@ -16,13 +18,74 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   }
 
+  async function selectPathFromTauri(selectedPath: string) {
+    const fileName = selectedPath.split(/[/\\]/).pop() || 'selected_video.mp4';
+
+    // Мгновенно устанавливаем выбранный файл в стор (без блокировки UI)
+    pipelineStore.setVideo({
+      name: fileName,
+      path: selectedPath,
+      size: 0,
+      duration: 0
+    });
+
+    // Асинхронно запрашиваем размер и длительность через FFmpeg
+    try {
+      const meta = await getVideoMetadata(selectedPath);
+      if (meta) {
+        pipelineStore.updateVideoMetadata({
+          size: meta.size || 0,
+          duration: meta.duration || 0
+        });
+      }
+    } catch (e) {
+      console.warn('FFmpeg метаданные пропущены:', e);
+    }
+  }
+
+  onMount(async () => {
+    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+    if (isTauri) {
+      try {
+        const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+        unlistenDragDrop = await getCurrentWebview().onDragDropEvent(async (event) => {
+          const payload = event.payload as any;
+          if (payload.type === 'over' || payload.type === 'enter') {
+            dragOver = true;
+          } else if (payload.type === 'leave' || payload.type === 'cancel') {
+            dragOver = false;
+          } else if (payload.type === 'drop' && Array.isArray(payload.paths) && payload.paths.length > 0) {
+            dragOver = false;
+            const droppedPath = payload.paths[0];
+            if (/\.(mp4|mov|mkv|avi|webm|ts|m4v)$/i.test(droppedPath)) {
+              await selectPathFromTauri(droppedPath);
+            } else {
+              pipelineStore.updateError('Пожалуйста, перетащите видеофайл поддерживаемого формата (MP4, MKV, MOV, AVI, WEBM)');
+            }
+          }
+        });
+      } catch (e) {
+        console.warn('Не удалось подписаться на нативный Tauri drag-drop:', e);
+      }
+    }
+  });
+
+  onDestroy(() => {
+    if (unlistenDragDrop) {
+      unlistenDragDrop();
+      unlistenDragDrop = null;
+    }
+  });
+
   function handleFileSelected(event: Event) {
     const target = event.target as HTMLInputElement;
     const files = target.files;
     if (files && files.length > 0) {
       const file = files[0];
       const objectUrl = URL.createObjectURL(file);
-      const filePath = (file as any).path || file.name;
+      const nativePath = (file as any).path;
+      const filePath = nativePath || file.name;
+
       pipelineStore.setVideo({
         name: file.name,
         path: filePath,
@@ -31,23 +94,18 @@
         objectUrl
       });
 
-      // Если в среде Tauri и есть путь к файлу — пробуем получить метаданные через FFmpeg
-      if ((file as any).path) {
-        getVideoMetadata((file as any).path).then(meta => {
+      if (nativePath) {
+        getVideoMetadata(nativePath).then(meta => {
           if (meta && meta.duration > 0) {
-            pipelineStore.setVideo({
-              name: file.name,
-              path: (file as any).path,
-              size: file.size,
+            pipelineStore.updateVideoMetadata({
               duration: meta.duration,
-              objectUrl
+              size: meta.size || file.size
             });
           }
         }).catch(() => {});
       }
     }
   }
-
 
   async function chooseVideoTauri() {
     try {
@@ -63,27 +121,7 @@
         });
 
         if (selected && typeof selected === 'string') {
-          const fileName = selected.split(/[/\\]/).pop() || 'selected_video.mp4';
-          
-          let duration = 0;
-          let size = 0;
-
-          try {
-            const meta = await getVideoMetadata(selected);
-            if (meta) {
-              duration = meta.duration || 0;
-              size = meta.size || 0;
-            }
-          } catch (e) {
-            console.log('FFmpeg метаданные пропущены:', e);
-          }
-
-          pipelineStore.setVideo({
-            name: fileName,
-            path: selected,
-            size,
-            duration
-          });
+          await selectPathFromTauri(selected);
         }
       } else {
         fileInput?.click();
@@ -106,12 +144,18 @@
   function handleDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
+    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       const file = files[0];
-      if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm)$/i.test(file.name)) {
+      const nativePath = (file as any).path;
+      // В Tauri v2 путь приходит через onDragDropEvent. Если его нет в DOM File, не перезаписываем полный путь коротким именем
+      if (isTauri && !nativePath) {
+        return;
+      }
+      if (file.type.startsWith('video/') || /\.(mp4|mov|mkv|avi|webm|ts|m4v)$/i.test(file.name)) {
         const objectUrl = URL.createObjectURL(file);
-        const filePath = (file as any).path || file.name;
+        const filePath = nativePath || file.name;
         pipelineStore.setVideo({
           name: file.name,
           path: filePath,
@@ -120,16 +164,12 @@
           objectUrl
         });
 
-        // Если в среде Tauri и есть локальный путь — получаем метаданные через FFmpeg
-        if ((file as any).path) {
-          getVideoMetadata((file as any).path).then(meta => {
+        if (nativePath) {
+          getVideoMetadata(nativePath).then(meta => {
             if (meta && meta.duration > 0) {
-              pipelineStore.setVideo({
-                name: file.name,
-                path: (file as any).path,
-                size: file.size,
+              pipelineStore.updateVideoMetadata({
                 duration: meta.duration,
-                objectUrl
+                size: meta.size || file.size
               });
             }
           }).catch(() => {});
@@ -159,6 +199,7 @@
     type="file" 
     accept="video/*" 
     class="hidden" 
+    style="display: none;"
     bind:this={fileInput} 
     on:change={handleFileSelected}
   />
@@ -224,6 +265,7 @@
       </div>
 
       <button 
+        type="button"
         on:click={clearSelected}
         class="btn border border-[rgba(226,226,224,0.15)] bg-transparent text-[rgba(226,226,224,0.6)] hover:text-red-400 hover:border-red-500/40 p-2.5 rounded-[4px] transition-colors cursor-pointer self-stretch sm:self-auto flex items-center justify-center gap-1.5"
         title="Сбросить выбор"

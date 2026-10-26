@@ -44,11 +44,18 @@ pub async fn extract_audio(
             AppError::Pipeline(err_msg)
         })?;
 
-    let command = command.args([
-        "-y", "-i", &video_path.to_string_lossy(),
-        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-        &output_audio_path.to_string_lossy(),
-    ]);
+    let command = command
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
+        .args([
+            "-nostdin",
+            "-y",
+            "-i", &video_path.to_string_lossy(),
+            "-vn",
+            "-acodec", "pcm_s16le",
+            "-ar", "16000",
+            "-ac", "1",
+            &output_audio_path.to_string_lossy(),
+        ]);
 
     let (mut rx, child) = command.spawn()
         .map_err(|e| {
@@ -158,12 +165,15 @@ pub async fn probe_video(
         .map(|m| m.len())
         .unwrap_or(0);
 
-    let command = command.args([
-        "-i", &video_path.to_string_lossy(),
-        "-hide_banner",
-    ]);
+    let command = command
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
+        .args([
+            "-nostdin",
+            "-i", &video_path.to_string_lossy(),
+            "-hide_banner",
+        ]);
 
-    let (mut rx, _child) = command.spawn()
+    let (mut rx, child) = command.spawn()
         .map_err(|e| {
             let err = format!("Не удалось запустить FFmpeg для анализа: {}", e);
             crate::logger::emit_log(&app_handle, "FFmpeg", "error", &err);
@@ -173,30 +183,43 @@ pub async fn probe_video(
     let mut total_duration = 0.0;
     let mut codec = None;
 
-    while let Some(event) = rx.recv().await {
-        if let CommandEvent::Stderr(bytes) = event {
-            crate::logger::emit_stream_lines(&app_handle, "FFmpeg", "debug", &bytes);
-            let log_line = String::from_utf8_lossy(&bytes);
-            if total_duration == 0.0 {
-                if let Some(pos) = log_line.find("Duration: ") {
-                    let duration_part = &log_line[pos + 10..];
-                    if let Some(end_pos) = duration_part.find(',') {
-                        if let Some(secs) = parse_time_to_seconds(&duration_part[..end_pos]) {
-                            total_duration = secs;
+    let probe_fut = async {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stderr(bytes) => {
+                    let log_line = String::from_utf8_lossy(&bytes);
+                    if total_duration == 0.0 {
+                        if let Some(pos) = log_line.find("Duration: ") {
+                            let duration_part = &log_line[pos + 10..];
+                            if let Some(end_pos) = duration_part.find(',') {
+                                if let Some(secs) = parse_time_to_seconds(&duration_part[..end_pos]) {
+                                    total_duration = secs;
+                                }
+                            }
                         }
                     }
-                }
-            }
-            if codec.is_none() {
-                if let Some(pos) = log_line.find("Video: ") {
-                    let video_part = &log_line[pos + 7..];
-                    if let Some(end_pos) = video_part.find(',') {
-                        codec = Some(video_part[..end_pos].trim().to_string());
+                    if codec.is_none() {
+                        if let Some(pos) = log_line.find("Video: ") {
+                            let video_part = &log_line[pos + 7..];
+                            if let Some(end_pos) = video_part.find(',') {
+                                codec = Some(video_part[..end_pos].trim().to_string());
+                            }
+                        }
+                    }
+                    if total_duration > 0.0 && codec.is_some() {
+                        break;
                     }
                 }
+                CommandEvent::Terminated(_) | CommandEvent::Error(_) => {
+                    break;
+                }
+                _ => {}
             }
         }
-    }
+    };
+
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), probe_fut).await;
+    let _ = child.kill();
 
     crate::logger::emit_log(
         &app_handle,
@@ -230,13 +253,17 @@ pub async fn detect_audio_activity(
         "Анализ аудио-энергии и поиск речевой активности через FFmpeg silencedetect...",
     );
 
-    let command = command.args([
-        "-y",
-        "-i", &audio_path.to_string_lossy(),
-        "-af", "silencedetect=noise=-32dB:d=0.6",
-        "-f", "null",
-        "-",
-    ]);
+    let command = command
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
+        .args([
+            "-nostdin",
+            "-y",
+            "-vn",
+            "-i", &audio_path.to_string_lossy(),
+            "-af", "silencedetect=noise=-32dB:d=0.6",
+            "-f", "null",
+            "-",
+        ]);
 
     let (mut rx, child) = command.spawn()
         .map_err(|e| AppError::Pipeline(format!("Ошибка запуска FFmpeg silencedetect: {}", e)))?;
@@ -306,7 +333,7 @@ pub async fn detect_audio_activity(
     Ok(active_ranges)
 }
 
-/// Фактор 2: Детекция смены сцен и динамических кадров через FFmpeg select='gt(scene,0.35)'
+/// Фактор 2: Быстрая детекция смены сцен по ключевым кадрам через FFmpeg select='gt(scene,0.28)'
 pub async fn detect_scene_changes(
     video_path: PathBuf,
     app_handle: AppHandle,
@@ -320,16 +347,22 @@ pub async fn detect_scene_changes(
         &app_handle,
         "Analyzer",
         "info",
-        "Поиск динамичных смен сцен через фильтр FFmpeg select='gt(scene,0.35)'...",
+        "Быстрый поиск динамичных смен сцен по ключевым кадрам (FFmpeg scene detect)...",
     );
 
-    let command = command.args([
-        "-y",
-        "-i", &video_path.to_string_lossy(),
-        "-filter_complex", "select='gt(scene,0.35)',showinfo",
-        "-f", "null",
-        "-",
-    ]);
+    // Используем -skip_frame nokey и масштабирование 160x90 для сверхбыстрого анализа даже 1+ ГБ видео за секунды
+    let command = command
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
+        .args([
+            "-nostdin",
+            "-y",
+            "-skip_frame", "nokey",
+            "-i", &video_path.to_string_lossy(),
+            "-an",
+            "-vf", "scale=160:90,select='gt(scene,0.28)',showinfo",
+            "-f", "null",
+            "-",
+        ]);
 
     let (mut rx, child) = command.spawn()
         .map_err(|e| AppError::Pipeline(format!("Ошибка запуска FFmpeg scene detect: {}", e)))?;
@@ -341,7 +374,7 @@ pub async fn detect_scene_changes(
             if let CommandEvent::Stderr(bytes) = event {
                 let text = String::from_utf8_lossy(&bytes);
                 for line in text.lines() {
-                    if line.contains("Parsed_showinfo") && line.contains("pts_time:") {
+                    if line.contains("pts_time:") {
                         if let Some(pos) = line.find("pts_time:") {
                             let sub = &line[pos + 9..];
                             let val_str = sub.split_whitespace().next().unwrap_or("");

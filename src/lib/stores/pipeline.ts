@@ -73,6 +73,25 @@ const DEFAULT_CONFIG: PipelineConfig = {
   mode: 'confirm'
 };
 
+// Безопасная обертка регистрации слушателя Tauri с таймаутом (не блокирует конвейер)
+async function safeListen<T>(
+  registerFn: () => Promise<() => void>,
+  label: string
+): Promise<() => void> {
+  try {
+    const timeoutPromise = new Promise<() => void>((resolve) => {
+      setTimeout(() => {
+        console.warn(`[IPC] Таймаут подписки на событие ${label}, продолжаем запуск...`);
+        resolve(() => {});
+      }, 2000);
+    });
+    return await Promise.race([registerFn(), timeoutPromise]);
+  } catch (e) {
+    console.warn(`[IPC] Не удалось подписаться на событие ${label}:`, e);
+    return () => {};
+  }
+}
+
 const createPipelineStore = () => {
   const store = writable<PipelineState>({
     video: null,
@@ -118,8 +137,8 @@ const createPipelineStore = () => {
 
     update(s => ({
       ...s,
-      logs: [...s.logs.slice(-2000), formattedLine],
-      detailedLogs: [...s.detailedLogs.slice(-2000), entry]
+      logs: [...s.logs.slice(-1500), formattedLine],
+      detailedLogs: [...s.detailedLogs.slice(-1500), entry]
     }));
   };
 
@@ -288,6 +307,21 @@ const createPipelineStore = () => {
         addLog('Выбор видеофайла сброшен');
       }
     },
+    updateVideoMetadata: (meta: { size?: number; duration?: number; path?: string; objectUrl?: string }) => {
+      update(s => {
+        if (!s.video) return s;
+        return {
+          ...s,
+          video: {
+            ...s.video,
+            size: meta.size && meta.size > 0 ? meta.size : s.video.size,
+            duration: meta.duration && meta.duration > 0 ? meta.duration : s.video.duration,
+            path: meta.path || s.video.path,
+            objectUrl: meta.objectUrl !== undefined ? meta.objectUrl : s.video.objectUrl
+          }
+        };
+      });
+    },
     updateConfig: (fields: Partial<PipelineConfig>) => {
       update(s => {
         const config = { ...s.config, ...fields };
@@ -330,7 +364,8 @@ const createPipelineStore = () => {
         stageDetails: {},
         clips: [],
         error: null,
-        logs: []
+        logs: [],
+        detailedLogs: []
       });
       addLog('Состояние сброшено к начальным настройкам');
     },
@@ -399,67 +434,98 @@ const createPipelineStore = () => {
         return generatedClips;
       }
 
+      let lastFfmpegPct = -10;
+      let lastWhisperPct = -10;
+      let lastRenderPct = -10;
+
       try {
-        const unlistenPipelineLog = await onPipelineLog((p) => {
-          appendLog({ message: p.message, stage: p.stage, level: p.level, timestamp: p.timestamp });
-        });
+        const unlistenPipelineLog = await safeListen(
+          () => onPipelineLog((p) => {
+            appendLog({ message: p.message, stage: p.stage, level: p.level, timestamp: p.timestamp });
+          }),
+          'pipeline-log'
+        );
 
-        const unlistenFfmpeg = await onFfmpegProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: 'Извлечение аудио (FFmpeg)',
-            percentage: Math.round(payload.percent * 0.3),
-            stageDetails: {
-              ...s.stageDetails,
-              ffmpeg: {
-                currentTime: payload.current_time,
-                duration: payload.duration,
-                percent: payload.percent
+        const unlistenFfmpeg = await safeListen(
+          () => onFfmpegProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: 'Извлечение аудио (FFmpeg)',
+              percentage: Math.round(payload.percent * 0.3),
+              stageDetails: {
+                ...s.stageDetails,
+                ffmpeg: {
+                  currentTime: payload.current_time,
+                  duration: payload.duration,
+                  percent: payload.percent
+                }
               }
+            }));
+            const rounded = Math.round(payload.percent);
+            if (rounded - lastFfmpegPct >= 5 || rounded === 100) {
+              lastFfmpegPct = rounded;
+              addLog(`FFmpeg: Извлечение аудио ${rounded}%`);
             }
-          }));
-          addLog(`FFmpeg: Извлечение аудио ${Math.round(payload.percent)}%`);
-        });
+          }),
+          'ffmpeg-progress'
+        );
 
-        const unlistenWhisper = await onWhisperProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание речи'}`,
-            percentage: 30 + Math.round(payload.percent * 0.3),
-            stageDetails: {
-              ...s.stageDetails,
-              whisper: {
-                percent: payload.percent,
-                stage: payload.stage
+        const unlistenWhisper = await safeListen(
+          () => onWhisperProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание речи'}`,
+              percentage: 30 + Math.round(payload.percent * 0.3),
+              stageDetails: {
+                ...s.stageDetails,
+                whisper: {
+                  percent: payload.percent,
+                  stage: payload.stage
+                }
               }
+            }));
+            const rounded = Math.round(payload.percent);
+            if (rounded - lastWhisperPct >= 5 || rounded === 100) {
+              lastWhisperPct = rounded;
+              addLog(`Whisper: ${payload.stage} - ${rounded}%`);
             }
-          }));
-          addLog(`Whisper: ${payload.stage} - ${Math.round(payload.percent)}%`);
-        });
+          }),
+          'whisper-progress'
+        );
 
-        const unlistenRender = await onRenderProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: `Рендеринг Reels 9:16: ${payload.stage}`,
-            percentage: 60 + Math.round(payload.percent * 0.4),
-            stageDetails: {
-              ...s.stageDetails,
-              renderer: {
-                percent: payload.percent,
-                stage: payload.stage
+        const unlistenRender = await safeListen(
+          () => onRenderProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: `Рендеринг Reels 9:16: ${payload.stage}`,
+              percentage: 60 + Math.round(payload.percent * 0.4),
+              stageDetails: {
+                ...s.stageDetails,
+                renderer: {
+                  percent: payload.percent,
+                  stage: payload.stage
+                }
               }
+            }));
+            const rounded = Math.round(payload.percent);
+            if (rounded - lastRenderPct >= 5 || rounded === 100) {
+              lastRenderPct = rounded;
+              addLog(`Рендеринг: ${payload.stage} - ${rounded}%`);
             }
-          }));
-          addLog(`Рендеринг: ${payload.stage} - ${Math.round(payload.percent)}%`);
-        });
+          }),
+          'render-progress'
+        );
 
-        const unlistenPipeline = await onPipelineProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: payload.stage,
-            percentage: 60 + Math.round(payload.percent * 0.1)
-          }));
-        });
+        const unlistenPipeline = await safeListen(
+          () => onPipelineProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: payload.stage,
+              percentage: 60 + Math.round(payload.percent * 0.1)
+            }));
+          }),
+          'pipeline-progress'
+        );
 
         const formattedFragments = fragments.map(f => ({ start: f.start, end: f.end }));
 
@@ -493,7 +559,8 @@ const createPipelineStore = () => {
           currentStage: 'Ошибка при экспорте фрагментов',
           error: errorMsg
         }));
-        addLog(`ОШИБКА ЭКСПОРТА: ${errorMsg}`);
+        addLog(`ОШИБКА ЭКСПОРТА: ${errorMsg}`, 'Pipeline', 'error');
+        return [];
       }
     },
     exportAndRenderClips: async (fragments: any[]) => {
@@ -522,112 +589,161 @@ const createPipelineStore = () => {
         return;
       }
 
+      // Проверяем, что передан полный системный путь к видеофайлу, а не только имя файла из браузерного input
+      const hasFullPath = currentState.video.path.includes('/') || currentState.video.path.includes('\\');
+      if (!hasFullPath) {
+        const msg = `Не удалось получить полный системный путь к файлу "${currentState.video.name}". Пожалуйста, выберите видео через диалог выбора файла (клик по области загрузки) или перетащите файл в окно программы.`;
+        update(s => ({ ...s, error: msg }));
+        addLog(msg, 'App', 'error');
+        return;
+      }
 
       // Если в Tauri, подписываемся на настоящие события бэкенда
       update(s => ({
         ...s,
         status: 'running',
         currentStage: 'Инициализация...',
-        percentage: 0,
+        percentage: 1,
         error: null,
-        clips: []
+        clips: [],
+        stageDetails: {}
       }));
       addLog('Запуск профессионального видео-пайплайна в Rust-конвейере...');
 
+      let lastFfmpegPct = -10;
+      let lastWhisperPct = -10;
+      let lastRenderPct = -10;
+
       try {
         // Подключаем сквозной сбор всех логов stdout/stderr бэкенда
-        const unlistenPipelineLog = await onPipelineLog((p) => {
-          appendLog({ message: p.message, stage: p.stage, level: p.level, timestamp: p.timestamp });
-        });
+        const unlistenPipelineLog = await safeListen(
+          () => onPipelineLog((p) => {
+            appendLog({ message: p.message, stage: p.stage, level: p.level, timestamp: p.timestamp });
+          }),
+          'pipeline-log'
+        );
 
         // Подключаем слушатели событий прогресса Tauri
-        const unlistenFfmpeg = await onFfmpegProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: 'Извлечение аудио (FFmpeg)',
-            percentage: Math.round(payload.percent * 0.20), // 0 - 20%
-            stageDetails: {
-              ...s.stageDetails,
-              ffmpeg: {
-                currentTime: payload.current_time,
-                duration: payload.duration,
-                percent: payload.percent
+        const unlistenFfmpeg = await safeListen(
+          () => onFfmpegProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: 'Извлечение аудио (FFmpeg)',
+              percentage: Math.max(2, Math.round(payload.percent * 0.20)), // 2 - 20%
+              stageDetails: {
+                ...s.stageDetails,
+                ffmpeg: {
+                  currentTime: payload.current_time,
+                  duration: payload.duration,
+                  percent: payload.percent
+                }
               }
-            }
-          }));
-          addLog(`FFmpeg: Прогресс ${Math.round(payload.percent)}% (Осталось ${Math.round(payload.duration - payload.current_time)} сек)`);
-        });
-
-        const unlistenWhisper = await onWhisperProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание'}`,
-            percentage: 20 + Math.round(payload.percent * 0.30), // 20% - 50%
-            stageDetails: {
-              ...s.stageDetails,
-              whisper: {
-                percent: payload.percent,
-                stage: payload.stage
-              }
-            }
-          }));
-          addLog(`Whisper [${payload.stage}]: Распознано ${Math.round(payload.percent)}%`);
-        });
-
-        const unlistenAnalyzer = await onAnalyzerProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: `Qwen-VL Анализ: ${payload.stage}`,
-            percentage: 50 + Math.round(payload.percent * 0.25), // 50% - 75%
-            stageDetails: {
-              ...s.stageDetails,
-              analyzer: {
-                percent: payload.percent,
-                stage: payload.stage,
-                currentFrame: payload.current_frame,
-                totalFrames: payload.total_frames
-              }
-            }
-          }));
-          addLog(`Qwen-VL: Шаг ${payload.stage} (${payload.current_frame}/${payload.total_frames} кадров)`);
-        });
-
-        const unlistenPipeline = await onPipelineProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: payload.stage,
-            percentage: 75 + Math.round(payload.percent * 0.10)
-          }));
-          addLog(`Пайплайн [${payload.stage}]: Прогресс ${Math.round(payload.percent)}%`);
-        });
-
-        const unlistenSuggested = await onSuggestedFragments((payload) => {
-          if (payload.fragments && payload.fragments.length > 0) {
-            const mapped = payload.fragments.map(f => ({
-              id: Math.random().toString(),
-              start: f.start,
-              end: f.end
             }));
-            fragmentsStore.set(mapped);
-            addLog(`Получено ${mapped.length} фрагментов, предложенных ИИ.`);
-          }
-        });
-
-        const unlistenRender = await onRenderProgress((payload) => {
-          update(s => ({
-            ...s,
-            currentStage: `Рендеринг (FFmpeg): ${payload.stage}`,
-            percentage: 75 + Math.round(payload.percent * 0.25), // 75% - 100%
-            stageDetails: {
-              ...s.stageDetails,
-              renderer: {
-                percent: payload.percent,
-                stage: payload.stage
-              }
+            const rounded = Math.round(payload.percent);
+            if (rounded - lastFfmpegPct >= 5 || rounded === 100) {
+              lastFfmpegPct = rounded;
+              addLog(`FFmpeg: Прогресс ${rounded}% (Осталось ${Math.max(0, Math.round(payload.duration - payload.current_time))} сек)`);
             }
-          }));
-          addLog(`FFmpeg Рендеринг: ${payload.stage} - ${Math.round(payload.percent)}%`);
-        });
+          }),
+          'ffmpeg-progress'
+        );
+
+        const unlistenWhisper = await safeListen(
+          () => onWhisperProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание'}`,
+              percentage: 20 + Math.round(payload.percent * 0.30), // 20% - 50%
+              stageDetails: {
+                ...s.stageDetails,
+                whisper: {
+                  percent: payload.percent,
+                  stage: payload.stage
+                }
+              }
+            }));
+            const rounded = Math.round(payload.percent);
+            if (rounded - lastWhisperPct >= 5 || rounded === 100) {
+              lastWhisperPct = rounded;
+              addLog(`Whisper [${payload.stage}]: Распознано ${rounded}%`);
+            }
+          }),
+          'whisper-progress'
+        );
+
+        const unlistenAnalyzer = await safeListen(
+          () => onAnalyzerProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: `Анализ сцен: ${payload.stage}`,
+              percentage: 50 + Math.round(payload.percent * 0.25), // 50% - 75%
+              stageDetails: {
+                ...s.stageDetails,
+                analyzer: {
+                  percent: payload.percent,
+                  stage: payload.stage,
+                  currentFrame: payload.current_frame,
+                  totalFrames: payload.total_frames
+                }
+              }
+            }));
+            addLog(`Анализ сцен: Шаг ${payload.stage} (${payload.current_frame}/${payload.total_frames})`);
+          }),
+          'analyzer-progress'
+        );
+
+        const unlistenPipeline = await safeListen(
+          () => onPipelineProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: payload.stage,
+              percentage: Math.max(s.percentage, Math.round(payload.percent))
+            }));
+            addLog(`Пайплайн [${payload.stage}]: Прогресс ${Math.round(payload.percent)}%`);
+          }),
+          'pipeline-progress'
+        );
+
+        const unlistenSuggested = await safeListen(
+          () => onSuggestedFragments((payload) => {
+            if (payload.fragments && payload.fragments.length > 0) {
+              const mapped = payload.fragments.map((f, idx) => ({
+                id: Math.random().toString(36).substring(2, 9),
+                start: Math.round(f.start * 10) / 10,
+                end: Math.round(f.end * 10) / 10,
+                title: `Клип #${idx + 1}`
+              }));
+              fragmentsStore.set(mapped);
+              addLog(`Получено ${mapped.length} фрагментов, предложенных ИИ.`);
+            }
+          }),
+          'suggested-fragments'
+        );
+
+        const unlistenRender = await safeListen(
+          () => onRenderProgress((payload) => {
+            update(s => ({
+              ...s,
+              currentStage: `Рендеринг (FFmpeg): ${payload.stage}`,
+              percentage: 75 + Math.round(payload.percent * 0.25), // 75% - 100%
+              stageDetails: {
+                ...s.stageDetails,
+                renderer: {
+                  percent: payload.percent,
+                  stage: payload.stage
+                }
+              }
+            }));
+            const rounded = Math.round(payload.percent);
+            if (rounded - lastRenderPct >= 5 || rounded === 100) {
+              lastRenderPct = rounded;
+              addLog(`FFmpeg Рендеринг: ${payload.stage} - ${rounded}%`);
+            }
+          }),
+          'render-progress'
+        );
+
+        addLog(`Отправка IPC-запроса start_pipeline для файла: ${currentState.video.path}`, 'IPC', 'info');
 
         // Запускаем сам пайплайн
         const result = await startPipeline(currentState.video.path, currentState.config);

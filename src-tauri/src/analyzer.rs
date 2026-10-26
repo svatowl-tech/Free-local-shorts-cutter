@@ -225,7 +225,9 @@ pub async fn analyze_video(
             let _ = std::fs::remove_dir_all(&temp_dir);
             AppError::Pipeline(format!("Бинарник ffmpeg не найден в sidecar ресурсах: {}", e))
         })?
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
         .args([
+            "-nostdin",
             "-y",
             "-i", &video_path.to_string_lossy(),
             "-vf", "fps=1/20,scale=640:-1", // сжатое разрешение для скорости инференса нейросети

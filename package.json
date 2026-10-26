@@ -1,11 +1,11 @@
 {
   "name": "video-cutter-pro",
-  "version": "2.0.19",
+  "version": "2.0.20",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "node scripts/patch-sveltekit.js && vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",

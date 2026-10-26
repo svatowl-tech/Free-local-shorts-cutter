@@ -70,15 +70,20 @@ pub async fn transcribe_audio(
         &app_handle,
         "Whisper",
         "info",
-        &format!("Запуск whisper.cpp (модель: {}, вывод: {}.srt)...", model.display(), base_out),
+        &format!("Запуск whisper.cpp (модель: {}, язык: auto, вывод: {}.srt)...", model.display(), base_out),
     );
 
-    let command = command.args([
-        "-m", &model.to_string_lossy(),
-        "-osrt", 
-        "-of", &base_out,
-        &audio_path.to_string_lossy(),
-    ]);
+    // Передаем -l auto (автоопределение русского/любого языка) и -pp (вывод процентов прогресса)
+    let command = command
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
+        .args([
+            "-m", &model.to_string_lossy(),
+            "-l", "auto",
+            "-pp",
+            "-osrt", 
+            "-of", &base_out,
+            &audio_path.to_string_lossy(),
+        ]);
 
     let (mut rx, child) = command.spawn()
         .map_err(|e| {

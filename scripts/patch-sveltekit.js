@@ -1,5 +1,6 @@
-// Этот скрипт патчит SvelteKit, чтобы исправить ошибку:
-// "Cannot set property fetch of #<Window> which has only a getter" в Tauri 2
+// Этот скрипт патчит SvelteKit для:
+// 1. Совместимости window.fetch в Tauri 2 ("Cannot set property fetch of #<Window> which has only a getter")
+// 2. Корректного разрешения путей манифеста Vite при использовании Tailwind v4 (@tailwindcss/postcss / @tailwindcss/vite)
 import fs from 'fs';
 import path from 'path';
 
@@ -8,7 +9,6 @@ const fetcherPath = path.resolve('node_modules', '@sveltejs', 'kit', 'src', 'run
 if (fs.existsSync(fetcherPath)) {
   let content = fs.readFileSync(fetcherPath, 'utf8');
 
-  // Если уже пропатчен, пропускаем
   if (!content.includes("Object.defineProperty(window, 'fetch'")) {
     content = content.replace(/window\.fetch = \((.*?)\) => \{/g, `Object.defineProperty(window, 'fetch', {
  configurable: true,
@@ -18,9 +18,25 @@ if (fs.existsSync(fetcherPath)) {
     
     fs.writeFileSync(fetcherPath, content);
     console.log('Successfully patched SvelteKit fetcher.js for Tauri 2 compatibility!');
-  } else {
-    console.log('SvelteKit fetcher.js is already patched.');
   }
-} else {
-  console.log('SvelteKit fetcher.js not found, skipping patch.');
+}
+
+const buildUtilsPath = path.resolve('node_modules', '@sveltejs', 'kit', 'src', 'exports', 'vite', 'build', 'utils.js');
+
+if (fs.existsSync(buildUtilsPath)) {
+  let utilsContent = fs.readFileSync(buildUtilsPath, 'utf8');
+
+  if (!utilsContent.includes('k.endsWith')) {
+    utilsContent = utilsContent.replace(
+      'while (!manifest[file]) {',
+      `while (!manifest[file]) {
+		const altKey = Object.keys(manifest).find((k) => k === file || k.endsWith('/' + file));
+		if (altKey) {
+			file = altKey;
+			break;
+		}`
+    );
+    fs.writeFileSync(buildUtilsPath, utilsContent);
+    console.log('Successfully patched SvelteKit build/utils.js for Tailwind v4 manifest compatibility!');
+  }
 }

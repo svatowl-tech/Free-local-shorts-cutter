@@ -52,6 +52,7 @@ pub async fn render_clip(
     
     // Формируем аргументы для FFmpeg
     let mut args = vec![
+        "-nostdin".to_string(),
         "-y".to_string(),
         "-ss".to_string(), format!("{:.3}", start_sec),
         "-i".to_string(), video_path.to_string_lossy().to_string(),
@@ -140,6 +141,7 @@ pub async fn render_clip(
             crate::logger::emit_log(&app_handle, "Render", "error", &err);
             AppError::Pipeline(err)
         })?
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
         .args(args);
 
     let (mut rx, child) = command.spawn()
@@ -236,25 +238,32 @@ async fn detect_character_center_ratio(
     let temp_frame = std::env::temp_dir().join(format!("crop_detect_{}_{}.bmp", std::process::id(), (sample_time_sec * 100.0) as u64));
 
     // Извлекаем один уменьшенный кадр BMP для мгновенного анализа пикселей
-    let cmd = ffmpeg.args([
-        "-y",
-        "-ss", &format!("{:.3}", sample_time_sec),
-        "-i", &video_path.to_string_lossy(),
-        "-vframes", "1",
-        "-s", "320x180",
-        "-pix_fmt", "bgr24",
-        &temp_frame.to_string_lossy(),
-    ]);
+    let cmd = ffmpeg
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args([
+            "-nostdin",
+            "-y",
+            "-ss", &format!("{:.3}", sample_time_sec),
+            "-i", &video_path.to_string_lossy(),
+            "-vframes", "1",
+            "-s", "320x180",
+            "-pix_fmt", "bgr24",
+            &temp_frame.to_string_lossy(),
+        ]);
 
-    let Ok((mut rx, _child)) = cmd.spawn() else {
+    let Ok((mut rx, child)) = cmd.spawn() else {
         return 0.5;
     };
 
-    while let Some(event) = rx.recv().await {
-        if let CommandEvent::Terminated(_) = event {
-            break;
+    let wait_frame = async {
+        while let Some(event) = rx.recv().await {
+            if let CommandEvent::Terminated(_) = event {
+                break;
+            }
         }
-    }
+    };
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), wait_frame).await;
+    let _ = child.kill();
 
     if !temp_frame.exists() {
         return 0.5;
@@ -325,4 +334,3 @@ async fn detect_character_center_ratio(
     let calculated_ratio = (center_of_mass / total_weight) / (width as f64);
     calculated_ratio.clamp(0.15, 0.85)
 }
-

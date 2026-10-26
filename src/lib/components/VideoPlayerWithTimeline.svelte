@@ -100,14 +100,23 @@
       const file = input.files[0];
       const objectUrl = URL.createObjectURL(file);
       if ($pipelineStore.video) {
-        pipelineStore.setVideo({
-          ...$pipelineStore.video,
+        pipelineStore.updateVideoMetadata({
           objectUrl
         });
       }
       videoLoadError = false;
     }
   }
+
+  onDestroy(() => {
+    if (videoEl) {
+      try {
+        videoEl.pause();
+        videoEl.removeAttribute('src');
+        videoEl.load();
+      } catch {}
+    }
+  });
 
   function adjustFragmentStart(fragId: string, delta: number) {
     const frag = $fragmentsStore.find(f => f.id === fragId);
@@ -136,11 +145,10 @@
   }
 
   function handleLoadedMetadata() {
-    if (videoEl) {
+    if (videoEl && Number.isFinite(videoEl.duration) && videoEl.duration > 0) {
       duration = videoEl.duration;
       if ($pipelineStore.video && !$pipelineStore.video.duration) {
-        pipelineStore.setVideo({
-          ...$pipelineStore.video,
+        pipelineStore.updateVideoMetadata({
           duration: videoEl.duration
         });
       }
@@ -304,6 +312,7 @@
       <video
         bind:this={videoEl}
         src={videoSrc}
+        preload="metadata"
         class="w-full h-full object-contain cursor-pointer"
         on:click={togglePlay}
         on:timeupdate={handleTimeUpdate}

@@ -364,6 +364,7 @@ async fn run_llama_cli(
         })?;
 
     let cmd = sidecar_command
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
         .args([
             "-m", model_path,
             "-p", prompt,

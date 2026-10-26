@@ -12,6 +12,8 @@ pub mod logger;
 mod commands;
 mod models;
 
+use tauri::Manager;
+
 pub struct AppState {
     pub cancel_tx: tokio::sync::broadcast::Sender<()>,
 }
@@ -44,7 +46,36 @@ async fn main() -> anyhow::Result<()> {
             models::get_models_status,
             models::download_model
         ])
-        .setup(|_app| {
+        .setup(|app| {
+            let augmented_path = logger::build_sidecar_env_path(app.handle());
+            std::env::set_var("PATH", &augmented_path);
+
+            // На Windows гарантируем наличие DLL рядом с бинарниками sidecar
+            #[cfg(target_os = "windows")]
+            {
+                if let (Ok(exe_path), Ok(res_dir)) = (std::env::current_exe(), app.path().resource_dir()) {
+                    if let Some(exe_dir) = exe_path.parent() {
+                        for candidate_dir in [res_dir.clone(), res_dir.join("resources"), exe_dir.join("resources")] {
+                            if let Ok(entries) = std::fs::read_dir(&candidate_dir) {
+                                for entry in entries.flatten() {
+                                    let p = entry.path();
+                                    if p.extension().and_then(|s| s.to_str()).map(|s| s.eq_ignore_ascii_case("dll")).unwrap_or(false) {
+                                        if let Some(fname) = p.file_name() {
+                                            if fname != "placeholder.dll" {
+                                                let dest = exe_dir.join(fname);
+                                                if !dest.exists() {
+                                                    let _ = std::fs::copy(&p, &dest);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             log::info!("Приложение проинициализировано. Ожидание команд...");
             Ok(())
         })
@@ -53,4 +84,3 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-

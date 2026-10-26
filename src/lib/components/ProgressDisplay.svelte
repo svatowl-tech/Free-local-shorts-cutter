@@ -1,19 +1,39 @@
 <!-- src/lib/components/ProgressDisplay.svelte -->
 <script lang="ts">
   import { pipelineStore } from '../stores/pipeline';
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy } from 'svelte';
 
-  let logContainer: HTMLDivElement;
+  let logContainer: HTMLDivElement | null = null;
+  let lastLogCount = 0;
+  let rafId: number | null = null;
 
-  $: if ($pipelineStore.logs.length > 0 && logContainer) {
-    (async () => {
-      await tick();
-      logContainer.scrollTop = logContainer.scrollHeight;
-    })();
+  function scheduleScrollToBottom() {
+    if (typeof window === 'undefined') return;
+    if (rafId !== null) return;
+    rafId = window.requestAnimationFrame(() => {
+      rafId = null;
+      if (logContainer) {
+        logContainer.scrollTop = logContainer.scrollHeight;
+      }
+    });
+  }
+
+  $: if ($pipelineStore.logs.length !== lastLogCount) {
+    lastLogCount = $pipelineStore.logs.length;
+    scheduleScrollToBottom();
   }
 
   let copied = false;
-  let copiedTimeout: any = null;
+  let copiedTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  onDestroy(() => {
+    if (rafId !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(rafId);
+    }
+    if (copiedTimeout) {
+      clearTimeout(copiedTimeout);
+    }
+  });
 
   async function handleCopyLogs() {
     await pipelineStore.copyLogsToClipboard();
@@ -81,7 +101,7 @@
             <div class="bg-[#5865f2] h-full" style="width: {f.percent}%"></div>
           </div>
           <p class="text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-            {f.currentTime}с / {f.duration}с
+            {f.currentTime.toFixed(1)}с / {f.duration.toFixed(1)}с
           </p>
         </div>
       {/if}
@@ -106,7 +126,7 @@
         {@const a = $pipelineStore.stageDetails.analyzer}
         <div class="p-3.5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] space-y-2">
           <div class="flex justify-between items-center text-xs font-mono">
-            <span class="text-[rgba(226,226,224,0.7)]">Qwen-VL: {a.stage}</span>
+            <span class="text-[rgba(226,226,224,0.7)]">Анализ сцен: {a.stage}</span>
             <span class="text-[#5865f2]">{Math.round(a.percent)}%</span>
           </div>
           <div class="w-full bg-[#16161a] h-1.5 overflow-hidden">
@@ -198,6 +218,7 @@
 
   <!-- Cancel Action -->
   <button 
+    type="button"
     on:click={handleCancel}
     class="font-mono p-3 border border-[rgba(226,226,224,0.15)] bg-transparent hover:bg-red-500/10 hover:border-red-500/40 text-red-400 uppercase text-xs font-bold tracking-[0.1em] cursor-pointer transition-colors rounded-[2px]"
   >
