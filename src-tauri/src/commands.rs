@@ -157,7 +157,7 @@ pub async fn start_pipeline(
     })
 }
 
-/// Асинхронная команда: Ручной экспорт фрагментов (без ИИ анализа видео)
+/// Асинхронная команда: Экспорт выбранных/отредактированных фрагментов (использует готовые субтитры из кэша проекта без повторного запуска Whisper!)
 #[tauri::command]
 pub async fn render_clips_from_fragments(
     app: AppHandle,
@@ -167,7 +167,7 @@ pub async fn render_clips_from_fragments(
     config: PipelineConfig,
 ) -> AppResult<Vec<String>> {
     log::info!("IPC: render_clips_from_fragments: {}, fragments: {:?}", video_path, fragments);
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 0.0, stage: "Инициализация...".to_string() });
+    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 5.0, stage: "Проверка субтитров проекта...".to_string() });
 
     let video_buf = PathBuf::from(&video_path);
     if !video_buf.exists() {
@@ -176,48 +176,22 @@ pub async fn render_clips_from_fragments(
 
     let cancel_rx = state.cancel_tx.subscribe();
 
-    // 1. Извлечение аудио во временную системную директорию temp_dir
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let audio_output = std::env::temp_dir().join(format!("vc_manual_audio_{}_{}.wav", std::process::id(), ts));
-
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 10.0, stage: "Извлечение аудио...".to_string() });
-    
-    crate::ffmpeg::extract_audio(
-        video_buf.clone(),
-        audio_output.clone(),
-        app.clone(),
-        cancel_rx.resubscribe()
-    ).await?;
-
-    // 2. Распознавание речи через Whisper (субтитры для Reels)
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
-        percent: 40.0, 
-        stage: "ASR: распознавание речи и титров (Whisper)...".to_string() 
-    });
+    // 1. Получаем готовые субтитры из папки проекта (или создаем их, если пользователь сразу нажал экспорт в ручном режиме без предварительного запуска пайплайна)
     let asr_model = config.asr_model_path.clone().map(PathBuf::from);
-    let srt_path = match crate::whisper::transcribe_audio(
-        audio_output.clone(),
+    let srt_path = crate::whisper::get_or_create_subtitles(
+        video_buf.clone(),
         asr_model,
         app.clone(),
-        cancel_rx.resubscribe()
-    ).await {
-        Ok(path) => {
-            log::info!("Whisper субтитры успешно созданы: {:?}", path);
-            Some(path)
-        },
-        Err(e) => {
-            log::warn!("Whisper ASR завершился с предупреждением: {}. Рендеринг продолжится.", e);
-            None
-        }
-    };
+        cancel_rx.resubscribe(),
+    ).await?;
 
-    // 3. Рендеринг клипов в 9:16 с наложением субтитров
+    // 2. Рендеринг клипов в 9:16 с наложением синхронизированных субтитров
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
-        percent: 70.0, 
+        percent: 50.0, 
         stage: "Подготовка к нарезке Reels (9:16 + Субтитры)...".to_string() 
     });
 
-    // Для Reels всегда активируем вертикальный формат 9:16
+    // Для Reels активируем вертикальный формат 9:16
     let render_config = crate::render::RenderConfig {
         vertical_format: true,
         subtitle_style: config.subtitle_style.clone(),
@@ -231,16 +205,6 @@ pub async fn render_clips_from_fragments(
     let clips_dir = project_dir.join("Готовые клипы");
     let _ = tokio::fs::create_dir_all(&clips_dir).await;
 
-    // Сохраняем субтитры в проект, если они получены
-    if let Some(ref srt) = srt_path {
-        if srt.exists() {
-            let subs_dir = project_dir.join("Субтитры");
-            let _ = tokio::fs::create_dir_all(&subs_dir).await;
-            let dest_srt = subs_dir.join(format!("{}_Субтитры.srt", file_stem));
-            let _ = tokio::fs::copy(srt, &dest_srt).await;
-        }
-    }
-
     crate::logger::emit_log(
         &app,
         "Render",
@@ -249,13 +213,13 @@ pub async fn render_clips_from_fragments(
     );
 
     let mut generated_clips = Vec::new();
-    let total_fragments = fragments.len();
+    let total_fragments = fragments.len().max(1);
 
     for (i, frag) in fragments.iter().enumerate() {
-        let pct = 70.0 + ((i as f64 + 1.0) / total_fragments as f64) * 28.0;
+        let pct = 50.0 + ((i as f64 + 1.0) / total_fragments as f64) * 48.0;
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
             percent: pct, 
-            stage: format!("Рендеринг Reels {} из {} (9:16)...", i + 1, total_fragments) 
+            stage: format!("Рендеринг Reels {} из {} (9:16)...", i + 1, fragments.len()) 
         });
 
         let start_sec = frag.start;
@@ -290,12 +254,6 @@ pub async fn render_clips_from_fragments(
         generated_clips.push(clip_path.to_string_lossy().to_string());
     }
 
-    // Гарантированная очистка временных файлов
-    let _ = tokio::fs::remove_file(&audio_output).await;
-    if let Some(ref srt) = srt_path {
-        let _ = tokio::fs::remove_file(srt).await;
-    }
-
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
         percent: 100.0, 
         stage: "Экспорт всех Reels успешно завершен!".to_string() 
@@ -313,7 +271,7 @@ pub async fn generate_subtitles_only(
     config: PipelineConfig,
 ) -> AppResult<String> {
     log::info!("IPC: generate_subtitles_only: {}", video_path);
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 0.0, stage: "Инициализация субтитров...".to_string() });
+    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 10.0, stage: "Подготовка субтитров...".to_string() });
 
     let video_buf = PathBuf::from(&video_path);
     if !video_buf.exists() {
@@ -321,37 +279,20 @@ pub async fn generate_subtitles_only(
     }
 
     let cancel_rx = state.cancel_tx.subscribe();
-
-    // 1. Извлечение аудио в системный temp_dir
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let audio_output = std::env::temp_dir().join(format!("vc_subs_audio_{}_{}.wav", std::process::id(), ts));
-
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 20.0, stage: "Извлечение аудио...".to_string() });
-    
-    crate::ffmpeg::extract_audio(
-        video_buf,
-        audio_output.clone(),
-        app.clone(),
-        cancel_rx.resubscribe()
-    ).await?;
-
-    // 2. Распознавание речи
-    let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 50.0, stage: "Транскрипция аудио...".to_string() });
     let asr_model = config.asr_model_path.map(PathBuf::from);
-    let srt_path = crate::whisper::transcribe_audio(
-        audio_output.clone(),
+
+    let srt_path = crate::whisper::get_or_create_subtitles(
+        video_buf,
         asr_model,
         app.clone(),
-        cancel_rx.resubscribe()
-    ).await?;
+        cancel_rx,
+    )
+    .await?
+    .ok_or_else(|| AppError::Anyhow(anyhow::anyhow!("Не удалось сформировать файл субтитров")))?;
 
-    // Читаем содержимое SRT
     let content = tokio::fs::read_to_string(&srt_path)
         .await
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось прочитать сгенерированный SRT файл: {}", e)))?;
-
-    // Очистка временного аудио
-    let _ = tokio::fs::remove_file(&audio_output).await;
 
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { percent: 100.0, stage: "Субтитры успешно сгенерированы".to_string() });
 

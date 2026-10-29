@@ -1,0 +1,1501 @@
+[22:18:33.426] [LLM] llama_model_loader: - kv   9:                  qwen2.feed_forward_length u32              = 8960
+[22:18:33.426] [LLM] llama_model_loader: - kv  10:                 qwen2.attention.head_count u32              = 12
+[22:18:33.426] [LLM] llama_model_loader: - kv  11:              qwen2.attention.head_count_kv u32              = 2
+[22:18:33.426] [LLM] llama_model_loader: - kv  12:                       qwen2.rope.freq_base f32              = 1000000.000000
+[22:18:33.426] [LLM] llama_model_loader: - kv  13:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+[22:18:33.426] [LLM] llama_model_loader: - kv  14:                          general.file_type u32              = 15
+[22:18:33.426] [LLM] llama_model_loader: - kv  15:                       tokenizer.ggml.model str              = gpt2
+[22:18:33.426] [LLM] llama_model_loader: - kv  16:                         tokenizer.ggml.pre str              = qwen2
+[22:18:33.466] [LLM] llama_model_loader: - kv  17:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+[22:18:33.481] [LLM] llama_model_loader: - kv  18:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+[22:18:33.522] [LLM] llama_model_loader: - kv  19:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+[22:18:33.522] [LLM] llama_model_loader: - kv  20:                tokenizer.ggml.eos_token_id u32              = 151645
+[22:18:33.522] [LLM] llama_model_loader: - kv  21:            tokenizer.ggml.padding_token_id u32              = 151643
+[22:18:33.522] [LLM] llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 151643
+[22:18:33.522] [LLM] llama_model_loader: - kv  23:               tokenizer.ggml.add_bos_token bool             = false
+[22:18:33.522] [LLM] llama_model_loader: - kv  24:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+[22:18:33.522] [LLM] llama_model_loader: - kv  25:               general.quantization_version u32              = 2
+[22:18:33.522] [LLM] llama_model_loader: - type  f32:  141 tensors
+[22:18:33.522] [LLM] llama_model_loader: - type q4_K:  169 tensors
+[22:18:33.522] [LLM] llama_model_loader: - type q6_K:   29 tensors
+[22:18:33.697] [LLM] llm_load_vocab: special tokens cache size = 293
+[22:18:33.755] [LLM] llm_load_vocab: token to piece cache size = 0.9310 MB
+[22:18:33.755] [LLM] llm_load_print_meta: format           = GGUF V3 (latest)
+[22:18:33.755] [LLM] llm_load_print_meta: arch             = qwen2
+[22:18:33.755] [LLM] llm_load_print_meta: vocab type       = BPE
+[22:18:33.755] [LLM] llm_load_print_meta: n_vocab          = 151936
+[22:18:33.755] [LLM] llm_load_print_meta: n_merges         = 151387
+[22:18:33.755] [LLM] llm_load_print_meta: n_ctx_train      = 32768
+[22:18:33.755] [LLM] llm_load_print_meta: n_embd           = 1536
+[22:18:33.755] [LLM] llm_load_print_meta: n_head           = 12
+[22:18:33.755] [LLM] llm_load_print_meta: n_head_kv        = 2
+[22:18:33.755] [LLM] llm_load_print_meta: n_layer          = 28
+[22:18:33.755] [LLM] llm_load_print_meta: n_rot            = 128
+[22:18:33.755] [LLM] llm_load_print_meta: n_embd_head_k    = 128
+[22:18:33.755] [LLM] llm_load_print_meta: n_embd_head_v    = 128
+[22:18:33.755] [LLM] llm_load_print_meta: n_gqa            = 6
+[22:18:33.755] [LLM] llm_load_print_meta: n_embd_k_gqa     = 256
+[22:18:33.755] [LLM] llm_load_print_meta: n_embd_v_gqa     = 256
+[22:18:33.755] [LLM] llm_load_print_meta: f_norm_eps       = 0.0e+00
+[22:18:33.755] [LLM] llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+[22:18:33.756] [LLM] llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+[22:18:33.756] [LLM] llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+[22:18:33.756] [LLM] llm_load_print_meta: f_logit_scale    = 0.0e+00
+[22:18:33.756] [LLM] llm_load_print_meta: n_ff             = 8960
+[22:18:33.756] [LLM] llm_load_print_meta: n_expert         = 0
+[22:18:33.756] [LLM] llm_load_print_meta: n_expert_used    = 0
+[22:18:33.756] [LLM] llm_load_print_meta: causal attn      = 1
+[22:18:33.756] [LLM] llm_load_print_meta: pooling type     = 0
+[22:18:33.756] [LLM] llm_load_print_meta: rope type        = 2
+[22:18:33.756] [LLM] llm_load_print_meta: rope scaling     = linear
+[22:18:33.756] [LLM] llm_load_print_meta: freq_base_train  = 1000000.0
+[22:18:33.756] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:18:33.756] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:18:33.756] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:18:33.756] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:18:33.756] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:18:33.756] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:18:33.756] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:18:33.756] [LLM] llm_load_print_meta: model type       = ?B
+[22:18:33.756] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:18:33.756] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:18:33.756] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:18:33.756] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:18:33.756] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:18:33.756] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:18:33.756] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:18:33.756] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:18:33.756] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:18:33.756] [LLM] llm_load_print_meta: max token length = 256
+[22:18:33.776] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:18:33.776] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:18:33.776] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:18:33.776] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:18:33.861] [LLM] llm_load_tensors: ggml ctx size =    0.16 MiB
+[22:18:33.933] [LLM] llm_load_tensors: offloading 0 repeating layers to GPU
+[22:18:33.933] [LLM] llm_load_tensors: offloaded 0/29 layers to GPU
+[22:18:33.933] [LLM] llm_load_tensors:        CPU buffer size =  1059.89 MiB
+[22:18:33.934] [LLM] .........................................................................
+[22:18:33.940] [LLM] llama_new_context_with_model: n_ctx      = 32768
+[22:18:33.940] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:18:33.940] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:18:33.940] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:18:33.940] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:18:33.940] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:18:34.057] [LLM] llama_kv_cache_init:  CUDA_Host KV buffer size =   896.00 MiB
+[22:18:34.057] [LLM] llama_new_context_with_model: KV self size  =  896.00 MiB, K (f16):  448.00 MiB, V (f16):  448.00 MiB
+[22:18:34.057] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:18:34.076] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   877.27 MiB
+[22:18:34.076] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =    67.01 MiB
+[22:18:34.076] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:18:34.076] [LLM] llama_new_context_with_model: graph splits = 396
+[22:18:34.381] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:18:34.660] [LLM] llama-cli завершился с ошибкой: Some(-1073740791)
+[22:18:34.661] [LLM] llama-cli завершился с ошибкой: Ошибка при работе с FFmpeg/Whisper Sidecar: llama-cli завершился с ошибкой: Some(-1073740791). Переключение на встроенный NLP для данного пакета.
+[22:18:34.661] [LLM] Пакет 22/22: анализ 7 реплик через llama-cli...
+[22:18:34.743] [LLM] Log start
+[22:18:34.743] [LLM] main: build = 3201 (adf480c3)
+[22:18:34.743] [LLM] main: built with MSVC 19.29.30154.0 for x64
+[22:18:34.744] [LLM] main: seed  = 1793312314
+[22:18:34.774] [LLM] llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from C:\Users\svato\AppData\Local\Video Cutter Pro\models\qwen-1.5b-chat.gguf (version GGUF V3 (latest))
+[22:18:34.774] [LLM] llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+[22:18:34.774] [LLM] llama_model_loader: - kv   0:                       general.architecture str              = qwen2
+[22:18:34.774] [LLM] llama_model_loader: - kv   1:                               general.type str              = model
+[22:18:34.774] [LLM] llama_model_loader: - kv   2:                               general.name str              = qwen2.5-1.5b-instruct
+[22:18:34.774] [LLM] llama_model_loader: - kv   3:                            general.version str              = v0.1
+[22:18:34.774] [LLM] llama_model_loader: - kv   4:                           general.finetune str              = qwen2.5-1.5b-instruct
+[22:18:34.774] [LLM] llama_model_loader: - kv   5:                         general.size_label str              = 1.8B
+[22:18:34.774] [LLM] llama_model_loader: - kv   6:                          qwen2.block_count u32              = 28
+[22:18:34.774] [LLM] llama_model_loader: - kv   7:                       qwen2.context_length u32              = 32768
+[22:18:34.774] [LLM] llama_model_loader: - kv   8:                     qwen2.embedding_length u32              = 1536
+[22:18:34.774] [LLM] llama_model_loader: - kv   9:                  qwen2.feed_forward_length u32              = 8960
+[22:18:34.774] [LLM] llama_model_loader: - kv  10:                 qwen2.attention.head_count u32              = 12
+[22:18:34.774] [LLM] llama_model_loader: - kv  11:              qwen2.attention.head_count_kv u32              = 2
+[22:18:34.774] [LLM] llama_model_loader: - kv  12:                       qwen2.rope.freq_base f32              = 1000000.000000
+[22:18:34.774] [LLM] llama_model_loader: - kv  13:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+[22:18:34.774] [LLM] llama_model_loader: - kv  14:                          general.file_type u32              = 15
+[22:18:34.774] [LLM] llama_model_loader: - kv  15:                       tokenizer.ggml.model str              = gpt2
+[22:18:34.775] [LLM] llama_model_loader: - kv  16:                         tokenizer.ggml.pre str              = qwen2
+[22:18:34.814] [LLM] llama_model_loader: - kv  17:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+[22:18:34.829] [LLM] llama_model_loader: - kv  18:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+[22:18:34.870] [LLM] llama_model_loader: - kv  19:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+[22:18:34.870] [LLM] llama_model_loader: - kv  20:                tokenizer.ggml.eos_token_id u32              = 151645
+[22:18:34.870] [LLM] llama_model_loader: - kv  21:            tokenizer.ggml.padding_token_id u32              = 151643
+[22:18:34.870] [LLM] llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 151643
+[22:18:34.870] [LLM] llama_model_loader: - kv  23:               tokenizer.ggml.add_bos_token bool             = false
+[22:18:34.870] [LLM] llama_model_loader: - kv  24:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+[22:18:34.870] [LLM] llama_model_loader: - kv  25:               general.quantization_version u32              = 2
+[22:18:34.870] [LLM] llama_model_loader: - type  f32:  141 tensors
+[22:18:34.871] [LLM] llama_model_loader: - type q4_K:  169 tensors
+[22:18:34.871] [LLM] llama_model_loader: - type q6_K:   29 tensors
+[22:18:35.040] [LLM] llm_load_vocab: special tokens cache size = 293
+[22:18:35.099] [LLM] llm_load_vocab: token to piece cache size = 0.9310 MB
+[22:18:35.099] [LLM] llm_load_print_meta: format           = GGUF V3 (latest)
+[22:18:35.099] [LLM] llm_load_print_meta: arch             = qwen2
+[22:18:35.099] [LLM] llm_load_print_meta: vocab type       = BPE
+[22:18:35.099] [LLM] llm_load_print_meta: n_vocab          = 151936
+[22:18:35.099] [LLM] llm_load_print_meta: n_merges         = 151387
+[22:18:35.099] [LLM] llm_load_print_meta: n_ctx_train      = 32768
+[22:18:35.099] [LLM] llm_load_print_meta: n_embd           = 1536
+[22:18:35.099] [LLM] llm_load_print_meta: n_head           = 12
+[22:18:35.099] [LLM] llm_load_print_meta: n_head_kv        = 2
+[22:18:35.099] [LLM] llm_load_print_meta: n_layer          = 28
+[22:18:35.099] [LLM] llm_load_print_meta: n_rot            = 128
+[22:18:35.099] [LLM] llm_load_print_meta: n_embd_head_k    = 128
+[22:18:35.099] [LLM] llm_load_print_meta: n_embd_head_v    = 128
+[22:18:35.099] [LLM] llm_load_print_meta: n_gqa            = 6
+[22:18:35.099] [LLM] llm_load_print_meta: n_embd_k_gqa     = 256
+[22:18:35.099] [LLM] llm_load_print_meta: n_embd_v_gqa     = 256
+[22:18:35.099] [LLM] llm_load_print_meta: f_norm_eps       = 0.0e+00
+[22:18:35.099] [LLM] llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+[22:18:35.099] [LLM] llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+[22:18:35.099] [LLM] llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+[22:18:35.099] [LLM] llm_load_print_meta: f_logit_scale    = 0.0e+00
+[22:18:35.099] [LLM] llm_load_print_meta: n_ff             = 8960
+[22:18:35.099] [LLM] llm_load_print_meta: n_expert         = 0
+[22:18:35.099] [LLM] llm_load_print_meta: n_expert_used    = 0
+[22:18:35.099] [LLM] llm_load_print_meta: causal attn      = 1
+[22:18:35.099] [LLM] llm_load_print_meta: pooling type     = 0
+[22:18:35.099] [LLM] llm_load_print_meta: rope type        = 2
+[22:18:35.099] [LLM] llm_load_print_meta: rope scaling     = linear
+[22:18:35.099] [LLM] llm_load_print_meta: freq_base_train  = 1000000.0
+[22:18:35.099] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:18:35.099] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:18:35.099] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:18:35.099] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:18:35.099] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:18:35.099] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:18:35.099] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:18:35.099] [LLM] llm_load_print_meta: model type       = ?B
+[22:18:35.099] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:18:35.099] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:18:35.099] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:18:35.099] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:18:35.099] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:18:35.099] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:18:35.099] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:18:35.099] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:18:35.099] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:18:35.099] [LLM] llm_load_print_meta: max token length = 256
+[22:18:35.120] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:18:35.120] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:18:35.120] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:18:35.120] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:18:35.199] [LLM] llm_load_tensors: ggml ctx size =    0.16 MiB
+[22:18:35.271] [LLM] llm_load_tensors: offloading 0 repeating layers to GPU
+[22:18:35.271] [LLM] llm_load_tensors: offloaded 0/29 layers to GPU
+[22:18:35.271] [LLM] llm_load_tensors:        CPU buffer size =  1059.89 MiB
+[22:18:35.272] [LLM] .........................................................................
+[22:18:35.279] [LLM] llama_new_context_with_model: n_ctx      = 32768
+[22:18:35.279] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:18:35.279] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:18:35.279] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:18:35.279] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:18:35.279] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:18:35.394] [LLM] llama_kv_cache_init:  CUDA_Host KV buffer size =   896.00 MiB
+[22:18:35.394] [LLM] llama_new_context_with_model: KV self size  =  896.00 MiB, K (f16):  448.00 MiB, V (f16):  448.00 MiB
+[22:18:35.397] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:18:35.416] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   877.27 MiB
+[22:18:35.416] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =    67.01 MiB
+[22:18:35.416] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:18:35.416] [LLM] llama_new_context_with_model: graph splits = 396
+[22:18:35.719] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:18:35.995] [LLM] llama-cli завершился с ошибкой: Some(-1073740791)
+[22:18:35.995] [LLM] llama-cli завершился с ошибкой: Ошибка при работе с FFmpeg/Whisper Sidecar: llama-cli завершился с ошибкой: Some(-1073740791). Переключение на встроенный NLP для данного пакета.
+[01:18:46] [App] Пайплайн [Визуальный анализ ключевых сцен...]: Прогресс 75%
+[22:18:35.996] [Analyzer] Запуск анализа видео-сцен: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4'
+[22:18:35.997] [Analyzer] Запуск двухфакторного алгоритма анализа хайлайтов (смена сцен FFmpeg + звуковая активность)...
+[01:18:46] [App] Анализ сцен: Шаг detecting_scene_cuts (0/100)
+[22:18:35.997] [FFmpeg] Анализ метаданных исходного видео: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4'
+[22:18:36.058] [FFmpeg] Метаданные видео определены: длительность = 1420.10 сек, размер = 1045606683 байт, кодек = Some("h264 (Constrained Baseline) (avc1 / 0x31637661)")
+[22:18:36.059] [Analyzer] Быстрый поиск динамичных смен сцен по ключевым кадрам (FFmpeg scene detect)...
+[22:18:52.936] [Analyzer] Обнаружено 242 ключевых смен кадров/сцен.
+[01:18:52] [App] Анализ сцен: Шаг detecting_audio_energy (60/100)
+[22:18:52.936] [Analyzer] Анализ аудио-энергии и поиск речевой активности через FFmpeg silencedetect...
+[22:18:54.356] [Analyzer] Обнаружено 92 активных эмоциональных звуковых сегментов.
+[01:18:54] [App] Анализ сцен: Шаг ranking_highlights (90/100)
+[22:18:54.356] [Analyzer] ✓ Двухфакторный анализ завершен: найдено 12 качественных сцен-хайлайтов.
+[01:18:54] [App] Анализ сцен: Шаг complete (12/12)
+[01:18:54] [App] Пайплайн [Формирование лучших моментов (хайлайтов)...]: Прогресс 85%
+[22:18:54.356] [Pipeline] [Шаг 4/5] Отбор хайлайтов завершен: сформировано 10 лучших моментов для таймлайна
+[22:18:54.356] [Pipeline]   → Клип #1: [0.0с - 15.0с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #2: [21.5с - 36.5с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #3: [36.0с - 51.0с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #4: [57.0с - 72.0с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #5: [72.0с - 87.0с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #6: [102.0с - 117.0с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #7: [117.0с - 132.0с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #8: [760.5с - 775.5с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #9: [896.5с - 911.5с] (длительность 15.0с)
+[22:18:54.356] [Pipeline]   → Клип #10: [1234.5с - 1249.5с] (длительность 15.0с)
+[01:18:54] [App] Получено 10 фрагментов, предложенных ИИ.
+[22:18:54.362] [Pipeline] Режим подтверждения: фрагменты отправлены на таймлайн для подтверждения и экспорта пользователем.
+[01:18:54] [App] Пайплайн [Хайлайты успешно найдены и готовы к предпросмотру]: Прогресс 100%
+[01:18:54] [App] ✓ Успешно выделено 10 хайлайт-фрагментов на таймлайне.
+[01:18:54] [App] ИИ завершил анализ. Фрагменты перенесены на таймлайн для подтверждения. Нажмите "Экспортировать клипы" после редактирования.
+[01:20:21] [App] Запуск ручного экспорта 10 клипов в формате 9:16 с субтитрами Whisper...
+[22:20:21.501] [FFmpeg] Запуск извлечения аудио дорожки: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4' -> 'C:\Users\svato\AppData\Local\Temp\vc_manual_audio_9424_1793312421501.wav'
+[22:20:21.528] [FFmpeg] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:20:21.528] [FFmpeg] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:20:21.528] [FFmpeg] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:20:21.528] [FFmpeg] libavutil      61. 20.100 / 61. 20.100
+[22:20:21.528] [FFmpeg] libavcodec     63. 25.101 / 63. 25.101
+[22:20:21.528] [FFmpeg] libavformat    63. 17.100 / 63. 17.100
+[22:20:21.528] [FFmpeg] libavdevice    63.  6.100 / 63.  6.100
+[22:20:21.528] [FFmpeg] libavfilter    12.  9.100 / 12.  9.100
+[22:20:21.528] [FFmpeg] libswscale     10.  6.100 / 10.  6.100
+[22:20:21.528] [FFmpeg] libswresample   7.  7.100 /  7.  7.100
+[22:20:21.554] [FFmpeg] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:20:21.554] [FFmpeg] Metadata:
+[22:20:21.554] [FFmpeg] major_brand     : mp42
+[22:20:21.554] [FFmpeg] minor_version   : 0
+[22:20:21.554] [FFmpeg] compatible_brands: mp41isom
+[22:20:21.554] [FFmpeg] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:20:21.554] [FFmpeg] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:20:21.554] [FFmpeg] Определена длительность аудиопотока: 1420.10 сек
+[22:20:21.554] [FFmpeg] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:20:21.554] [FFmpeg] Metadata:
+[22:20:21.554] [FFmpeg] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:20:21.554] [FFmpeg] handler_name    : VideoHandler
+[22:20:21.554] [FFmpeg] encoder         : AVC Coding
+[22:20:21.554] [FFmpeg] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:20:21.554] [FFmpeg] Metadata:
+[22:20:21.554] [FFmpeg] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:20:21.554] [FFmpeg] handler_name    : SoundHandler
+[22:20:21.555] [FFmpeg] Stream mapping:
+[22:20:21.555] [FFmpeg] Stream #0:1 -> #0:0 (aac (native) -> pcm_s16le (native))
+[22:20:21.558] [FFmpeg] Output #0, wav, to 'C:\Users\svato\AppData\Local\Temp\vc_manual_audio_9424_1793312421501.wav':
+[22:20:21.558] [FFmpeg] Metadata:
+[22:20:21.558] [FFmpeg] ISFT            : Lavf63.17.100
+[22:20:21.558] [FFmpeg] Stream #0:0(und): Audio: pcm_s16le ([1][0][0][0] / 0x0001), 16000 Hz, mono, s16, 256 kb/s (default)
+[22:20:21.558] [FFmpeg] Metadata:
+[22:20:21.558] [FFmpeg] encoder         : Lavc63.25.101 pcm_s16le
+[22:20:21.558] [FFmpeg] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:20:21.558] [FFmpeg] handler_name    : SoundHandler
+[01:20:22] [App] FFmpeg: Извлечение аудио 44%
+[01:20:22] [App] FFmpeg: Извлечение аудио 89%
+[22:20:22.716] [FFmpeg] [out#0/wav @ 0000028d72834e00] video:0KiB audio:44378KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.000172%
+[01:20:22] [App] FFmpeg: Извлечение аудио 100%
+[22:20:22.722] [FFmpeg] Аудио дорожка 16kHz PCM успешно извлечена.
+[22:20:22.722] [Whisper] Инициализация ASR для аудиофайла: 'C:\Users\svato\AppData\Local\Temp\vc_manual_audio_9424_1793312421501.wav'
+[22:20:22.723] [Whisper] Найдена модель распознавания речи: 'models/ggml-base.bin'
+[22:20:22.723] [Whisper] Запуск whisper.cpp (модель: models/ggml-base.bin, язык: auto, вывод: C:\Users\svato\AppData\Local\Temp\vc_manual_audio_9424_1793312421501.srt)...
+[01:20:22] [App] Whisper: loading_model - 0%
+[22:20:22.822] [Whisper] whisper_init_from_file_with_params_no_state: loading model from 'models/ggml-base.bin'
+[22:20:22.822] [Whisper] whisper_model_load: loading model
+[22:20:22.822] [Whisper] whisper_model_load: n_vocab       = 51865
+[22:20:22.822] [Whisper] whisper_model_load: n_audio_ctx   = 1500
+[22:20:22.822] [Whisper] whisper_model_load: n_audio_state = 512
+[22:20:22.822] [Whisper] whisper_model_load: n_audio_head  = 8
+[22:20:22.822] [Whisper] whisper_model_load: n_audio_layer = 6
+[22:20:22.822] [Whisper] whisper_model_load: n_text_ctx    = 448
+[22:20:22.822] [Whisper] whisper_model_load: n_text_state  = 512
+[22:20:22.822] [Whisper] whisper_model_load: n_text_head   = 8
+[22:20:22.822] [Whisper] whisper_model_load: n_text_layer  = 6
+[22:20:22.822] [Whisper] whisper_model_load: n_mels        = 80
+[22:20:22.822] [Whisper] whisper_model_load: ftype         = 1
+[22:20:22.822] [Whisper] whisper_model_load: qntvr         = 0
+[22:20:22.822] [Whisper] whisper_model_load: type          = 2 (base)
+[22:20:22.856] [Whisper] whisper_model_load: adding 1608 extra tokens
+[22:20:22.857] [Whisper] whisper_model_load: n_langs       = 99
+[22:20:22.883] [Whisper] ggml_init_cublas: GGML_CUDA_FORCE_MMQ:   no
+[22:20:22.883] [Whisper] ggml_init_cublas: CUDA_USE_TENSOR_CORES: yes
+[22:20:22.883] [Whisper] ggml_init_cublas: found 1 CUDA devices:
+[22:20:22.883] [Whisper] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:20:23.026] [Whisper] whisper_backend_init: using CUDA backend
+[22:20:23.026] [Whisper] whisper_model_load:     CUDA buffer size =   147.46 MB
+[22:20:23.181] [Whisper] whisper_model_load: model size    =  147.37 MB
+[22:20:23.186] [Whisper] whisper_backend_init: using CUDA backend
+[22:20:23.186] [Whisper] whisper_init_state: kv self size  =   16.52 MB
+[22:20:23.186] [Whisper] whisper_init_state: kv cross size =   18.43 MB
+[22:20:23.187] [Whisper] whisper_init_state: compute buffer (conv)   =   14.86 MB
+[22:20:23.187] [Whisper] whisper_init_state: compute buffer (encode) =   85.99 MB
+[22:20:23.188] [Whisper] whisper_init_state: compute buffer (cross)  =    4.78 MB
+[22:20:23.188] [Whisper] whisper_init_state: compute buffer (decode) =   96.48 MB
+[22:20:23.244] [Whisper] system_info: n_threads = 4 / 16 | AVX = 1 | AVX2 = 1 | AVX512 = 0 | FMA = 1 | NEON = 0 | ARM_FMA = 0 | METAL = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 0 | VSX = 0 | CUDA = 1 | COREML = 0 | OPENVINO = 0 |
+[22:20:23.244] [Whisper] main: processing 'C:\Users\svato\AppData\Local\Temp\vc_manual_audio_9424_1793312421501.wav' (22721536 samples, 1420.1 sec), 4 threads, 1 processors, 5 beams + best of 5, lang = auto, task = transcribe, timestamps = 1 ...
+[22:20:24.451] [Whisper] whisper_full_with_state: auto-detected language: ru (p = 0.970388)
+[22:20:25.951] [Whisper] [00:00:00.000 --> 00:00:13.000]   Имперские войска чуть ли не вылипы, подозматывающими ударами Федерации, но признание национальных администраций на оккупированных территориях привело к стабилизации в фронта.
+[22:20:27.541] [Whisper] [00:00:13.000 --> 00:00:23.000]   Ооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооооо, но только тебе, молот, давай сюда! Господальфеца, успокойтесь!
+[22:20:27.541] [Whisper] [00:00:23.000 --> 00:00:26.000]   - Вы на высоте! - Восходите на для высоте, ранее широких!
+[22:20:27.541] [Whisper] [00:00:26.000 --> 00:00:30.000]   Да уж, всего месяц прошел, а как все переменилось.
+[22:20:27.541] [Whisper] [00:00:30.000 --> 00:00:34.000]   Федерации со еезное королевство стали действовать сложнее.
+[22:20:27.541] [Whisper] [00:00:34.000 --> 00:00:38.000]   И начали совместную операцию на севере.
+[22:20:28.698] [Whisper] [00:00:38.000 --> 00:00:45.000]   - Товарищи, я предлагаю поддержать наших бойцов на флангах. Пришло время международной кооперацией.
+[22:20:28.698] [Whisper] [00:00:45.000 --> 00:00:49.000]   Давайте же проведем совместную компанию союзным королевством.
+[22:20:28.698] [Whisper] [00:00:49.000 --> 00:00:54.000]   - Жентльмена? Нам поставлена задача спасти союздика и отвлечь врага.
+[22:20:28.698] [Whisper] [00:00:54.000 --> 00:00:59.000]   Для этого мы ударим с экливым имперским баском на востоке во фланг.
+[22:20:28.698] [Whisper] [00:00:59.000 --> 00:01:06.000]   Оба государства взялись слаженно поддерживать партизан, промышляющих на территории Антанты.
+[22:20:29.599] [Whisper] [00:01:06.000 --> 00:01:10.000]   Усела империя, быстро начала гореть земля под ногами.
+[22:20:29.599] [Whisper] [00:01:10.000 --> 00:01:13.000]   И на подмогу бросили боевую группу Соломандра.
+[22:20:29.599] [Whisper] [00:01:13.000 --> 00:01:21.000]   - Зараза, довисно еще терпеть и терпеть.
+[22:20:29.599] [Whisper] whisper_print_progress_callback: progress =   6%
+[01:20:29] [App] Whisper: transcribing - 6%
+[22:20:29.599] [Whisper] [00:01:21.000 --> 00:01:26.000]   С трудом, на нам удалось его надеть обе силы отступить.
+[22:20:29.599] [Whisper] [00:01:26.000 --> 00:01:32.000]   Империя же решила отозвать подкрепление и отправить его вновь на восточную фронцию.
+[22:20:29.992] [Whisper] [00:01:32.000 --> 00:01:37.000]   Маштабах континентальной войны это были локальные сражения.
+[22:20:29.992] [Whisper] [00:01:37.000 --> 00:01:41.000]   Но они побудили к действиям королевства Эльдова.
+[22:20:30.197] [Whisper] [00:01:42.000 --> 00:01:47.000]   Редактор субтитров А. Синецкая Корректор А. Кулакова
+[22:20:30.315] [Whisper] [00:01:47.000 --> 00:01:52.000]   Корректор А. Кулакова
+[22:20:30.435] [Whisper] [00:01:53.000 --> 00:01:58.000]   Корректор А. Кулакова
+[22:20:30.558] [Whisper] [00:01:59.000 --> 00:02:04.000]   Корректор А. Кулакова
+[22:20:30.678] [Whisper] [00:02:04.000 --> 00:02:09.000]   Корректор А. Кулакова
+[22:20:30.796] [Whisper] [00:02:10.000 --> 00:02:14.000]   Корректор А. Кулакова
+[22:20:30.919] [Whisper] [00:02:15.000 --> 00:02:19.000]   Корректор А. Кулакова
+[22:20:31.036] [Whisper] [00:02:19.000 --> 00:02:24.000]   Корректор А. Кулакова
+[22:20:31.036] [Whisper] whisper_print_progress_callback: progress =  10%
+[22:20:31.157] [Whisper] [00:02:24.000 --> 00:02:29.000]   Корректор А. Кулакова
+[22:20:31.281] [Whisper] [00:02:29.000 --> 00:02:34.000]   Корректор А. Кулакова
+[22:20:31.400] [Whisper] [00:02:34.000 --> 00:02:39.000]   Корректор А. Кулакова
+[22:20:31.519] [Whisper] [00:02:39.000 --> 00:02:44.000]   Корректор А. Кулакова
+[22:20:31.640] [Whisper] [00:02:44.000 --> 00:02:49.000]   Корректор А. Кулакова
+[22:20:31.758] [Whisper] [00:02:49.000 --> 00:02:54.000]   Корректор А. Кулакова
+[22:20:31.876] [Whisper] [00:02:54.000 --> 00:02:59.000]   Корректор А. Кулакова
+[22:20:31.995] [Whisper] [00:02:59.000 --> 00:03:04.000]   Корректор А. Кулакова
+[22:20:32.103] [Whisper] [00:03:04.000 --> 00:03:09.000]   Корректор А. Кулак
+[22:20:32.212] [Whisper] [00:03:09.000 --> 00:03:14.000]   Корректор А. Кулак
+[22:20:32.326] [Whisper] [00:03:14.000 --> 00:03:19.000]   Корректор А. Кулак
+[22:20:32.435] [Whisper] [00:03:19.000 --> 00:03:24.000]   Корректор А. Кулак
+[22:20:32.546] [Whisper] [00:03:24.000 --> 00:03:29.000]   Корректор А. Кулак
+[22:20:32.661] [Whisper] [00:03:29.000 --> 00:03:34.000]   Корректор А. Кулак
+[22:20:32.661] [Whisper] whisper_print_progress_callback: progress =  15%
+[01:20:32] [App] Whisper: transcribing - 15%
+[22:20:32.785] [Whisper] [00:03:34.000 --> 00:03:39.000]   Корректор А. Кулак
+[22:20:32.898] [Whisper] [00:03:39.000 --> 00:03:44.000]   Корректор А. Кулак
+[22:20:33.014] [Whisper] [00:03:44.000 --> 00:03:49.000]   Корректор А. Кулак
+[22:20:33.123] [Whisper] [00:03:49.000 --> 00:03:54.000]   Корректор А. Кулак
+[22:20:33.232] [Whisper] [00:03:54.000 --> 00:03:59.000]   Корректор А. Кулак
+[22:20:33.344] [Whisper] [00:03:59.000 --> 00:04:04.000]   Корректор А. Кулак
+[22:20:33.454] [Whisper] [00:04:04.000 --> 00:04:09.000]   Корректор А. Кулак
+[22:20:33.568] [Whisper] [00:04:09.000 --> 00:04:14.000]   Корректор А. Кулак
+[22:20:33.689] [Whisper] [00:04:14.000 --> 00:04:19.000]   Корректор А. Кулак
+[22:20:33.798] [Whisper] [00:04:19.000 --> 00:04:24.000]   Корректор А. Кулак
+[22:20:33.908] [Whisper] [00:04:24.000 --> 00:04:29.000]   Корректор А. Кулак
+[22:20:34.023] [Whisper] [00:04:29.000 --> 00:04:34.000]   Корректор А. Кулак
+[22:20:34.135] [Whisper] [00:04:34.000 --> 00:04:39.000]   Корректор А. Кулак
+[22:20:34.246] [Whisper] [00:04:39.000 --> 00:04:44.000]   Корректор А. Кулак
+[22:20:34.364] [Whisper] [00:04:44.000 --> 00:04:49.000]   Корректор А. Кулак
+[22:20:34.364] [Whisper] whisper_print_progress_callback: progress =  20%
+[01:20:34] [App] Whisper: transcribing - 20%
+[22:20:34.483] [Whisper] [00:04:49.000 --> 00:04:54.000]   Корректор А. Кулак
+[22:20:34.602] [Whisper] [00:04:54.000 --> 00:04:59.000]   Корректор А. Кулак
+[22:20:34.718] [Whisper] [00:04:59.000 --> 00:05:04.000]   Корректор А. Кулак
+[22:20:34.830] [Whisper] [00:05:04.000 --> 00:05:09.000]   Корректор А. Кулак
+[22:20:34.940] [Whisper] [00:05:09.000 --> 00:05:14.000]   Корректор А. Кулак
+[22:20:35.056] [Whisper] [00:05:14.000 --> 00:05:19.000]   Корректор А. Кулак
+[22:20:35.165] [Whisper] [00:05:19.000 --> 00:05:24.000]   Корректор А. Кулак
+[22:20:35.275] [Whisper] [00:05:24.000 --> 00:05:29.000]   Корректор А. Кулак
+[22:20:35.395] [Whisper] [00:05:29.000 --> 00:05:34.000]   Корректор А. Кулак
+[22:20:35.504] [Whisper] [00:05:34.000 --> 00:05:39.000]   Корректор А. Кулак
+[22:20:35.619] [Whisper] [00:05:39.000 --> 00:05:44.000]   Корректор А. Кулак
+[22:20:35.786] [Whisper] [00:05:44.000 --> 00:05:49.000]   Корректор А. Кулак
+[22:20:35.895] [Whisper] [00:05:49.000 --> 00:05:54.000]   Корректор А. Кулак
+[22:20:36.004] [Whisper] [00:05:54.000 --> 00:05:59.000]   Корректор А. Кулак
+[22:20:36.004] [Whisper] whisper_print_progress_callback: progress =  25%
+[01:20:36] [App] Whisper: transcribing - 25%
+[22:20:36.130] [Whisper] [00:05:59.000 --> 00:06:04.000]   Корректор А. Кулак
+[22:20:36.259] [Whisper] [00:06:04.000 --> 00:06:09.000]   Корректор А. Кулак
+[22:20:36.368] [Whisper] [00:06:09.000 --> 00:06:14.000]   Корректор А. Кулак
+[22:20:36.485] [Whisper] [00:06:14.000 --> 00:06:19.000]   Корректор А. Кулак
+[22:20:36.595] [Whisper] [00:06:19.000 --> 00:06:24.000]   Корректор А. Кулак
+[22:20:36.707] [Whisper] [00:06:24.000 --> 00:06:29.000]   Корректор А. Кулак
+[22:20:36.818] [Whisper] [00:06:29.000 --> 00:06:34.000]   Корректор А. Кулак
+[22:20:36.929] [Whisper] [00:06:34.000 --> 00:06:39.000]   Корректор А. Кулак
+[22:20:37.039] [Whisper] [00:06:39.000 --> 00:06:44.000]   Корректор А. Кулак
+[22:20:37.153] [Whisper] [00:06:44.000 --> 00:06:49.000]   Корректор А. Кулак
+[22:20:37.261] [Whisper] [00:06:49.000 --> 00:06:54.000]   Корректор А. Кулак
+[22:20:37.373] [Whisper] [00:06:54.000 --> 00:06:59.000]   Корректор А. Кулак
+[22:20:37.709] [Whisper] [00:06:59.000 --> 00:07:04.000]   Корректор А. Кулак
+[22:20:37.817] [Whisper] [00:07:04.000 --> 00:07:09.000]   Корректор А. Кулак
+[22:20:37.817] [Whisper] whisper_print_progress_callback: progress =  30%
+[01:20:37] [App] Whisper: transcribing - 30%
+[22:20:37.937] [Whisper] [00:07:09.000 --> 00:07:14.000]   Корректор А. Кулак
+[22:20:38.057] [Whisper] [00:07:14.000 --> 00:07:19.000]   Корректор А. Кулак
+[22:20:38.169] [Whisper] [00:07:19.000 --> 00:07:24.000]   Корректор А. Кулак
+[22:20:38.511] [Whisper] [00:07:24.000 --> 00:07:29.000]   Корректор А. Кулак
+[22:20:38.627] [Whisper] [00:07:29.000 --> 00:07:34.000]   Корректор А. Кулак
+[22:20:38.737] [Whisper] [00:07:34.000 --> 00:07:39.000]   Корректор А. Кулак
+[22:20:38.848] [Whisper] [00:07:39.000 --> 00:07:44.000]   Корректор А. Кулак
+[22:20:38.961] [Whisper] [00:07:44.000 --> 00:07:49.000]   Корректор А. Кулак
+[22:20:39.069] [Whisper] [00:07:49.000 --> 00:07:54.000]   Корректор А. Кулак
+[22:20:39.602] [Whisper] [00:07:54.000 --> 00:07:59.000]   Корректор А. Кулак
+[22:20:39.603] [Whisper] [00:07:59.000 --> 00:08:04.000]   Корректор А. Кулак
+[22:20:39.603] [Whisper] whisper_print_progress_callback: progress =  35%
+[01:20:39] [App] Whisper: transcribing - 35%
+[22:20:39.603] [Whisper] [00:08:04.000 --> 00:08:08.000]   Корректор А. Кулак
+[22:20:39.603] [Whisper] [00:08:08.000 --> 00:08:12.000]   Корректор А. Кулак
+[22:20:39.603] [Whisper] [00:08:12.000 --> 00:08:16.000]   Корректор А. Кулак
+[22:20:39.603] [Whisper] [00:08:16.000 --> 00:08:20.000]   Корректор А. Кулак
+[22:20:40.181] [Whisper] [00:08:20.000 --> 00:08:25.000]   Корректор А. Кулак
+[22:20:40.181] [Whisper] [00:08:25.000 --> 00:08:30.000]   Корректор А. Кулак
+[22:20:40.181] [Whisper] [00:08:30.000 --> 00:08:34.000]   Корректор А. Кулак
+[22:20:40.181] [Whisper] [00:08:34.000 --> 00:08:38.000]   Корректор А. Кулак
+[22:20:40.181] [Whisper] [00:08:38.000 --> 00:08:42.000]   Корректор А. Кулак
+[22:20:40.181] [Whisper] [00:08:42.000 --> 00:08:46.000]   Корректор А. Кулак
+[22:20:41.249] [Whisper] [00:08:46.000 --> 00:08:52.000]   Поднимаешь? Я хотел попросить присмотреть задним нашим гостям. Речь идет о полковнике Изельдова.
+[22:20:41.249] [Whisper] [00:08:52.000 --> 00:08:54.000]   На блюдателе, что ли?
+[22:20:41.249] [Whisper] [00:08:54.000 --> 00:08:56.000]   Он самый.
+[22:20:41.249] [Whisper] [00:08:56.000 --> 00:09:00.000]   Господин номерст. Мы не в том положении, чтобы обеспечивать ему достойный прием.
+[22:20:41.249] [Whisper] [00:09:00.000 --> 00:09:02.000]   И все же прошу.
+[22:20:41.249] [Whisper] [00:09:02.000 --> 00:09:08.000]   Видимо, это необходимое наше стране.
+[22:20:41.249] [Whisper] [00:09:08.000 --> 00:09:11.000]   Не сомневаясь, вскоре слухи дойдут и до вас.
+[22:20:42.259] [Whisper] [00:09:11.000 --> 00:09:16.000]   Людям по голову на артене позакрываешь.
+[22:20:42.259] [Whisper] [00:09:16.000 --> 00:09:21.000]   Сегодняшнего дня. Целомандрой переводит ко мне в починение.
+[22:20:42.259] [Whisper] [00:09:21.000 --> 00:09:25.000]   Я же от нынещитаясь командиром свободы мобильной боевой группы.
+[22:20:42.259] [Whisper] [00:09:25.000 --> 00:09:28.000]   Но бумаги ты становишь моя починённая.
+[22:20:42.259] [Whisper] [00:09:28.000 --> 00:09:32.000]   Но дефакты продолжают шаперативное руководство солдатами.
+[22:20:42.259] [Whisper] [00:09:32.000 --> 00:09:38.000]   Проще говоря, я теперь замком несуществующего подразделения.
+[22:20:42.259] [Whisper] whisper_print_progress_callback: progress =  40%
+[01:20:42] [App] Whisper: transcribing - 40%
+[22:20:43.119] [Whisper] [00:09:38.000 --> 00:09:43.000]   При этом остаюсь главной своей Селомандре.
+[22:20:43.119] [Whisper] [00:09:43.000 --> 00:09:48.000]   Совершенно верно. При этом я вынужден просить тебе принять одно условие.
+[22:20:43.119] [Whisper] [00:09:48.000 --> 00:09:53.000]   От ныне на всех рапортах будет красаваться моё имя.
+[22:20:43.119] [Whisper] [00:09:53.000 --> 00:09:57.000]   Как понимаешь, мне достанется вся слава за твоё спешие.
+[22:20:43.119] [Whisper] [00:09:57.000 --> 00:09:59.000]   Выпросли тянант.
+[22:20:43.119] [Whisper] [00:09:59.000 --> 00:10:02.000]   Прошу, согласитесь.
+[22:20:43.119] [Whisper] [00:10:02.000 --> 00:10:05.000]   Хо.
+[22:20:44.147] [Whisper] [00:10:05.000 --> 00:10:09.000]   Выходит, я теперь смогу валить на него все свои неудачи.
+[22:20:44.147] [Whisper] [00:10:09.000 --> 00:10:12.000]   А сама набирать очки среди починённых?
+[22:20:44.147] [Whisper] [00:10:12.000 --> 00:10:14.000]   Ничего себе подарок.
+[22:20:44.147] [Whisper] [00:10:14.000 --> 00:10:17.000]   Но отвечать надо иначе.
+[22:20:44.147] [Whisper] [00:10:17.000 --> 00:10:19.000]   Господи, нам березть.
+[22:20:44.147] [Whisper] [00:10:19.000 --> 00:10:23.000]   Я офицер и поклялась служить наше мальтечество.
+[22:20:44.147] [Whisper] [00:10:23.000 --> 00:10:27.000]   Так, конечно, мне не совсем приятно слышать такие новости.
+[22:20:44.147] [Whisper] [00:10:27.000 --> 00:10:32.000]   Но если за этом не полагаются определенные уступки, я согласна.
+[22:20:45.390] [Whisper] [00:10:32.000 --> 00:10:35.000]   Спасибо, успокоила.
+[22:20:45.390] [Whisper] [00:10:35.000 --> 00:10:38.000]   Я то думал, что ты меня застрелишь.
+[22:20:45.390] [Whisper] [00:10:38.000 --> 00:10:43.000]   Какая смешная шутка, Берест.
+[22:20:45.390] [Whisper] [00:10:43.000 --> 00:10:48.000]   Здравствуйте, Фрой Лайне.
+[22:20:45.390] [Whisper] [00:10:48.000 --> 00:10:51.000]   Я на этой войне чего только не поведал, господин полковник.
+[22:20:45.390] [Whisper] [00:10:51.000 --> 00:10:54.000]   И руки мои не то, что пологать по самой плечи в крови.
+[22:20:45.390] [Whisper] whisper_print_progress_callback: progress =  46%
+[01:20:45] [App] Whisper: transcribing - 46%
+[22:20:45.390] [Whisper] [00:10:54.000 --> 00:10:59.000]   Называйте меня как вам удобно, хоть в праву, хоть теперь с лейтенантом.
+[22:20:47.359] [Whisper] [00:10:59.000 --> 00:11:03.000]   Полковник Верюджини ОКОЛАНДРА к вашим услугам.
+[22:20:47.359] [Whisper] [00:11:03.000 --> 00:11:05.000]   Меня направили к вам наблюдателям.
+[22:20:47.359] [Whisper] [00:11:05.000 --> 00:11:08.000]   А Берест и тенант, Таня Фонди Гуршаф.
+[22:20:47.359] [Whisper] [00:11:08.000 --> 00:11:13.000]   Я знал, что вы, Ковалерь, серебряных крыльев.
+[22:20:47.359] [Whisper] [00:11:13.000 --> 00:11:16.000]   Но поражённо, насколько живы все-таки молоды.
+[22:20:47.359] [Whisper] [00:11:16.000 --> 00:11:18.000]   Так это же хорошо.
+[22:20:47.359] [Whisper] [00:11:18.000 --> 00:11:20.000]   Меньше рост, сложнее попасть.
+[22:20:47.360] [Whisper] [00:11:20.000 --> 00:11:23.000]   А вам советую прикибаться, а то малы ли?
+[22:20:47.360] [Whisper] [00:11:23.000 --> 00:11:25.000]   Это верно подмечено.
+[22:20:47.360] [Whisper] [00:11:25.000 --> 00:11:28.000]   Пожалуй, и во время боя буду держаться поближе к земле.
+[22:20:47.963] [Whisper] [00:11:28.000 --> 00:11:32.000]   Добро пожаловать на передовую.
+[22:20:47.963] [Whisper] [00:11:32.000 --> 00:11:35.000]   Отлид за всех темперий.
+[22:20:47.963] [Whisper] [00:11:35.000 --> 00:11:38.000]   Я приветствую наших славных сайников.
+[22:20:47.963] [Whisper] whisper_print_progress_callback: progress =  50%
+[22:20:47.963] [Whisper] [00:11:38.000 --> 00:11:55.000]   У вас всегда из горячей еда?
+[22:20:49.130] [Whisper] [00:11:55.000 --> 00:11:59.000]   От еды напрямую зависит мораль солдат.
+[22:20:49.130] [Whisper] [00:11:59.000 --> 00:12:01.000]   Угощайтесь, пока не остыло.
+[22:20:49.130] [Whisper] [00:12:01.000 --> 00:12:07.000]   Подразделяется репорядок.
+[22:20:49.130] [Whisper] [00:12:07.000 --> 00:12:09.000]   Хоть мы и на линии фронта.
+[22:20:49.130] [Whisper] [00:12:09.000 --> 00:12:13.000]   Империя верно прижигает тонный денег,
+[22:20:49.130] [Whisper] [00:12:13.000 --> 00:12:16.000]   чтобы беспечивать войска необходимым.
+[22:20:49.130] [Whisper] [00:12:16.000 --> 00:12:21.000]   Доложить обстановку.
+[22:20:51.160] [Whisper] [00:12:21.000 --> 00:12:25.000]   Есть, галпмонарная столько, что натнулся на вражеские танковые силы.
+[22:20:51.160] [Whisper] [00:12:25.000 --> 00:12:26.000]   Виноват.
+[22:20:51.160] [Whisper] [00:12:26.000 --> 00:12:29.000]   Могу ли я присутствовать здесь с вами?
+[22:20:51.160] [Whisper] [00:12:29.000 --> 00:12:31.000]   Да, конечно.
+[22:20:51.160] [Whisper] [00:12:31.000 --> 00:12:35.000]   Хотел лучше бы хотелся куда подальше зараза.
+[22:20:51.160] [Whisper] [00:12:35.000 --> 00:12:38.000]   Я так понял, бои идут на улицах поселка.
+[22:20:51.160] [Whisper] [00:12:38.000 --> 00:12:40.000]   Как вы собираетесь выбить врага?
+[22:20:51.160] [Whisper] [00:12:40.000 --> 00:12:42.000]   Пожалуй, артиллерий.
+[22:20:51.160] [Whisper] [00:12:42.000 --> 00:12:46.000]   Подождите, вы ударите по гражданским объектам?
+[22:20:51.160] [Whisper] [00:12:46.000 --> 00:12:48.000]   Да, так будет меньше не нужных жертв.
+[22:20:52.967] [Whisper] [00:12:48.000 --> 00:12:53.000]   Оберес, лейтенант, вы же понимаете, что это будет военным преступлением?
+[22:20:52.967] [Whisper] [00:12:53.000 --> 00:12:56.000]   Конвенция законах и обочиях войны не все общее.
+[22:20:52.967] [Whisper] [00:12:56.000 --> 00:12:58.000]   Она действует исключительно тогда,
+[22:20:52.967] [Whisper] [00:12:58.000 --> 00:13:01.000]   когда обе стороны ее ратифицировали.
+[22:20:52.967] [Whisper] whisper_print_progress_callback: progress =  56%
+[01:20:53] [App] Whisper: transcribing - 56%
+[22:20:52.967] [Whisper] [00:13:01.000 --> 00:13:04.000]   И касается исключительных боистолкновений.
+[22:20:52.967] [Whisper] [00:13:04.000 --> 00:13:09.000]   Насколько мне известно, федерация конвенцию не подписывала.
+[22:20:52.967] [Whisper] [00:13:09.000 --> 00:13:12.000]   Поэтому вы так спокойно сажите поселок?
+[22:20:52.967] [Whisper] [00:13:12.000 --> 00:13:16.000]   Да, имперские города-знаетели и никто не щадет.
+[22:20:55.011] [Whisper] [00:13:16.000 --> 00:13:19.000]   Так чем же тогда этот поселок лучше не хит?
+[22:20:55.012] [Whisper] [00:13:19.000 --> 00:13:22.000]   А думаетесь, вы церков что ли не видите?
+[22:20:55.012] [Whisper] [00:13:22.000 --> 00:13:25.000]   А так как культовых сооружений - это военное преступление!
+[22:20:55.012] [Whisper] [00:13:25.000 --> 00:13:28.000]   Постойте, о чем вы говорите?
+[22:20:55.012] [Whisper] [00:13:28.000 --> 00:13:31.000]   Культовые сооружения, а также их служители защищены.
+[22:20:55.012] [Whisper] [00:13:31.000 --> 00:13:36.000]   Мы уже удостоверились, что у этого здания не знака принадлежности крелегии.
+[22:20:55.012] [Whisper] [00:13:36.000 --> 00:13:38.000]   Чего?
+[22:20:55.012] [Whisper] [00:13:38.000 --> 00:13:42.000]   Поверьте, мы соблюдаем как конвенцию, так и военное обочие.
+[22:20:55.012] [Whisper] [00:13:42.000 --> 00:13:45.000]   Но можно ли назвать это здание церквен?
+[22:20:55.396] [Whisper] [00:13:45.000 --> 00:13:49.000]   Конечно, это же она есть.
+[22:20:55.396] [Whisper] [00:13:49.000 --> 00:13:54.000]   Господин Полковник, а вы видите отличительные знаки?
+[22:20:55.396] [Whisper] [00:13:54.000 --> 00:13:57.000]   Нет.
+[22:20:55.599] [Whisper] [00:13:57.000 --> 00:13:59.000]   Нет.
+[22:20:55.599] [Whisper] whisper_print_progress_callback: progress =  60%
+[22:20:55.599] [Whisper] [00:13:59.000 --> 00:14:23.000]   Сердечно благодарю за ваши содействия.
+[22:20:56.426] [Whisper] [00:14:24.000 --> 00:14:26.000]   Вы хотели что-то обсудить?
+[22:20:56.426] [Whisper] [00:14:26.000 --> 00:14:29.000]   Не буду ходить вокруг дологого, ответить честно.
+[22:20:56.426] [Whisper] [00:14:29.000 --> 00:14:32.000]   Конечно, если это моя компенсия.
+[22:20:56.426] [Whisper] [00:14:32.000 --> 00:14:38.000]   Вопрос об окончании. Как вы себе представляете конец этой войны?
+[22:20:56.426] [Whisper] [00:14:38.000 --> 00:14:41.000]   Я прибыл сюда выяснить это.
+[22:20:56.426] [Whisper] [00:14:41.000 --> 00:14:46.000]   Вот она, что? Индал хочет организовать мир?
+[22:20:57.446] [Whisper] [00:14:46.000 --> 00:14:53.000]   Неужели они дадут нам возможность выйти из ненужной войны?
+[22:20:57.446] [Whisper] [00:14:53.000 --> 00:14:58.000]   Понимаю, этот вопрос щекотливый. Но готовы ли вы компромиссом?
+[22:20:57.446] [Whisper] [00:14:58.000 --> 00:15:02.000]   То есть пойти на ступке, лишь повырваться из этого болота?
+[22:20:57.446] [Whisper] [00:15:02.000 --> 00:15:07.000]   Да, я обремя руками только сда. Сколько жизнь? Сколько солдат мы так спасем?
+[22:20:57.446] [Whisper] [00:15:07.000 --> 00:15:12.000]   Что для вас, красная линия? Объясните, чем вы не готовы поступиться?
+[22:20:57.446] [Whisper] [00:15:12.000 --> 00:15:14.000]   Красная линия?
+[22:20:58.434] [Whisper] [00:15:14.000 --> 00:15:16.000]   У меня таких нет.
+[22:20:58.434] [Whisper] [00:15:16.000 --> 00:15:18.000]   Что? Как это возможно?
+[22:20:58.434] [Whisper] [00:15:18.000 --> 00:15:20.000]   Не забывайте, я все же офицер.
+[22:20:58.434] [Whisper] [00:15:20.000 --> 00:15:24.000]   И еще народе не поклилось следовать всем законным приказом.
+[22:20:58.434] [Whisper] whisper_print_progress_callback: progress =  66%
+[01:20:58] [App] Whisper: transcribing - 66%
+[22:20:58.434] [Whisper] [00:15:24.000 --> 00:15:27.000]   Если командование решило, что войну пора прекращать,
+[22:20:58.434] [Whisper] [00:15:27.000 --> 00:15:31.000]   я могу только починиться и не требовать сверхтого.
+[22:20:58.434] [Whisper] [00:15:31.000 --> 00:15:36.000]   Точнее, если следование приказу, вот мой высший долг.
+[22:20:58.434] [Whisper] [00:15:36.000 --> 00:15:40.000]   В этом вся суть каждого солдата империи.
+[22:20:59.478] [Whisper] [00:15:40.000 --> 00:15:46.000]   Понятно, выходят даже на передовой военное и ротуют лишь облаги империи.
+[22:20:59.478] [Whisper] [00:15:46.000 --> 00:15:51.000]   Так точно, поговно даже вплоть до поливых командиров.
+[22:20:59.478] [Whisper] [00:15:51.000 --> 00:15:56.000]   Вы даже не представляете, насколько они держимы чувством долго.
+[22:20:59.478] [Whisper] [00:15:56.000 --> 00:15:59.000]   Даже не представляю, как их убедить.
+[22:20:59.478] [Whisper] [00:15:59.000 --> 00:16:02.000]   Не сомневаюсь, они нас услышат.
+[22:20:59.478] [Whisper] [00:16:02.000 --> 00:16:06.000]   У меня в голове сложился план будущих переговоров.
+[22:21:00.188] [Whisper] [00:16:06.000 --> 00:16:10.000]   Замечательно, мы положим конец войне.
+[22:21:00.188] [Whisper] [00:16:10.000 --> 00:16:20.000]   Я успела донести до союзного офицера, что манифонатики, а разумные люди.
+[22:21:00.188] [Whisper] [00:16:20.000 --> 00:16:25.000]   Теперь ты точно мирные переговоры пойдут как по-моему.
+[22:21:00.188] [Whisper] [00:16:25.000 --> 00:16:28.000]   Ну, какая же я молодец.
+[22:21:00.188] [Whisper] [00:16:28.000 --> 00:16:32.000]   Наконец-то эта война закончится.
+[22:21:01.264] [Whisper] [00:16:32.000 --> 00:16:36.000]   Обе слюсинат, разрешите войти?
+[22:21:01.264] [Whisper] [00:16:36.000 --> 00:16:38.000]   Что такое? Что случилось?
+[22:21:01.264] [Whisper] [00:16:38.000 --> 00:16:41.000]   К вам, Косе, заглавного штаба.
+[22:21:01.264] [Whisper] [00:16:41.000 --> 00:16:43.000]   Опять!
+[22:21:01.264] [Whisper] whisper_print_progress_callback: progress =  71%
+[01:21:01] [App] Whisper: transcribing - 71%
+[22:21:01.264] [Whisper] [00:16:43.000 --> 00:16:47.000]   Давно не видели, все оберслите на отфонде Гуршав.
+[22:21:01.264] [Whisper] [00:16:47.000 --> 00:16:49.000]   Как же хорош настоящий кофе.
+[22:21:01.264] [Whisper] [00:16:49.000 --> 00:16:51.000]   Давненько я его не пил.
+[22:21:01.264] [Whisper] [00:16:51.000 --> 00:16:54.000]   В столице же подают жижу, которая цветом походит на.
+[22:21:01.264] [Whisper] [00:16:54.000 --> 00:16:57.000]   Господи, номерслите на отфон югер.
+[22:21:01.264] [Whisper] [00:16:57.000 --> 00:16:58.000]   Чай.
+[22:21:02.410] [Whisper] [00:16:58.000 --> 00:17:03.000]   Чай.
+[22:21:02.410] [Whisper] [00:17:03.000 --> 00:17:07.000]   Нажелезнодорожному зле случилось беда.
+[22:21:02.410] [Whisper] [00:17:07.000 --> 00:17:10.000]   Я с ней разбирался и вспомнил боевую подругу.
+[22:21:02.410] [Whisper] [00:17:10.000 --> 00:17:13.000]   Вот и решил ее навестить.
+[22:21:02.410] [Whisper] [00:17:13.000 --> 00:17:15.000]   Признаться, рада это встречи.
+[22:21:02.410] [Whisper] [00:17:15.000 --> 00:17:19.000]   Знакомьтесь, это майор Вайс. Пусть составит вам компанию.
+[22:21:02.410] [Whisper] [00:17:19.000 --> 00:17:22.000]   Не часто ты берешь подчиненных на разговоры.
+[22:21:02.410] [Whisper] [00:17:22.000 --> 00:17:27.000]   Что поделать должен же кто-то следить, чтобы любопытство еще не подслушивали?
+[22:21:03.385] [Whisper] [00:17:27.000 --> 00:17:29.000]   В смысле?
+[22:21:03.385] [Whisper] [00:17:29.000 --> 00:17:35.000]   Говорят, Редо, готовят для нас некие мирные переговоры.
+[22:21:03.385] [Whisper] [00:17:35.000 --> 00:17:38.000]   Так этот слух и до тебя дошел.
+[22:21:03.385] [Whisper] [00:17:38.000 --> 00:17:41.000]   На меня все-таки свалели наблюдатели.
+[22:21:03.385] [Whisper] [00:17:41.000 --> 00:17:44.000]   Из этого возникли некоторые вопросы.
+[22:21:03.385] [Whisper] whisper_print_progress_callback: progress =  75%
+[22:21:03.385] [Whisper] [00:17:44.000 --> 00:17:47.000]   Подозреваю, чтобы заключить соглашение быстрее.
+[22:21:03.385] [Whisper] [00:17:47.000 --> 00:17:51.000]   Командование готова пойти на определенные уступки нашим врагам?
+[22:21:03.385] [Whisper] [00:17:51.000 --> 00:17:54.000]   Больно это признавать, но так и есть.
+[22:21:04.530] [Whisper] [00:17:54.000 --> 00:17:57.000]   Нам придется принять суровую реальность.
+[22:21:04.530] [Whisper] [00:17:57.000 --> 00:18:01.000]   Дайте угадаю. Обе стороны готовы отказаться от репарации.
+[22:21:04.530] [Whisper] [00:18:01.000 --> 00:18:06.000]   Бросить захваченные территории и вернуться к довоенным границам.
+[22:21:04.530] [Whisper] [00:18:06.000 --> 00:18:10.000]   Почему нет? Можно пойти дальше, ограничить численность в войску границ.
+[22:21:04.530] [Whisper] [00:18:10.000 --> 00:18:12.000]   Обер с Летинант.
+[22:21:04.530] [Whisper] [00:18:12.000 --> 00:18:18.000]   Это будет отнюдний почетный мир, а позорная капитуляция.
+[22:21:04.530] [Whisper] [00:18:18.000 --> 00:18:23.000]   Сколько солдат мы потеряли, а какие деньги были вложены в эту войну?
+[22:21:05.511] [Whisper] [00:18:23.000 --> 00:18:25.000]   Так и я же об этом говорю.
+[22:21:05.511] [Whisper] [00:18:25.000 --> 00:18:27.000]   Дальнейший жертвы нужно снижать.
+[22:21:05.511] [Whisper] [00:18:27.000 --> 00:18:32.000]   Мне казалось, что вы, югер, осознаете это лучше других.
+[22:21:05.511] [Whisper] [00:18:32.000 --> 00:18:37.000]   Майор Вайс, озвучите своё мнение.
+[22:21:05.511] [Whisper] [00:18:37.000 --> 00:18:41.000]   Меня интересует мысли офицей распередовой.
+[22:21:05.511] [Whisper] [00:18:41.000 --> 00:18:44.000]   Обер с Летинант, вы дозволяйте?
+[22:21:05.511] [Whisper] [00:18:44.000 --> 00:18:46.000]   Говори, я не против.
+[22:21:05.511] [Whisper] [00:18:46.000 --> 00:18:50.000]   Разрешите быть кратким?
+[22:21:06.488] [Whisper] [00:18:50.000 --> 00:18:56.000]   Между достойными итогами войны, и в будущем, в котором садата не гибнут,
+[22:21:06.488] [Whisper] [00:18:56.000 --> 00:18:59.000]   я всегда выберу второе.
+[22:21:06.488] [Whisper] [00:18:59.000 --> 00:19:04.000]   Но при этом сердцем принять не смогу.
+[22:21:06.488] [Whisper] [00:19:04.000 --> 00:19:05.000]   Чего?
+[22:21:06.488] [Whisper] whisper_print_progress_callback: progress =  81%
+[01:21:06] [App] Whisper: transcribing - 81%
+[22:21:06.488] [Whisper] [00:19:05.000 --> 00:19:07.000]   Мы пропили реки крови.
+[22:21:06.488] [Whisper] [00:19:07.000 --> 00:19:10.000]   Как можно уйти с пустыми руками? Это неправильно.
+[22:21:06.488] [Whisper] [00:19:10.000 --> 00:19:12.000]   Той, подожди, почему?
+[22:21:06.488] [Whisper] [00:19:12.000 --> 00:19:18.000]   Ушам своим не верю. Неужели ты отдержим успехом?
+[22:21:07.326] [Whisper] [00:19:18.000 --> 00:19:21.000]   Я удивлён, что вы готовё всё просто так отпустить.
+[22:21:07.326] [Whisper] [00:19:21.000 --> 00:19:23.000]   Потому что иначе нельзя.
+[22:21:07.326] [Whisper] [00:19:23.000 --> 00:19:27.000]   Командирно передовой должен быть рассудителем и сосредоточен.
+[22:21:07.326] [Whisper] [00:19:27.000 --> 00:19:30.000]   Нужно сократить потери, добиваемсь этого.
+[22:21:07.326] [Whisper] [00:19:30.000 --> 00:19:33.000]   Простите, но вы говорите умом.
+[22:21:07.326] [Whisper] [00:19:33.000 --> 00:19:36.000]   Холодному умом, но не горячим сердцем.
+[22:21:08.216] [Whisper] [00:19:46.000 --> 00:19:48.000]   Два южди виси.
+[22:21:08.216] [Whisper] [00:19:48.000 --> 00:19:54.000]   Даже мои доверенные товарищи и подчинённые попали в ловушку невозвратных затрат?
+[22:21:08.216] [Whisper] [00:19:54.000 --> 00:20:01.000]   Все. Представляю, как командование и политики нам учуются с войсками на передовой.
+[22:21:08.216] [Whisper] [00:20:01.000 --> 00:20:04.000]   Как бы не пришлось подавлять Митсеш.
+[22:21:08.216] [Whisper] [00:20:04.000 --> 00:20:09.000]   Вот только вряд ли мне после войны зачтут такой операцией в плюс.
+[22:21:08.216] [Whisper] whisper_print_progress_callback: progress =  85%
+[22:21:09.207] [Whisper] [00:20:11.000 --> 00:20:22.000]   Ильдоопередала нам предложение Федерации по возможному миру. Они предлагают мир без репораций, территориальных изменений и дополнительных условий.
+[22:21:09.207] [Whisper] [00:20:22.000 --> 00:20:29.000]   Господин генерал Гасман. Позвольте озвучить вам ответ на мирное предложение Федерации.
+[22:21:09.207] [Whisper] [00:20:29.000 --> 00:20:31.000]   Конечно, прошу.
+[22:21:09.207] [Whisper] [00:20:31.000 --> 00:20:36.000]   Они отвергли наши законные требования, но переговоры всё ещё продолжаются.
+[22:21:10.178] [Whisper] [00:20:36.000 --> 00:20:45.000]   Думаю, за несколько правов? Ко всем дохватку потерял. Что? Неужели ты превратился без хребятного дурака, цитуя?
+[22:21:10.178] [Whisper] [00:20:45.000 --> 00:20:49.000]   Я уже обсудил от этого просто высшим руховодством.
+[22:21:10.178] [Whisper] [00:20:49.000 --> 00:20:52.000]   Нет, только не говори мне.
+[22:21:10.178] [Whisper] [00:20:52.000 --> 00:20:57.000]   Что ж, сейчас из-зачитывая ответ, который пристало мое ротечество?
+[22:21:10.178] [Whisper] [00:20:57.000 --> 00:21:02.000]   Ага. Дерьма пожрите. Точка.
+[22:21:10.791] [Whisper] [00:21:02.000 --> 00:21:07.000]   За свою судьбу уношена биться на смерть.
+[22:21:10.791] [Whisper] [00:21:07.000 --> 00:21:10.000]   Вы не доверяете наутку, всяким дуракам.
+[22:21:10.791] [Whisper] [00:21:10.000 --> 00:21:14.000]   Эрми Эмперии. Не за что не пойдёт на уступке.
+[22:21:10.791] [Whisper] whisper_print_progress_callback: progress =  90%
+[01:21:10] [App] Whisper: transcribing - 90%
+[22:21:10.791] [Whisper] [00:21:14.000 --> 00:21:20.000]   Мы начинаем операцию железный молот.
+[22:21:10.936] [Whisper] [00:21:21.000 --> 00:21:25.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.076] [Whisper] [00:21:26.000 --> 00:21:30.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.220] [Whisper] [00:21:31.000 --> 00:21:36.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.376] [Whisper] [00:21:37.000 --> 00:21:42.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.579] [Whisper] [00:21:42.000 --> 00:21:47.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.579] [Whisper] [00:21:47.000 --> 00:21:57.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.699] [Whisper] [00:22:09.000 --> 00:22:14.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.829] [Whisper] [00:22:14.000 --> 00:22:19.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:11.946] [Whisper] [00:22:19.000 --> 00:22:24.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:12.304] [Whisper] [00:22:24.000 --> 00:22:29.000]   СПОКОЙНАЯ МУЗЫКА
+[22:21:12.304] [Whisper] [00:22:29.000 --> 00:22:52.000]   Командируют четвертые скодрели.
+[22:21:12.304] [Whisper] whisper_print_progress_callback: progress =  96%
+[01:21:12] [App] Whisper: transcribing - 96%
+[22:21:13.261] [Whisper] [00:22:52.000 --> 00:22:57.000]   Командируют четвертые скодрели.
+[22:21:13.262] [Whisper] [00:22:57.000 --> 00:23:02.000]   Командируют четвертые скодрели.
+[22:21:13.262] [Whisper] [00:23:02.000 --> 00:23:05.000]   Командируют четвертые скодрели.
+[22:21:13.262] [Whisper] [00:23:05.000 --> 00:23:10.000]   Командируют четвертые скодрели.
+[22:21:13.262] [Whisper] [00:23:10.000 --> 00:23:13.000]   Командируют четвертые скодрели.
+[22:21:13.262] [Whisper] [00:23:13.000 --> 00:23:16.000]   Командируют четвертые скодрели.
+[22:21:13.262] [Whisper] [00:23:16.000 --> 00:23:19.000]   Командируют четвертые скодрели.
+[22:21:13.982] [Whisper] [00:23:19.000 --> 00:23:21.000]   Почему?
+[22:21:13.982] [Whisper] [00:23:21.000 --> 00:23:24.000]   Из-за того, что майор больше некомрат,
+[22:21:13.982] [Whisper] [00:23:24.000 --> 00:23:26.000]   и ему врезали жалование.
+[22:21:13.982] [Whisper] [00:23:26.000 --> 00:23:29.000]   Так еще на хост-нуждой своего кармана доплачивая.
+[22:21:13.982] [Whisper] [00:23:29.000 --> 00:23:32.000]   В общем, домой теперь он приносит меньше денег.
+[22:21:13.982] [Whisper] [00:23:32.000 --> 00:23:34.000]   Как вы страшное дело?
+[22:21:13.982] [Whisper] [00:23:34.000 --> 00:23:35.000]   Повышение.
+[22:21:14.264] [Whisper] [00:23:36.000 --> 00:23:41.000]   Редактор субтитров А.Семкин Корректор В.Сухиашвили
+[22:21:14.264] [Whisper] whisper_print_progress_callback: progress = 100%
+[01:21:14] [App] Whisper: transcribing - 100%
+[22:21:14.265] [Whisper] output_srt: saving output to 'C:\Users\svato\AppData\Local\Temp\vc_manual_audio_9424_1793312421501.srt'
+[22:21:14.273] [Whisper] whisper_print_timings:     load time =   328.61 ms
+[22:21:14.273] [Whisper] whisper_print_timings:     fallbacks =   0 p /   2 h
+[22:21:14.273] [Whisper] whisper_print_timings:      mel time =  1146.20 ms
+[22:21:14.273] [Whisper] whisper_print_timings:   sample time = 15266.83 ms / 25876 runs (    0.59 ms per run)
+[22:21:14.273] [Whisper] whisper_print_timings:   encode time =  2756.22 ms /   123 runs (   22.41 ms per run)
+[22:21:14.273] [Whisper] whisper_print_timings:   decode time =  1103.16 ms /   244 runs (    4.52 ms per run)
+[22:21:14.273] [Whisper] whisper_print_timings:   batchd time = 28963.64 ms / 25026 runs (    1.16 ms per run)
+[22:21:14.273] [Whisper] whisper_print_timings:   prompt time =  1616.17 ms / 27429 runs (    0.06 ms per run)
+[22:21:14.273] [Whisper] whisper_print_timings:    total time = 51415.40 ms
+[22:21:14.400] [Whisper] Распознавание речи успешно завершено! Субтитры сохранены в 'C:\Users\svato\AppData\Local\Temp\vc_manual_audio_9424_1793312421501.srt'
+[01:21:14] [App] Whisper: saving - 100%
+[22:21:14.403] [Render] Директория сохранения готовых клипов: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы'
+[22:21:14.577] [Render] Smart Face Centering: фокус персонажа определен в 45.4% ширины кадра
+[22:21:14.577] [Render] Рендеринг клипа: [0.00с - 15.00с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 01 [00m00s - 00m15s].mp4' (вертикально=true)
+[01:21:14] [App] Рендеринг: rendering started - 0%
+[22:21:14.609] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:21:14.609] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:21:14.609] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:21:14.609] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:21:14.609] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:21:14.609] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:21:14.609] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:21:14.609] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:21:14.609] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:21:14.609] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:21:14.637] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:21:14.637] [Render] Metadata:
+[22:21:14.637] [Render] major_brand     : mp42
+[22:21:14.637] [Render] minor_version   : 0
+[22:21:14.637] [Render] compatible_brands: mp41isom
+[22:21:14.637] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:14.637] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:21:14.637] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:21:14.637] [Render] Metadata:
+[22:21:14.637] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:14.637] [Render] handler_name    : VideoHandler
+[22:21:14.637] [Render] encoder         : AVC Coding
+[22:21:14.637] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:21:14.637] [Render] Metadata:
+[22:21:14.637] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:14.637] [Render] handler_name    : SoundHandler
+[22:21:14.637] [Render] [Parsed_subtitles_2 @ 000001e056d57840] libass API version: 0x1705000
+[22:21:14.637] [Render] [Parsed_subtitles_2 @ 000001e056d57840] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:14.638] [Render] [Parsed_subtitles_2 @ 000001e056d57840] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:14.640] [Render] [Parsed_subtitles_2 @ 000001e056d57840] Using font provider directwrite (with GDI)
+[22:21:14.644] [Render] Stream mapping:
+[22:21:14.644] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:21:14.644] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:21:14.651] [Render] [Parsed_subtitles_2 @ 000001e056d57340] libass API version: 0x1705000
+[22:21:14.651] [Render] [Parsed_subtitles_2 @ 000001e056d57340] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:14.652] [Render] [Parsed_subtitles_2 @ 000001e056d57340] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:14.654] [Render] [Parsed_subtitles_2 @ 000001e056d57340] Using font provider directwrite (with GDI)
+[22:21:14.693] [Render] [Parsed_subtitles_2 @ 000001e056d57340] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:21:14.715] [Render] [libx264 @ 000001e059659780] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:21:14.718] [Render] [libx264 @ 000001e059659780] profile High, level 4.0, 4:2:0, 8-bit
+[22:21:14.718] [Render] [libx264 @ 000001e059659780] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:21:14.719] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 01 [00m00s - 00m15s].mp4':
+[22:21:14.719] [Render] Metadata:
+[22:21:14.719] [Render] encoder         : Lavf63.17.100
+[22:21:14.719] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:21:14.719] [Render] Metadata:
+[22:21:14.719] [Render] encoder         : Lavc63.25.101 libx264
+[22:21:14.719] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:14.719] [Render] handler_name    : VideoHandler
+[22:21:14.719] [Render] Side data:
+[22:21:14.719] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:21:14.719] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:21:14.719] [Render] Metadata:
+[22:21:14.719] [Render] encoder         : Lavc63.25.101 aac
+[22:21:14.719] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:14.719] [Render] handler_name    : SoundHandler
+[01:21:16] [App] Рендеринг: 1.2с / 15.0с - 8%
+[01:21:16] [App] Рендеринг: 2.8с / 15.0с - 19%
+[01:21:17] [App] Рендеринг: 4.4с / 15.0с - 30%
+[01:21:17] [App] Рендеринг: 5.4с / 15.0с - 36%
+[01:21:18] [App] Рендеринг: 6.7с / 15.0с - 44%
+[01:21:19] [App] Рендеринг: 7.3с / 15.0с - 49%
+[01:21:20] [App] Рендеринг: 8.9с / 15.0с - 59%
+[01:21:20] [App] Рендеринг: 9.6с / 15.0с - 64%
+[01:21:21] [App] Рендеринг: 11.2с / 15.0с - 74%
+[01:21:22] [App] Рендеринг: 11.8с / 15.0с - 79%
+[01:21:23] [App] Рендеринг: 13.1с / 15.0с - 87%
+[01:21:23] [App] Рендеринг: 14.3с / 15.0с - 96%
+[22:21:24.750] [Render] [out#0/mp4 @ 000001e056ddb6c0] video:6194KiB audio:352KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.266477%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] frame I:3     Avg QP:11.54  size:105472
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] frame P:125   Avg QP:21.89  size: 32082
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] frame B:322   Avg QP:22.41  size:  6260
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] consecutive B-frames:  1.8%  6.2%  6.7% 85.3%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] mb I  I16..4: 40.7% 34.3% 25.0%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] mb P  I16..4:  8.3% 17.1%  2.7%  P16..4: 25.3%  8.0%  3.5%  0.0%  0.0%    skip:35.1%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] mb B  I16..4:  3.3%  3.4%  0.1%  B16..8: 11.9%  1.8%  0.1%  direct: 5.8%  skip:73.6%  L0:48.1% L1:48.7% BI: 3.2%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] 8x8 transform intra:55.6% inter:68.3%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] coded y,uvDC,uvAC intra: 32.2% 52.1% 14.9% inter: 7.3% 11.9% 0.7%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] i16 v,h,dc,p: 41% 31% 11% 16%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 26% 26% 22%  4%  5%  5%  5%  4%  4%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 38% 22% 19%  4%  5%  5%  4%  3%  2%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] i8c dc,h,v,p: 52% 22% 22%  4%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] Weighted P-Frames: Y:24.0% UV:20.8%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] ref P L0: 74.0% 26.0%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] ref B L0: 83.0% 17.0%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] ref B L1: 96.0%  4.0%
+[22:21:24.752] [Render] [libx264 @ 000001e059659780] kb/s:3382.58
+[22:21:24.827] [Render] [aac @ 000001e057746440] Qavg: 0.658  Tr: 2.0%  TNS(L): 11.9%  TNS(S): 0.0%  M/S: 70.8%  I/S: 22.3%  PNS: 0.0%
+[22:21:24.839] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 01 [00m00s - 00m15s].mp4'
+[01:21:25] [App] Рендеринг: rendering complete - 100%
+[22:21:24.984] [Render] Smart Face Centering: фокус персонажа определен в 48.3% ширины кадра
+[22:21:24.984] [Render] Рендеринг клипа: [21.50с - 36.50с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 02 [00m21s - 00m36s].mp4' (вертикально=true)
+[22:21:25.013] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:21:25.013] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:21:25.013] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:21:25.013] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:21:25.013] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:21:25.013] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:21:25.013] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:21:25.013] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:21:25.013] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:21:25.013] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:21:25.040] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:21:25.040] [Render] Metadata:
+[22:21:25.040] [Render] major_brand     : mp42
+[22:21:25.040] [Render] minor_version   : 0
+[22:21:25.040] [Render] compatible_brands: mp41isom
+[22:21:25.040] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:25.040] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:21:25.040] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:21:25.040] [Render] Metadata:
+[22:21:25.040] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:25.040] [Render] handler_name    : VideoHandler
+[22:21:25.040] [Render] encoder         : AVC Coding
+[22:21:25.040] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:21:25.040] [Render] Metadata:
+[22:21:25.040] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:25.040] [Render] handler_name    : SoundHandler
+[22:21:25.040] [Render] [Parsed_subtitles_2 @ 000001fe4f2084c0] libass API version: 0x1705000
+[22:21:25.040] [Render] [Parsed_subtitles_2 @ 000001fe4f2084c0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:25.041] [Render] [Parsed_subtitles_2 @ 000001fe4f2084c0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:25.043] [Render] [Parsed_subtitles_2 @ 000001fe4f2084c0] Using font provider directwrite (with GDI)
+[22:21:25.047] [Render] Stream mapping:
+[22:21:25.047] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:21:25.047] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:21:25.072] [Render] [Parsed_subtitles_2 @ 000001fe4f2079c0] libass API version: 0x1705000
+[22:21:25.072] [Render] [Parsed_subtitles_2 @ 000001fe4f2079c0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:25.072] [Render] [Parsed_subtitles_2 @ 000001fe4f2079c0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:25.074] [Render] [Parsed_subtitles_2 @ 000001fe4f2079c0] Using font provider directwrite (with GDI)
+[22:21:25.129] [Render] [Parsed_subtitles_2 @ 000001fe4f2079c0] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:21:25.151] [Render] [libx264 @ 000001fe510a8340] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:21:25.155] [Render] [libx264 @ 000001fe510a8340] profile High, level 4.0, 4:2:0, 8-bit
+[22:21:25.155] [Render] [libx264 @ 000001fe510a8340] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:21:25.155] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 02 [00m21s - 00m36s].mp4':
+[22:21:25.155] [Render] Metadata:
+[22:21:25.155] [Render] encoder         : Lavf63.17.100
+[22:21:25.155] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:21:25.155] [Render] Metadata:
+[22:21:25.155] [Render] encoder         : Lavc63.25.101 libx264
+[22:21:25.155] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:25.155] [Render] handler_name    : VideoHandler
+[22:21:25.155] [Render] Side data:
+[22:21:25.155] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:21:25.155] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:21:25.155] [Render] Metadata:
+[22:21:25.155] [Render] encoder         : Lavc63.25.101 aac
+[22:21:25.155] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:25.155] [Render] handler_name    : SoundHandler
+[22:21:34.308] [Render] [out#0/mp4 @ 000001fe4f25c840] video:3826KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.416591%
+[22:21:34.309] [Render] [libx264 @ 000001fe510a8340] frame I:2     Avg QP:22.04  size:149026
+[22:21:34.309] [Render] [libx264 @ 000001fe510a8340] frame P:130   Avg QP:20.36  size: 20301
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] frame B:318   Avg QP:22.51  size:  3081
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] consecutive B-frames:  3.6%  4.4%  6.7% 85.3%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] mb I  I16..4: 12.5% 46.6% 40.9%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] mb P  I16..4:  1.5%  4.0%  1.5%  P16..4: 20.8%  6.2%  3.6%  0.0%  0.0%    skip:62.3%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] mb B  I16..4:  0.7%  0.8%  0.2%  B16..8:  6.2%  1.0%  0.1%  direct: 3.4%  skip:87.6%  L0:39.2% L1:57.2% BI: 3.5%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] 8x8 transform intra:52.6% inter:64.9%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] coded y,uvDC,uvAC intra: 47.4% 56.3% 22.8% inter: 5.0% 7.7% 0.5%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] i16 v,h,dc,p: 42% 35% 13% 10%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 21% 27% 20%  4%  6%  5%  6%  5%  6%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 37% 22% 15%  4%  5%  5%  4%  4%  3%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] i8c dc,h,v,p: 49% 25% 22%  4%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] Weighted P-Frames: Y:11.5% UV:6.2%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] ref P L0: 81.0% 19.0%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] ref B L0: 84.6% 15.4%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] ref B L1: 95.4%  4.6%
+[22:21:34.310] [Render] [libx264 @ 000001fe510a8340] kb/s:2089.07
+[22:21:34.363] [Render] [aac @ 000001fe51970c80] Qavg: 0.166  Tr: 2.3%  TNS(L): 15.7%  TNS(S): 0.0%  M/S: 63.1%  I/S: 28.1%  PNS: 0.0%
+[22:21:34.373] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 02 [00m21s - 00m36s].mp4'
+[01:21:34] [App] Рендеринг: rendering complete - 100%
+[22:21:34.536] [Render] Smart Face Centering: фокус персонажа определен в 49.0% ширины кадра
+[22:21:34.536] [Render] Рендеринг клипа: [36.00с - 51.00с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 03 [00m36s - 00m51s].mp4' (вертикально=true)
+[22:21:34.565] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:21:34.565] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:21:34.565] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:21:34.565] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:21:34.565] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:21:34.565] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:21:34.565] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:21:34.565] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:21:34.565] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:21:34.565] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:21:34.601] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:21:34.601] [Render] Metadata:
+[22:21:34.601] [Render] major_brand     : mp42
+[22:21:34.601] [Render] minor_version   : 0
+[22:21:34.602] [Render] compatible_brands: mp41isom
+[22:21:34.602] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:34.602] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:21:34.602] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:21:34.602] [Render] Metadata:
+[22:21:34.602] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:34.602] [Render] handler_name    : VideoHandler
+[22:21:34.602] [Render] encoder         : AVC Coding
+[22:21:34.602] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:21:34.602] [Render] Metadata:
+[22:21:34.602] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:34.602] [Render] handler_name    : SoundHandler
+[22:21:34.602] [Render] [Parsed_subtitles_2 @ 000001b0a505a0c0] libass API version: 0x1705000
+[22:21:34.602] [Render] [Parsed_subtitles_2 @ 000001b0a505a0c0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:34.603] [Render] [Parsed_subtitles_2 @ 000001b0a505a0c0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:34.604] [Render] [Parsed_subtitles_2 @ 000001b0a505a0c0] Using font provider directwrite (with GDI)
+[22:21:34.608] [Render] Stream mapping:
+[22:21:34.608] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:21:34.608] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:21:34.627] [Render] [Parsed_subtitles_2 @ 000001b0a50597c0] libass API version: 0x1705000
+[22:21:34.627] [Render] [Parsed_subtitles_2 @ 000001b0a50597c0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:34.628] [Render] [Parsed_subtitles_2 @ 000001b0a50597c0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:34.630] [Render] [Parsed_subtitles_2 @ 000001b0a50597c0] Using font provider directwrite (with GDI)
+[22:21:34.702] [Render] [Parsed_subtitles_2 @ 000001b0a50597c0] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:21:34.723] [Render] [libx264 @ 000001b0a7c50480] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:21:34.726] [Render] [libx264 @ 000001b0a7c50480] profile High, level 4.0, 4:2:0, 8-bit
+[22:21:34.726] [Render] [libx264 @ 000001b0a7c50480] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:21:34.726] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 03 [00m36s - 00m51s].mp4':
+[22:21:34.726] [Render] Metadata:
+[22:21:34.726] [Render] encoder         : Lavf63.17.100
+[22:21:34.726] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:21:34.726] [Render] Metadata:
+[22:21:34.726] [Render] encoder         : Lavc63.25.101 libx264
+[22:21:34.726] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:34.726] [Render] handler_name    : VideoHandler
+[22:21:34.726] [Render] Side data:
+[22:21:34.726] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:21:34.727] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:21:34.727] [Render] Metadata:
+[22:21:34.727] [Render] encoder         : Lavc63.25.101 aac
+[22:21:34.727] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:34.727] [Render] handler_name    : SoundHandler
+[22:21:44.725] [Render] [out#0/mp4 @ 000001b0a5057b80] video:4709KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.345760%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] frame I:2     Avg QP:19.72  size:145261
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] frame P:128   Avg QP:20.90  size: 24328
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] frame B:320   Avg QP:23.09  size:  4427
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] consecutive B-frames:  1.6% 10.7%  0.7% 87.1%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] mb I  I16..4: 15.5% 44.8% 39.7%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] mb P  I16..4:  5.0%  6.2%  1.9%  P16..4: 25.2%  9.4%  5.3%  0.0%  0.0%    skip:47.0%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] mb B  I16..4:  1.7%  0.7%  0.0%  B16..8: 12.9%  2.9%  0.3%  direct: 4.4%  skip:77.0%  L0:49.3% L1:47.4% BI: 3.4%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] 8x8 transform intra:41.6% inter:66.0%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] coded y,uvDC,uvAC intra: 26.4% 42.9% 13.2% inter: 5.6% 7.4% 0.4%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] i16 v,h,dc,p: 53% 29% 10%  8%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 33% 23% 27%  3%  3%  3%  3%  3%  3%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 43% 19% 17%  4%  4%  4%  3%  4%  2%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] i8c dc,h,v,p: 48% 20% 29%  3%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] Weighted P-Frames: Y:7.0% UV:5.5%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] ref P L0: 72.0% 28.0%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] ref B L0: 86.0% 14.0%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] ref B L1: 97.9%  2.1%
+[22:21:44.726] [Render] [libx264 @ 000001b0a7c50480] kb/s:2571.34
+[22:21:44.785] [Render] [aac @ 000001b0a7285500] Qavg: 0.233  Tr: 6.7%  TNS(L): 19.8%  TNS(S): 0.0%  M/S: 65.7%  I/S: 27.2%  PNS: 0.0%
+[22:21:44.797] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 03 [00m36s - 00m51s].mp4'
+[01:21:45] [App] Рендеринг: rendering complete - 100%
+[22:21:44.956] [Render] Smart Face Centering: фокус персонажа определен в 41.9% ширины кадра
+[22:21:44.956] [Render] Рендеринг клипа: [57.00с - 72.00с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 04 [00m57s - 01m12s].mp4' (вертикально=true)
+[22:21:44.986] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:21:44.986] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:21:44.986] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:21:44.986] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:21:44.986] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:21:44.986] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:21:44.986] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:21:44.986] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:21:44.986] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:21:44.987] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:21:45.017] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:21:45.017] [Render] Metadata:
+[22:21:45.017] [Render] major_brand     : mp42
+[22:21:45.017] [Render] minor_version   : 0
+[22:21:45.017] [Render] compatible_brands: mp41isom
+[22:21:45.017] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:45.017] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:21:45.017] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:21:45.017] [Render] Metadata:
+[22:21:45.017] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:45.018] [Render] handler_name    : VideoHandler
+[22:21:45.018] [Render] encoder         : AVC Coding
+[22:21:45.018] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:21:45.018] [Render] Metadata:
+[22:21:45.018] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:45.018] [Render] handler_name    : SoundHandler
+[22:21:45.018] [Render] [Parsed_subtitles_2 @ 000001b75dee9f80] libass API version: 0x1705000
+[22:21:45.018] [Render] [Parsed_subtitles_2 @ 000001b75dee9f80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:45.019] [Render] [Parsed_subtitles_2 @ 000001b75dee9f80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:45.021] [Render] [Parsed_subtitles_2 @ 000001b75dee9f80] Using font provider directwrite (with GDI)
+[22:21:45.025] [Render] Stream mapping:
+[22:21:45.025] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:21:45.025] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:21:45.037] [Render] [Parsed_subtitles_2 @ 000001b75deead80] libass API version: 0x1705000
+[22:21:45.037] [Render] [Parsed_subtitles_2 @ 000001b75deead80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:45.037] [Render] [Parsed_subtitles_2 @ 000001b75deead80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:45.040] [Render] [Parsed_subtitles_2 @ 000001b75deead80] Using font provider directwrite (with GDI)
+[22:21:45.098] [Render] [Parsed_subtitles_2 @ 000001b75deead80] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:21:45.121] [Render] [libx264 @ 000001b75dfae6c0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:21:45.124] [Render] [libx264 @ 000001b75dfae6c0] profile High, level 4.0, 4:2:0, 8-bit
+[22:21:45.124] [Render] [libx264 @ 000001b75dfae6c0] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:21:45.124] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 04 [00m57s - 01m12s].mp4':
+[22:21:45.125] [Render] Metadata:
+[22:21:45.125] [Render] encoder         : Lavf63.17.100
+[22:21:45.125] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:21:45.125] [Render] Metadata:
+[22:21:45.125] [Render] encoder         : Lavc63.25.101 libx264
+[22:21:45.125] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:45.125] [Render] handler_name    : VideoHandler
+[22:21:45.125] [Render] Side data:
+[22:21:45.125] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:21:45.125] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:21:45.125] [Render] Metadata:
+[22:21:45.125] [Render] encoder         : Lavc63.25.101 aac
+[22:21:45.125] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:45.125] [Render] handler_name    : SoundHandler
+[22:21:52.992] [Render] [out#0/mp4 @ 000001b75dee68c0] video:1723KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.843479%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] frame I:2     Avg QP:16.93  size:203708
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] frame P:113   Avg QP:19.07  size: 11157
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] frame B:335   Avg QP:23.78  size:   284
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] consecutive B-frames:  0.4%  0.4%  1.3% 97.8%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] mb I  I16..4: 15.6% 40.5% 43.9%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] mb P  I16..4:  0.2%  1.0%  0.5%  P16..4: 10.9%  3.3%  2.3%  0.0%  0.0%    skip:81.8%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] mb B  I16..4:  0.1%  0.0%  0.0%  B16..8:  1.0%  0.1%  0.0%  direct: 0.3%  skip:98.5%  L0:42.9% L1:55.1% BI: 2.0%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] 8x8 transform intra:47.6% inter:61.8%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] coded y,uvDC,uvAC intra: 64.7% 74.3% 56.9% inter: 1.8% 3.1% 0.6%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] i16 v,h,dc,p: 48% 36% 10%  6%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 19% 23% 13%  6%  8%  7%  8%  7%  9%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 38% 21% 12%  5%  6%  5%  5%  4%  4%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] i8c dc,h,v,p: 40% 25% 29%  6%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] Weighted P-Frames: Y:0.9% UV:0.9%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] ref P L0: 83.0% 17.0%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] ref B L0: 88.5% 11.5%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] ref B L1: 94.9%  5.1%
+[22:21:52.994] [Render] [libx264 @ 000001b75dfae6c0] kb/s:940.40
+[22:21:53.064] [Render] [aac @ 000001b75df934c0] Qavg: 0.155  Tr: 5.8%  TNS(L): 18.1%  TNS(S): 2.4%  M/S: 64.1%  I/S: 28.1%  PNS: 0.0%
+[22:21:53.081] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 04 [00m57s - 01m12s].mp4'
+[01:21:53] [App] Рендеринг: rendering complete - 100%
+[22:21:53.314] [Render] Smart Face Centering: фокус персонажа определен в 44.7% ширины кадра
+[22:21:53.314] [Render] Рендеринг клипа: [72.00с - 87.00с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 05 [01m12s - 01m27s].mp4' (вертикально=true)
+[22:21:53.360] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:21:53.360] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:21:53.360] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:21:53.360] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:21:53.360] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:21:53.360] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:21:53.360] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:21:53.360] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:21:53.360] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:21:53.360] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:21:53.390] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:21:53.390] [Render] Metadata:
+[22:21:53.390] [Render] major_brand     : mp42
+[22:21:53.390] [Render] minor_version   : 0
+[22:21:53.390] [Render] compatible_brands: mp41isom
+[22:21:53.390] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:53.390] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:21:53.390] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:21:53.390] [Render] Metadata:
+[22:21:53.390] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:53.390] [Render] handler_name    : VideoHandler
+[22:21:53.390] [Render] encoder         : AVC Coding
+[22:21:53.390] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:21:53.390] [Render] Metadata:
+[22:21:53.390] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:53.390] [Render] handler_name    : SoundHandler
+[22:21:53.391] [Render] [Parsed_subtitles_2 @ 000001ef822d6b40] libass API version: 0x1705000
+[22:21:53.391] [Render] [Parsed_subtitles_2 @ 000001ef822d6b40] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:53.391] [Render] [Parsed_subtitles_2 @ 000001ef822d6b40] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:53.393] [Render] [Parsed_subtitles_2 @ 000001ef822d6b40] Using font provider directwrite (with GDI)
+[22:21:53.397] [Render] Stream mapping:
+[22:21:53.398] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:21:53.398] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:21:53.418] [Render] [Parsed_subtitles_2 @ 000001ef822d6040] libass API version: 0x1705000
+[22:21:53.419] [Render] [Parsed_subtitles_2 @ 000001ef822d6040] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:21:53.419] [Render] [Parsed_subtitles_2 @ 000001ef822d6040] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:21:53.422] [Render] [Parsed_subtitles_2 @ 000001ef822d6040] Using font provider directwrite (with GDI)
+[22:21:53.495] [Render] [Parsed_subtitles_2 @ 000001ef822d6040] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:21:53.522] [Render] [libx264 @ 000001ef850be740] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:21:53.525] [Render] [libx264 @ 000001ef850be740] profile High, level 4.0, 4:2:0, 8-bit
+[22:21:53.525] [Render] [libx264 @ 000001ef850be740] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:21:53.526] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 05 [01m12s - 01m27s].mp4':
+[22:21:53.526] [Render] Metadata:
+[22:21:53.526] [Render] encoder         : Lavf63.17.100
+[22:21:53.526] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:21:53.526] [Render] Metadata:
+[22:21:53.526] [Render] encoder         : Lavc63.25.101 libx264
+[22:21:53.526] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:53.526] [Render] handler_name    : VideoHandler
+[22:21:53.526] [Render] Side data:
+[22:21:53.526] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:21:53.526] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:21:53.526] [Render] Metadata:
+[22:21:53.526] [Render] encoder         : Lavc63.25.101 aac
+[22:21:53.526] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:21:53.526] [Render] handler_name    : SoundHandler
+[22:22:01.982] [Render] [out#0/mp4 @ 000001ef823044c0] video:5841KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.281683%
+[22:22:01.984] [Render] [libx264 @ 000001ef850be740] frame I:2     Avg QP:18.84  size:166843
+[22:22:01.984] [Render] [libx264 @ 000001ef850be740] frame P:125   Avg QP:21.45  size: 31210
+[22:22:01.984] [Render] [libx264 @ 000001ef850be740] frame B:323   Avg QP:23.83  size:  5405
+[22:22:01.984] [Render] [libx264 @ 000001ef850be740] consecutive B-frames:  2.0%  5.3%  4.7% 88.0%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] mb I  I16..4: 16.5% 42.6% 40.9%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] mb P  I16..4:  6.5% 12.1%  3.2%  P16..4: 20.5%  7.8%  3.9%  0.0%  0.0%    skip:46.0%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] mb B  I16..4:  2.1%  1.3%  0.1%  B16..8: 11.2%  3.2%  0.3%  direct: 3.6%  skip:78.2%  L0:50.2% L1:45.7% BI: 4.0%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] 8x8 transform intra:49.5% inter:58.6%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] coded y,uvDC,uvAC intra: 33.0% 38.5% 12.9% inter: 6.1% 6.8% 0.7%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] i16 v,h,dc,p: 42% 38% 11%  9%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 23% 27% 24%  4%  4%  4%  5%  4%  5%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 36% 21% 17%  4%  5%  5%  4%  4%  3%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] i8c dc,h,v,p: 57% 21% 20%  3%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] Weighted P-Frames: Y:8.8% UV:8.0%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] ref P L0: 74.6% 25.4%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] ref B L0: 87.2% 12.8%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] ref B L1: 97.8%  2.2%
+[22:22:01.985] [Render] [libx264 @ 000001ef850be740] kb/s:3189.79
+[22:22:02.046] [Render] [aac @ 000001ef840d64c0] Qavg: 0.473  Tr: 3.7%  TNS(L): 11.3%  TNS(S): 3.8%  M/S: 60.5%  I/S: 18.2%  PNS: 0.0%
+[22:22:02.059] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 05 [01m12s - 01m27s].mp4'
+[01:22:02] [App] Рендеринг: rendering complete - 100%
+[22:22:02.246] [Render] Smart Face Centering: фокус персонажа определен в 49.8% ширины кадра
+[22:22:02.246] [Render] Рендеринг клипа: [102.00с - 117.00с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 06 [01m42s - 01m57s].mp4' (вертикально=true)
+[22:22:02.279] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:22:02.279] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:22:02.279] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:22:02.279] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:22:02.279] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:22:02.279] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:22:02.279] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:22:02.279] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:22:02.279] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:22:02.279] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:22:02.310] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:22:02.310] [Render] Metadata:
+[22:22:02.310] [Render] major_brand     : mp42
+[22:22:02.310] [Render] minor_version   : 0
+[22:22:02.310] [Render] compatible_brands: mp41isom
+[22:22:02.310] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:02.310] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:22:02.310] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:22:02.310] [Render] Metadata:
+[22:22:02.310] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:02.310] [Render] handler_name    : VideoHandler
+[22:22:02.310] [Render] encoder         : AVC Coding
+[22:22:02.310] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:22:02.310] [Render] Metadata:
+[22:22:02.310] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:02.310] [Render] handler_name    : SoundHandler
+[22:22:02.310] [Render] [Parsed_subtitles_2 @ 00000242a200b000] libass API version: 0x1705000
+[22:22:02.310] [Render] [Parsed_subtitles_2 @ 00000242a200b000] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:02.311] [Render] [Parsed_subtitles_2 @ 00000242a200b000] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:02.313] [Render] [Parsed_subtitles_2 @ 00000242a200b000] Using font provider directwrite (with GDI)
+[22:22:02.319] [Render] Stream mapping:
+[22:22:02.319] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:22:02.319] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:22:02.338] [Render] [Parsed_subtitles_2 @ 00000242a200b400] libass API version: 0x1705000
+[22:22:02.338] [Render] [Parsed_subtitles_2 @ 00000242a200b400] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:02.338] [Render] [Parsed_subtitles_2 @ 00000242a200b400] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:02.341] [Render] [Parsed_subtitles_2 @ 00000242a200b400] Using font provider directwrite (with GDI)
+[22:22:02.423] [Render] [Parsed_subtitles_2 @ 00000242a200b400] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:22:02.445] [Render] [libx264 @ 00000242a20ce800] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:22:02.449] [Render] [libx264 @ 00000242a20ce800] profile High, level 4.0, 4:2:0, 8-bit
+[22:22:02.449] [Render] [libx264 @ 00000242a20ce800] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:22:02.449] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 06 [01m42s - 01m57s].mp4':
+[22:22:02.450] [Render] Metadata:
+[22:22:02.450] [Render] encoder         : Lavf63.17.100
+[22:22:02.450] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:22:02.450] [Render] Metadata:
+[22:22:02.450] [Render] encoder         : Lavc63.25.101 libx264
+[22:22:02.450] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:02.450] [Render] handler_name    : VideoHandler
+[22:22:02.450] [Render] Side data:
+[22:22:02.450] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:22:02.450] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:22:02.450] [Render] Metadata:
+[22:22:02.450] [Render] encoder         : Lavc63.25.101 aac
+[22:22:02.450] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:02.450] [Render] handler_name    : SoundHandler
+[22:22:11.495] [Render] [out#0/mp4 @ 00000242a2007f00] video:9360KiB audio:350KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.178711%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] frame I:6     Avg QP:19.60  size:100057
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] frame P:138   Avg QP:22.54  size: 40503
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] frame B:306   Avg QP:23.29  size: 11092
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] consecutive B-frames:  3.3% 13.8% 12.7% 70.2%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] mb I  I16..4: 15.8% 49.3% 34.9%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] mb P  I16..4:  9.2% 21.3%  5.2%  P16..4: 24.6%  9.2%  4.0%  0.0%  0.0%    skip:26.5%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] mb B  I16..4:  3.9%  4.5%  0.5%  B16..8: 18.0%  4.1%  0.3%  direct: 8.2%  skip:60.4%  L0:50.8% L1:44.6% BI: 4.6%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] 8x8 transform intra:55.8% inter:62.7%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] coded y,uvDC,uvAC intra: 39.1% 39.8% 14.0% inter: 9.8% 13.5% 1.1%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] i16 v,h,dc,p: 40% 36% 10% 14%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 26% 28% 20%  4%  4%  4%  5%  4%  5%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 37% 23% 16%  4%  4%  4%  4%  4%  3%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] i8c dc,h,v,p: 58% 21% 18%  3%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] Weighted P-Frames: Y:13.0% UV:8.7%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] ref P L0: 74.2% 25.8%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] ref B L0: 83.9% 16.1%
+[22:22:11.496] [Render] [libx264 @ 00000242a20ce800] ref B L1: 96.9%  3.1%
+[22:22:11.497] [Render] [libx264 @ 00000242a20ce800] kb/s:5111.43
+[22:22:11.547] [Render] [aac @ 00000242a2097980] Qavg: 2.553  Tr: 5.5%  TNS(L): 4.4%  TNS(S): 5.1%  M/S: 15.7%  I/S: 5.0%  PNS: 0.0%
+[22:22:11.559] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 06 [01m42s - 01m57s].mp4'
+[01:22:12] [App] Рендеринг: rendering complete - 100%
+[22:22:11.734] [Render] Smart Face Centering: фокус персонажа определен в 49.6% ширины кадра
+[22:22:11.734] [Render] Рендеринг клипа: [117.00с - 132.00с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 07 [01m57s - 02m12s].mp4' (вертикально=true)
+[22:22:11.769] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:22:11.769] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:22:11.769] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:22:11.769] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:22:11.769] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:22:11.769] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:22:11.769] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:22:11.769] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:22:11.769] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:22:11.769] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:22:11.797] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:22:11.797] [Render] Metadata:
+[22:22:11.797] [Render] major_brand     : mp42
+[22:22:11.797] [Render] minor_version   : 0
+[22:22:11.797] [Render] compatible_brands: mp41isom
+[22:22:11.797] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:11.797] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:22:11.797] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:22:11.797] [Render] Metadata:
+[22:22:11.797] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:11.797] [Render] handler_name    : VideoHandler
+[22:22:11.797] [Render] encoder         : AVC Coding
+[22:22:11.797] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:22:11.797] [Render] Metadata:
+[22:22:11.797] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:11.797] [Render] handler_name    : SoundHandler
+[22:22:11.797] [Render] [Parsed_subtitles_2 @ 000001ea078b8a40] libass API version: 0x1705000
+[22:22:11.797] [Render] [Parsed_subtitles_2 @ 000001ea078b8a40] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:11.798] [Render] [Parsed_subtitles_2 @ 000001ea078b8a40] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:11.802] [Render] [Parsed_subtitles_2 @ 000001ea078b8a40] Using font provider directwrite (with GDI)
+[22:22:11.806] [Render] Stream mapping:
+[22:22:11.806] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:22:11.806] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:22:11.823] [Render] [Parsed_subtitles_2 @ 000001ea078b8c40] libass API version: 0x1705000
+[22:22:11.823] [Render] [Parsed_subtitles_2 @ 000001ea078b8c40] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:11.823] [Render] [Parsed_subtitles_2 @ 000001ea078b8c40] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:11.826] [Render] [Parsed_subtitles_2 @ 000001ea078b8c40] Using font provider directwrite (with GDI)
+[22:22:11.898] [Render] [Parsed_subtitles_2 @ 000001ea078b8c40] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:22:11.923] [Render] [libx264 @ 000001ea098fe940] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:22:11.926] [Render] [libx264 @ 000001ea098fe940] profile High, level 4.0, 4:2:0, 8-bit
+[22:22:11.927] [Render] [libx264 @ 000001ea098fe940] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:22:11.927] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 07 [01m57s - 02m12s].mp4':
+[22:22:11.927] [Render] Metadata:
+[22:22:11.927] [Render] encoder         : Lavf63.17.100
+[22:22:11.927] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:22:11.927] [Render] Metadata:
+[22:22:11.927] [Render] encoder         : Lavc63.25.101 libx264
+[22:22:11.927] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:11.927] [Render] handler_name    : VideoHandler
+[22:22:11.927] [Render] Side data:
+[22:22:11.927] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:22:11.927] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:22:11.927] [Render] Metadata:
+[22:22:11.927] [Render] encoder         : Lavc63.25.101 aac
+[22:22:11.927] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:11.927] [Render] handler_name    : SoundHandler
+[22:22:20.706] [Render] [out#0/mp4 @ 000001ea078b5140] video:6105KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.270288%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] frame I:4     Avg QP:18.13  size: 83628
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] frame P:133   Avg QP:22.47  size: 29573
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] frame B:313   Avg QP:23.04  size:  6337
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] consecutive B-frames:  0.9% 16.9%  6.7% 75.6%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] mb I  I16..4: 31.8% 39.4% 28.9%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] mb P  I16..4:  8.0%  8.8%  2.6%  P16..4: 30.6% 10.7%  5.0%  0.0%  0.0%    skip:34.3%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] mb B  I16..4:  2.8%  1.5%  0.0%  B16..8: 18.6%  3.7%  0.2%  direct: 7.2%  skip:65.9%  L0:52.1% L1:44.9% BI: 3.1%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] 8x8 transform intra:41.4% inter:68.7%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] coded y,uvDC,uvAC intra: 26.1% 42.8% 8.9% inter: 7.3% 12.4% 0.2%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] i16 v,h,dc,p: 28% 50%  9% 13%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 23% 33% 24%  3%  3%  4%  4%  3%  3%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 39% 25% 18%  3%  3%  4%  3%  3%  2%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] i8c dc,h,v,p: 51% 27% 19%  3%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] Weighted P-Frames: Y:2.3% UV:2.3%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] ref P L0: 76.1% 23.9%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] ref B L0: 86.8% 13.2%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] ref B L1: 98.1%  1.9%
+[22:22:20.707] [Render] [libx264 @ 000001ea098fe940] kb/s:3334.02
+[22:22:20.765] [Render] [aac @ 000001ea0a059f40] Qavg: 4.583  Tr: 5.0%  TNS(L): 5.9%  TNS(S): 0.0%  M/S: 23.6%  I/S: 3.6%  PNS: 0.0%
+[22:22:20.776] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 07 [01m57s - 02m12s].mp4'
+[01:22:21] [App] Рендеринг: rendering complete - 100%
+[22:22:20.969] [Render] Smart Face Centering: фокус персонажа определен в 68.1% ширины кадра
+[22:22:20.969] [Render] Рендеринг клипа: [760.50с - 775.50с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 08 [12m40s - 12m55s].mp4' (вертикально=true)
+[22:22:21.004] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:22:21.004] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:22:21.004] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:22:21.004] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:22:21.004] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:22:21.004] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:22:21.004] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:22:21.004] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:22:21.004] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:22:21.004] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:22:21.038] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:22:21.038] [Render] Metadata:
+[22:22:21.038] [Render] major_brand     : mp42
+[22:22:21.038] [Render] minor_version   : 0
+[22:22:21.038] [Render] compatible_brands: mp41isom
+[22:22:21.038] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:21.038] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:22:21.038] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:22:21.038] [Render] Metadata:
+[22:22:21.038] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:21.038] [Render] handler_name    : VideoHandler
+[22:22:21.038] [Render] encoder         : AVC Coding
+[22:22:21.038] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:22:21.038] [Render] Metadata:
+[22:22:21.038] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:21.038] [Render] handler_name    : SoundHandler
+[22:22:21.039] [Render] [Parsed_subtitles_2 @ 000002a17d875780] libass API version: 0x1705000
+[22:22:21.039] [Render] [Parsed_subtitles_2 @ 000002a17d875780] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:21.039] [Render] [Parsed_subtitles_2 @ 000002a17d875780] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:21.042] [Render] [Parsed_subtitles_2 @ 000002a17d875780] Using font provider directwrite (with GDI)
+[22:22:21.046] [Render] Stream mapping:
+[22:22:21.046] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:22:21.046] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:22:21.069] [Render] [Parsed_subtitles_2 @ 000002a17d875a80] libass API version: 0x1705000
+[22:22:21.069] [Render] [Parsed_subtitles_2 @ 000002a17d875a80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:21.070] [Render] [Parsed_subtitles_2 @ 000002a17d875a80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:21.073] [Render] [Parsed_subtitles_2 @ 000002a17d875a80] Using font provider directwrite (with GDI)
+[22:22:21.135] [Render] [Parsed_subtitles_2 @ 000002a17d875a80] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:22:21.158] [Render] [libx264 @ 000002a100820280] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:22:21.162] [Render] [libx264 @ 000002a100820280] profile High, level 4.0, 4:2:0, 8-bit
+[22:22:21.162] [Render] [libx264 @ 000002a100820280] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:22:21.162] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 08 [12m40s - 12m55s].mp4':
+[22:22:21.162] [Render] Metadata:
+[22:22:21.162] [Render] encoder         : Lavf63.17.100
+[22:22:21.162] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:22:21.162] [Render] Metadata:
+[22:22:21.162] [Render] encoder         : Lavc63.25.101 libx264
+[22:22:21.162] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:21.162] [Render] handler_name    : VideoHandler
+[22:22:21.162] [Render] Side data:
+[22:22:21.162] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:22:21.162] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:22:21.162] [Render] Metadata:
+[22:22:21.162] [Render] encoder         : Lavc63.25.101 aac
+[22:22:21.162] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:21.162] [Render] handler_name    : SoundHandler
+[22:22:29.228] [Render] [out#0/mp4 @ 000002a17d877600] video:1903KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.775972%
+[22:22:29.229] [Render] [libx264 @ 000002a100820280] frame I:3     Avg QP:18.27  size: 90556
+[22:22:29.229] [Render] [libx264 @ 000002a100820280] frame P:115   Avg QP:18.45  size: 11193
+[22:22:29.229] [Render] [libx264 @ 000002a100820280] frame B:332   Avg QP:20.44  size:  1172
+[22:22:29.229] [Render] [libx264 @ 000002a100820280] consecutive B-frames:  0.9%  1.8%  1.3% 96.0%
+[22:22:29.229] [Render] [libx264 @ 000002a100820280] mb I  I16..4: 22.9% 43.5% 33.6%
+[22:22:29.229] [Render] [libx264 @ 000002a100820280] mb P  I16..4:  1.9%  3.2%  1.0%  P16..4: 11.8%  4.0%  2.1%  0.0%  0.0%    skip:76.0%
+[22:22:29.229] [Render] [libx264 @ 000002a100820280] mb B  I16..4:  0.4%  0.1%  0.0%  B16..8:  4.7%  0.5%  0.0%  direct: 1.6%  skip:92.8%  L0:48.0% L1:49.9% BI: 2.1%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] 8x8 transform intra:45.8% inter:67.7%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] coded y,uvDC,uvAC intra: 28.0% 41.9% 18.0% inter: 1.6% 3.3% 0.1%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] i16 v,h,dc,p: 45% 41%  9%  5%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 32% 22% 28%  3%  3%  3%  3%  3%  3%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 43% 21% 15%  4%  4%  4%  3%  4%  2%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] i8c dc,h,v,p: 54% 21% 23%  3%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] Weighted P-Frames: Y:0.9% UV:0.9%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] ref P L0: 72.8% 27.2%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] ref B L0: 88.4% 11.6%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] ref B L1: 97.8%  2.2%
+[22:22:29.230] [Render] [libx264 @ 000002a100820280] kb/s:1038.98
+[22:22:29.285] [Render] [aac @ 000002a17d9317c0] Qavg: 0.125  Tr: 5.2%  TNS(L): 21.9%  TNS(S): 0.0%  M/S: 68.1%  I/S: 26.0%  PNS: 0.0%
+[22:22:29.296] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 08 [12m40s - 12m55s].mp4'
+[01:22:29] [App] Рендеринг: rendering complete - 100%
+[22:22:29.446] [Render] Smart Face Centering: фокус персонажа определен в 44.7% ширины кадра
+[22:22:29.446] [Render] Рендеринг клипа: [896.50с - 911.50с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 09 [14m56s - 15m11s].mp4' (вертикально=true)
+[22:22:29.479] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:22:29.479] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:22:29.480] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:22:29.480] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:22:29.480] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:22:29.480] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:22:29.480] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:22:29.480] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:22:29.480] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:22:29.480] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:22:29.509] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:22:29.509] [Render] Metadata:
+[22:22:29.509] [Render] major_brand     : mp42
+[22:22:29.509] [Render] minor_version   : 0
+[22:22:29.509] [Render] compatible_brands: mp41isom
+[22:22:29.509] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:29.509] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:22:29.509] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:22:29.509] [Render] Metadata:
+[22:22:29.509] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:29.509] [Render] handler_name    : VideoHandler
+[22:22:29.509] [Render] encoder         : AVC Coding
+[22:22:29.509] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:22:29.509] [Render] Metadata:
+[22:22:29.509] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:29.509] [Render] handler_name    : SoundHandler
+[22:22:29.510] [Render] [Parsed_subtitles_2 @ 000002afe4515dc0] libass API version: 0x1705000
+[22:22:29.510] [Render] [Parsed_subtitles_2 @ 000002afe4515dc0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:29.511] [Render] [Parsed_subtitles_2 @ 000002afe4515dc0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:29.512] [Render] [Parsed_subtitles_2 @ 000002afe4515dc0] Using font provider directwrite (with GDI)
+[22:22:29.518] [Render] Stream mapping:
+[22:22:29.518] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:22:29.518] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:22:29.530] [Render] [Parsed_subtitles_2 @ 000002afe4515bc0] libass API version: 0x1705000
+[22:22:29.530] [Render] [Parsed_subtitles_2 @ 000002afe4515bc0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:29.531] [Render] [Parsed_subtitles_2 @ 000002afe4515bc0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:29.534] [Render] [Parsed_subtitles_2 @ 000002afe4515bc0] Using font provider directwrite (with GDI)
+[22:22:29.590] [Render] [Parsed_subtitles_2 @ 000002afe4515bc0] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:22:29.613] [Render] [libx264 @ 000002afe4e5e700] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:22:29.618] [Render] [libx264 @ 000002afe4e5e700] profile High, level 4.0, 4:2:0, 8-bit
+[22:22:29.618] [Render] [libx264 @ 000002afe4e5e700] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:22:29.618] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 09 [14m56s - 15m11s].mp4':
+[22:22:29.618] [Render] Metadata:
+[22:22:29.619] [Render] encoder         : Lavf63.17.100
+[22:22:29.619] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:22:29.619] [Render] Metadata:
+[22:22:29.619] [Render] encoder         : Lavc63.25.101 libx264
+[22:22:29.619] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:29.619] [Render] handler_name    : VideoHandler
+[22:22:29.619] [Render] Side data:
+[22:22:29.619] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:22:29.619] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:22:29.619] [Render] Metadata:
+[22:22:29.619] [Render] encoder         : Lavc63.25.101 aac
+[22:22:29.619] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:29.619] [Render] handler_name    : SoundHandler
+[22:22:37.376] [Render] [out#0/mp4 @ 000002afe4518d80] video:1589KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.901743%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] frame I:4     Avg QP:15.86  size:111159
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] frame P:115   Avg QP:17.15  size:  8789
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] frame B:331   Avg QP:19.41  size:   515
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] consecutive B-frames:  1.3%  1.3%  1.3% 96.0%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] mb I  I16..4: 23.0% 41.0% 36.1%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] mb P  I16..4:  1.3%  2.7%  1.2%  P16..4:  6.2%  2.0%  1.0%  0.0%  0.0%    skip:85.7%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] mb B  I16..4:  0.2%  0.1%  0.0%  B16..8:  1.7%  0.2%  0.0%  direct: 0.7%  skip:97.1%  L0:53.7% L1:44.8% BI: 1.5%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] 8x8 transform intra:45.4% inter:60.9%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] coded y,uvDC,uvAC intra: 35.2% 55.5% 35.8% inter: 0.8% 1.9% 0.1%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] i16 v,h,dc,p: 44% 42%  8%  6%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 33% 29% 20%  3%  3%  4%  3%  2%  3%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 42% 25% 13%  3%  4%  4%  3%  3%  2%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] i8c dc,h,v,p: 46% 24% 26%  4%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] ref P L0: 80.2% 19.8%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] ref B L0: 89.1% 10.9%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] ref B L1: 96.1%  3.9%
+[22:22:37.377] [Render] [libx264 @ 000002afe4e5e700] kb/s:867.21
+[22:22:37.431] [Render] [aac @ 000002afe45c8440] Qavg: 0.125  Tr: 6.7%  TNS(L): 20.6%  TNS(S): 0.0%  M/S: 66.6%  I/S: 26.4%  PNS: 0.0%
+[22:22:37.444] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 09 [14m56s - 15m11s].mp4'
+[01:22:38] [App] Рендеринг: rendering complete - 100%
+[22:22:37.646] [Render] Smart Face Centering: фокус персонажа определен в 38.8% ширины кадра
+[22:22:37.647] [Render] Рендеринг клипа: [1234.50с - 1249.50с] -> 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 10 [20m34s - 20m49s].mp4' (вертикально=true)
+[22:22:37.692] [Render] ffmpeg version N-128100-gceb466cbcd-20261026 Copyright (c) 2000-2026 the FFmpeg developers
+[22:22:37.692] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:22:37.692] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261026
+[22:22:37.692] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:22:37.692] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:22:37.692] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:22:37.692] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:22:37.692] [Render] libavfilter    12.  9.100 / 12.  9.100
+[22:22:37.692] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:22:37.692] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:22:37.726] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ].mp4':
+[22:22:37.726] [Render] Metadata:
+[22:22:37.726] [Render] major_brand     : mp42
+[22:22:37.726] [Render] minor_version   : 0
+[22:22:37.726] [Render] compatible_brands: mp41isom
+[22:22:37.726] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:37.726] [Render] Duration: 00:23:40.10, start: 0.000000, bitrate: 5890 kb/s
+[22:22:37.726] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 5759 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:22:37.726] [Render] Metadata:
+[22:22:37.726] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:37.726] [Render] handler_name    : VideoHandler
+[22:22:37.726] [Render] encoder         : AVC Coding
+[22:22:37.726] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:22:37.726] [Render] Metadata:
+[22:22:37.726] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:37.726] [Render] handler_name    : SoundHandler
+[22:22:37.727] [Render] [Parsed_subtitles_2 @ 000001e00aee8dc0] libass API version: 0x1705000
+[22:22:37.727] [Render] [Parsed_subtitles_2 @ 000001e00aee8dc0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:37.728] [Render] [Parsed_subtitles_2 @ 000001e00aee8dc0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:37.729] [Render] [Parsed_subtitles_2 @ 000001e00aee8dc0] Using font provider directwrite (with GDI)
+[22:22:37.735] [Render] Stream mapping:
+[22:22:37.735] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:22:37.735] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:22:37.749] [Render] [Parsed_subtitles_2 @ 000001e00aee87c0] libass API version: 0x1705000
+[22:22:37.749] [Render] [Parsed_subtitles_2 @ 000001e00aee87c0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:22:37.750] [Render] [Parsed_subtitles_2 @ 000001e00aee87c0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 14.5.0 (COMPLEX)
+[22:22:37.753] [Render] [Parsed_subtitles_2 @ 000001e00aee87c0] Using font provider directwrite (with GDI)
+[22:22:37.806] [Render] [Parsed_subtitles_2 @ 000001e00aee87c0] fontselect: (Inter, 400, 0) -> ArialMT, 0, ArialMT
+[22:22:37.828] [Render] [libx264 @ 000001e00d9806c0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:22:37.832] [Render] [libx264 @ 000001e00d9806c0] profile High, level 4.0, 4:2:0, 8-bit
+[22:22:37.832] [Render] [libx264 @ 000001e00d9806c0] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=2 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=6 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=24 lookahead_threads=4 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=30 rc=crf mbtree=1 crf=22.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:22:37.832] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 10 [20m34s - 20m49s].mp4':
+[22:22:37.832] [Render] Metadata:
+[22:22:37.832] [Render] encoder         : Lavf63.17.100
+[22:22:37.832] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:22:37.833] [Render] Metadata:
+[22:22:37.833] [Render] encoder         : Lavc63.25.101 libx264
+[22:22:37.833] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:37.833] [Render] handler_name    : VideoHandler
+[22:22:37.833] [Render] Side data:
+[22:22:37.833] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:22:37.833] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:22:37.833] [Render] Metadata:
+[22:22:37.833] [Render] encoder         : Lavc63.25.101 aac
+[22:22:37.833] [Render] creation_time   : 2026-07-26T12:15:52.000000Z
+[22:22:37.833] [Render] handler_name    : SoundHandler
+[22:22:47.294] [Render] [out#0/mp4 @ 000001e00af3fa00] video:2357KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.644961%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] frame I:3     Avg QP:17.09  size:114701
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] frame P:116   Avg QP:18.85  size: 13080
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] frame B:331   Avg QP:20.14  size:  1665
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] consecutive B-frames:  1.1%  1.3%  3.3% 94.2%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] mb I  I16..4: 22.7% 36.3% 41.0%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] mb P  I16..4:  2.4%  3.3%  1.0%  P16..4: 15.7%  5.3%  2.4%  0.0%  0.0%    skip:69.9%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] mb B  I16..4:  0.6%  0.2%  0.0%  B16..8:  6.7%  0.9%  0.0%  direct: 2.2%  skip:89.4%  L0:50.3% L1:46.5% BI: 3.2%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] 8x8 transform intra:41.5% inter:70.8%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] coded y,uvDC,uvAC intra: 27.0% 43.6% 20.8% inter: 2.2% 4.4% 0.1%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] i16 v,h,dc,p: 36% 47%  8%  8%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 25% 30% 29%  2%  2%  3%  3%  2%  3%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 43% 22% 15%  3%  4%  4%  3%  3%  2%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] i8c dc,h,v,p: 52% 24% 21%  3%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] ref P L0: 70.2% 29.8%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] ref B L0: 84.9% 15.1%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] ref B L1: 96.3%  3.7%
+[22:22:47.295] [Render] [libx264 @ 000001e00d9806c0] kb/s:1286.67
+[22:22:47.354] [Render] [aac @ 000001e00cf4ec80] Qavg: 0.167  Tr: 7.9%  TNS(L): 15.8%  TNS(S): 3.6%  M/S: 68.2%  I/S: 27.6%  PNS: 0.0%
+[22:22:47.363] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Военная хроника маленькой девочки 2\Готовое\[3 серия] Военная хроника маленькой девочки TV2 [Озвучка аниме _ Оканэ]_Проект\Готовые клипы\Клип 10 [20m34s - 20m49s].mp4'
+[01:22:47] [App] Рендеринг: rendering complete - 100%
+[01:22:47] [App] Экспорт успешно завершен! Сгенерировано Reels: 10

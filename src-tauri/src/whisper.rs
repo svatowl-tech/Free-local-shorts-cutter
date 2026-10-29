@@ -1,5 +1,5 @@
 // src-tauri/src/whisper.rs
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
@@ -11,6 +11,267 @@ use tokio::sync::broadcast::Receiver;
 pub struct WhisperProgressPayload {
     pub percent: f64,
     pub stage: String,
+}
+
+/// Возвращает канонический путь к файлу субтитров в папке проекта для данного видео:
+/// `<папка_видео>/<имя_видео>_Проект/Субтитры/<имя_видео>_Субтитры.srt`
+pub fn get_project_srt_path(video_path: &Path) -> PathBuf {
+    let file_stem = video_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("video");
+    let video_parent = video_path.parent().unwrap_or_else(|| Path::new("."));
+    video_parent
+        .join(format!("{}_Проект", file_stem))
+        .join("Субтитры")
+        .join(format!("{}_Субтитры.srt", file_stem))
+}
+
+/// Известные галлюцинации Whisper на музыке, титрах, опенингах и тишине
+pub fn is_whisper_hallucination(text: &str) -> bool {
+    let lower = text.trim().to_lowercase();
+    if lower.is_empty() {
+        return true;
+    }
+
+    let patterns = [
+        "редактор субтитров",
+        "корректор а.",
+        "корректор в.",
+        "корректор н.",
+        "корректор е.",
+        "корректор ",
+        "субтитры сделал",
+        "субтитры создавал",
+        "субтитры подготовил",
+        "субтитры подогнал",
+        "amara.org",
+        "амара.орг",
+        "спокойная музыка",
+        "динамичная музыка",
+        "тревожная музыка",
+        "играет музыка",
+        "лирическая музыка",
+        "веселая музыка",
+        "грустная музыка",
+        "музыкальная заставка",
+        "продолжение следует",
+        "подпишись на канал",
+        "ставьте лайки",
+    ];
+
+    for pat in &patterns {
+        if lower.contains(pat) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Проверяет, содержит ли существующий SRT-файл зацикленные галлюцинации от старых сборок
+fn has_hallucination_loops(srt_content: &str) -> bool {
+    let fragments = crate::text_analyzer::parse_srt(srt_content);
+    if fragments.is_empty() {
+        return true;
+    }
+
+    let mut hallucination_count = 0usize;
+    let mut consecutive_dups = 0usize;
+    let mut max_consecutive_dups = 0usize;
+    let mut prev_norm = String::new();
+
+    for frag in &fragments {
+        if is_whisper_hallucination(&frag.text) {
+            hallucination_count += 1;
+        }
+        let norm = frag.text.trim().to_lowercase();
+        if !norm.is_empty() && norm == prev_norm {
+            consecutive_dups += 1;
+            if consecutive_dups > max_consecutive_dups {
+                max_consecutive_dups = consecutive_dups;
+            }
+        } else {
+            consecutive_dups = 0;
+            prev_norm = norm;
+        }
+    }
+
+    // Если более 5 галлюцинаций титров или более 4 одинаковых строк подряд — файл был сгенерирован без защиты -mc 0
+    hallucination_count > 5 || max_consecutive_dups >= 4
+}
+
+/// Очищает SRT-файл от мусорных галлюцинаций Whisper и зацикленных повторов
+pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppResult<usize> {
+    let content = tokio::fs::read_to_string(srt_path).await.map_err(AppError::Io)?;
+    let raw_fragments = crate::text_analyzer::parse_srt(&content);
+    let raw_count = raw_fragments.len();
+
+    let mut clean_fragments: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(raw_count);
+    let mut prev_norm = String::new();
+    let mut repeat_count = 0usize;
+
+    for frag in raw_fragments {
+        let trimmed = frag.text.trim();
+        if is_whisper_hallucination(trimmed) {
+            continue;
+        }
+
+        let norm = trimmed.to_lowercase();
+        if norm == prev_norm {
+            repeat_count += 1;
+            // Допускаем максимум 1 повтор короткой реплики (например «Нет. / Нет.»), но отсекаем циклы
+            if repeat_count >= 2 {
+                continue;
+            }
+        } else {
+            repeat_count = 0;
+            prev_norm = norm;
+        }
+
+        clean_fragments.push(frag);
+    }
+
+    let removed = raw_count.saturating_sub(clean_fragments.len());
+    if removed > 0 {
+        crate::logger::emit_log(
+            app_handle,
+            "Whisper",
+            "info",
+            &format!(
+                "Очистка субтитров от галлюцинаций: удалено {} мусорных/зацикленных строк, оставлено {} чистых реплик.",
+                removed,
+                clean_fragments.len()
+            ),
+        );
+    }
+
+    let mut out = String::new();
+    for (idx, frag) in clean_fragments.iter().enumerate() {
+        out.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            idx + 1,
+            format_srt_timestamp(frag.start),
+            format_srt_timestamp(frag.end),
+            frag.text.trim()
+        ));
+    }
+
+    tokio::fs::write(srt_path, out).await.map_err(AppError::Io)?;
+    Ok(clean_fragments.len())
+}
+
+pub fn format_srt_timestamp(seconds: f64) -> String {
+    let clamped = seconds.max(0.0);
+    let total_ms = (clamped * 1000.0).round() as u64;
+    let ms = total_ms % 1000;
+    let total_secs = total_ms / 1000;
+    let s = total_secs % 60;
+    let m = (total_secs / 60) % 60;
+    let h = total_secs / 3600;
+    format!("{:02}:{:02}:{:02},{:03}", h, m, s, ms)
+}
+
+/// Умное получение или создание субтитров для видеофайла с кешированием в папке проекта.
+/// Предотвращает повторный запуск FFmpeg extract_audio и Whisper при переходе от анализа к экспорту клипов!
+pub async fn get_or_create_subtitles(
+    video_path: PathBuf,
+    model_path: Option<PathBuf>,
+    app_handle: AppHandle,
+    cancel_rx: Receiver<()>,
+) -> AppResult<Option<PathBuf>> {
+    let project_srt = get_project_srt_path(&video_path);
+
+    // 1. Проверяем, есть ли уже готовые чистые субтитры для этого видео в папке проекта
+    if project_srt.exists() {
+        if let Ok(content) = tokio::fs::read_to_string(&project_srt).await {
+            if !content.trim().is_empty() && !has_hallucination_loops(&content) {
+                let count = crate::text_analyzer::parse_srt(&content).len();
+                if count > 0 {
+                    crate::logger::emit_log(
+                        &app_handle,
+                        "Whisper",
+                        "info",
+                        &format!(
+                            "✓ Найдены готовые субтитры в папке проекта ({} реплик): '{}'. Повторная транскрибация не требуется!",
+                            count,
+                            project_srt.display()
+                        ),
+                    );
+                    let _ = app_handle.emit(
+                        "whisper-progress",
+                        WhisperProgressPayload {
+                            percent: 100.0,
+                            stage: "cached".to_string(),
+                        },
+                    );
+                    return Ok(Some(project_srt));
+                }
+            } else if has_hallucination_loops(&content) {
+                crate::logger::emit_log(
+                    &app_handle,
+                    "Whisper",
+                    "warn",
+                    "В старом файле субтитров обнаружены зацикленные галлюцинации. Выполняется чистая повторная транскрибация (-mc 0)...",
+                );
+            }
+        }
+    }
+
+    // 2. Если готовых субтитров нет — извлекаем временное аудио 16kHz WAV и запускаем Whisper
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let audio_output = std::env::temp_dir().join(format!("vc_audio_{}_{}.wav", std::process::id(), ts));
+
+    crate::ffmpeg::extract_audio(
+        video_path.clone(),
+        audio_output.clone(),
+        app_handle.clone(),
+        cancel_rx.resubscribe(),
+    )
+    .await?;
+
+    let transcribe_res = transcribe_audio(
+        audio_output.clone(),
+        model_path,
+        app_handle.clone(),
+        cancel_rx.resubscribe(),
+    )
+    .await;
+
+    // Сразу удаляем временный WAV-файл
+    let _ = tokio::fs::remove_file(&audio_output).await;
+
+    match transcribe_res {
+        Ok(temp_srt) => {
+            if let Some(parent) = project_srt.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            if tokio::fs::copy(&temp_srt, &project_srt).await.is_ok() {
+                let _ = tokio::fs::remove_file(&temp_srt).await;
+                crate::logger::emit_log(
+                    &app_handle,
+                    "Whisper",
+                    "info",
+                    &format!("Субтитры сохранены в кэш проекта: '{}'", project_srt.display()),
+                );
+                Ok(Some(project_srt))
+            } else {
+                Ok(Some(temp_srt))
+            }
+        }
+        Err(e) => {
+            crate::logger::emit_log(
+                &app_handle,
+                "Whisper",
+                "warn",
+                &format!("Whisper ASR завершился с предупреждением: {}", e),
+            );
+            Ok(None)
+        }
+    }
 }
 
 pub async fn transcribe_audio(
@@ -70,15 +331,23 @@ pub async fn transcribe_audio(
         &app_handle,
         "Whisper",
         "info",
-        &format!("Запуск whisper.cpp (модель: {}, язык: auto, вывод: {}.srt)...", model.display(), base_out),
+        &format!("Запуск whisper.cpp (модель: {}, язык: auto, anti-loop: -mc 0, вывод: {}.srt)...", model.display(), base_out),
     );
 
-    // Передаем -l auto (автоопределение русского/любого языка) и -pp (вывод процентов прогресса)
+    // Передаем:
+    // -l auto: автоопределение русского/любого языка
+    // -mc 0: отключение переноса текстового контекста между 30с окнами (предотвращает 7-минутные циклы «Корректор А. Кулак» после музыки!)
+    // -et 2.2: порог энтропии для подавления повторов
+    // -ml 60: компактная длина строк для вертикальных 9:16 клипов
+    // -pp: вывод процентов прогресса
     let command = command
         .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
         .args([
             "-m", &model.to_string_lossy(),
             "-l", "auto",
+            "-mc", "0",
+            "-et", "2.2",
+            "-ml", "60",
             "-pp",
             "-osrt", 
             "-of", &base_out,
@@ -93,6 +362,7 @@ pub async fn transcribe_audio(
         })?;
 
     let app_handle_clone = app_handle.clone();
+    let expected_srt_clone = expected_srt_output.clone();
     let progress_future = async move {
         let _ = app_handle_clone.emit("whisper-progress", WhisperProgressPayload { 
             percent: 0.0, 
@@ -119,17 +389,21 @@ pub async fn transcribe_audio(
                 }
                 CommandEvent::Terminated(payload) => {
                     if payload.code == Some(0) {
+                        // Очищаем сгенерированный SRT от галлюцинаций и повторов
+                        if expected_srt_clone.exists() {
+                            let _ = sanitize_srt_file(&expected_srt_clone, &app_handle_clone).await;
+                        }
                         crate::logger::emit_log(
                             &app_handle_clone,
                             "Whisper",
                             "info",
-                            &format!("Распознавание речи успешно завершено! Субтитры сохранены в '{}'", expected_srt_output.display()),
+                            &format!("Распознавание речи успешно завершено! Субтитры сохранены в '{}'", expected_srt_clone.display()),
                         );
                         let _ = app_handle_clone.emit("whisper-progress", WhisperProgressPayload { 
                             percent: 100.0, 
                             stage: "saving".to_string() 
                         });
-                        return Ok(expected_srt_output);
+                        return Ok(expected_srt_clone);
                     } else {
                         let err_msg = format!("whisper.cpp завершился с кодом ошибки: {:?}", payload.code);
                         crate::logger::emit_log(&app_handle_clone, "Whisper", "error", &err_msg);

@@ -65,8 +65,8 @@ const DEFAULT_CONFIG: PipelineConfig = {
   ollama_url: 'http://localhost:11434',
   output_dir: 'output_cuts/',
   subtitle_style: {
-    font_name: 'Inter',
-    font_size: 24,
+    font_name: 'Arial',
+    font_size: 18,
     color: '#FFFFFF',
     placement: 'bottom'
   },
@@ -375,12 +375,12 @@ const createPipelineStore = () => {
       update(s => ({
         ...s,
         status: 'running',
-        currentStage: 'Инициализация ручного экспорта Reels (9:16 + Whisper)...',
+        currentStage: 'Подготовка экспорта Reels (9:16 + Субтитры)...',
         percentage: 5,
         error: null,
         clips: []
       }));
-      addLog(`Запуск ручного экспорта ${fragments.length} клипов в формате 9:16 с субтитрами Whisper...`);
+      addLog(`Запуск экспорта ${fragments.length} клипов в формате 9:16 с синхронизированными субтитрами...`);
 
       if (!isTauri) {
         // Этап 1: Извлечение аудио
@@ -472,9 +472,14 @@ const createPipelineStore = () => {
 
         const unlistenWhisper = await safeListen(
           () => onWhisperProgress((payload) => {
+            const stageLabel = payload.stage === 'cached'
+              ? 'Используются готовые субтитры из кэша проекта'
+              : payload.stage === 'loading_model'
+                ? 'Загрузка модели'
+                : 'Распознавание речи';
             update(s => ({
               ...s,
-              currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание речи'}`,
+              currentStage: `Whisper ASR: ${stageLabel}`,
               percentage: 30 + Math.round(payload.percent * 0.3),
               stageDetails: {
                 ...s.stageDetails,
@@ -487,7 +492,7 @@ const createPipelineStore = () => {
             const rounded = Math.round(payload.percent);
             if (rounded - lastWhisperPct >= 5 || rounded === 100) {
               lastWhisperPct = rounded;
-              addLog(`Whisper: ${payload.stage} - ${rounded}%`);
+              addLog(`Whisper: ${stageLabel} - ${rounded}%`);
             }
           }),
           'whisper-progress'

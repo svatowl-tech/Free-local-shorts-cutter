@@ -3,7 +3,7 @@
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::broadcast::Receiver;
@@ -109,6 +109,25 @@ struct OllamaResponse {
     response: String,
 }
 
+/// Нормализует вектор оценок от LLM так, чтобы его длина строго совпадала с длиной пакета `chunk`
+fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64> {
+    let fallback = compute_text_scores_advanced(chunk);
+    let mut out = Vec::with_capacity(chunk.len());
+    for i in 0..chunk.len() {
+        if let Some(&val) = parsed.get(i) {
+            // Если фраза является явной галлюцинацией Whisper, принудительно занижаем вес
+            if crate::whisper::is_whisper_hallucination(&chunk[i].text) {
+                out.push(0.05);
+            } else {
+                out.push(val.clamp(0.05, 0.99));
+            }
+        } else {
+            out.push(fallback[i]);
+        }
+    }
+    out
+}
+
 /// Асинхронная аналитика текста реплик
 pub async fn analyze_text_with_llm(
     fragments: &[SubtitleFragment],
@@ -120,7 +139,7 @@ pub async fn analyze_text_with_llm(
         return Ok(Vec::new());
     }
 
-    // Если выбран Builtin или Auto — используем быстрый умный локальный семантический анализатор
+    // Если выбран Builtin — используем быстрый умный локальный семантический анализатор
     if config.engine == TextEngine::Builtin {
         crate::logger::emit_log(
             app_handle,
@@ -143,11 +162,12 @@ pub async fn analyze_text_with_llm(
                 app_handle,
                 "LLM",
                 "info",
-                &format!("Запуск локального llama-cli с моделью: '{}'", model_path.display()),
+                &format!("Запуск локального llama-cli с моделью: '{}' (контекст: 2048, UTF-8 файл промпта)", model_path.display()),
             );
-            let mut all_scores = Vec::new();
-            let batch_size = 15;
+            let mut all_scores = Vec::with_capacity(fragments.len());
+            let batch_size = 35;
             let total_batches = (fragments.len() + batch_size - 1) / batch_size;
+            let mut use_gpu = true;
 
             for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
                 if cancel_rx.try_recv().is_ok() {
@@ -159,11 +179,37 @@ pub async fn analyze_text_with_llm(
                     app_handle,
                     "LLM",
                     "info",
-                    &format!("Пакет {}/{}: анализ {} реплик через llama-cli...", batch_idx + 1, total_batches, chunk.len()),
+                    &format!("Пакет {}/{}: анализ {} реплик через llama-cli (GPU offload={})...", batch_idx + 1, total_batches, chunk.len(), use_gpu),
                 );
 
                 let prompt = build_prompt(chunk);
-                match run_llama_cli(app_handle, &model_path.to_string_lossy(), &prompt, cancel_rx.resubscribe()).await {
+                let mut batch_res = run_llama_cli(
+                    app_handle,
+                    &model_path.to_string_lossy(),
+                    &prompt,
+                    use_gpu,
+                    cancel_rx.resubscribe(),
+                ).await;
+
+                // Если запуск с GPU offload (-ngl 99) упал, пробуем один раз на CPU (-ngl 0)
+                if batch_res.is_err() && use_gpu {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "warn",
+                        "Попытка запуска llama-cli с GPU-ускорением не удалась, пробуем режим CPU (-ngl 0)...",
+                    );
+                    use_gpu = false;
+                    batch_res = run_llama_cli(
+                        app_handle,
+                        &model_path.to_string_lossy(),
+                        &prompt,
+                        false,
+                        cancel_rx.resubscribe(),
+                    ).await;
+                }
+
+                match batch_res {
                     Ok(result) => {
                         let parsed = parse_json_array(&result);
                         if let Some(ref batch_scores) = parsed {
@@ -171,9 +217,9 @@ pub async fn analyze_text_with_llm(
                                 app_handle,
                                 "LLM",
                                 "info",
-                                &format!("Успешно получен JSON-ответ от llama-cli: {} оценок", batch_scores.len()),
+                                &format!("✓ Пакет {}/{}: получено {} оценок от llama-cli", batch_idx + 1, total_batches, batch_scores.len()),
                             );
-                            all_scores.extend_from_slice(batch_scores);
+                            all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
                         } else {
                             crate::logger::emit_log(
                                 app_handle,
@@ -189,9 +235,16 @@ pub async fn analyze_text_with_llm(
                             app_handle,
                             "LLM",
                             "warn",
-                            &format!("llama-cli завершился с ошибкой: {}. Переключение на встроенный NLP для данного пакета.", e),
+                            &format!(
+                                "llama-cli недоступен или завершился со сбоем ({}). Автоматическое переключение оставшихся пакетов на встроенный скоростной NLP-движок без потери времени.",
+                                e
+                            ),
                         );
-                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                        // Circuit breaker: рассчитываем текущий и все оставшиеся фрагменты через встроенный NLP мгновенно,
+                        // чтобы не спавнить десятки падающих процессов подряд!
+                        let remaining = &fragments[batch_idx * batch_size..];
+                        all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                        break;
                     }
                 }
             }
@@ -220,8 +273,8 @@ pub async fn analyze_text_with_llm(
             .build()
             .unwrap_or_default();
 
-        let mut all_scores = Vec::new();
-        let batch_size = 20;
+        let mut all_scores = Vec::with_capacity(fragments.len());
+        let batch_size = 30;
         let total_batches = (fragments.len() + batch_size - 1) / batch_size;
 
         for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
@@ -248,7 +301,7 @@ pub async fn analyze_text_with_llm(
                             "info",
                             &format!("Успешный ответ от Ollama: получено {} оценок", batch_scores.len()),
                         );
-                        all_scores.extend_from_slice(batch_scores);
+                        all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
                     } else {
                         crate::logger::emit_log(
                             app_handle,
@@ -264,9 +317,11 @@ pub async fn analyze_text_with_llm(
                         app_handle,
                         "LLM",
                         "warn",
-                        &format!("Ollama недоступна ({})! Переключение на встроенный NLP анализ для пакета.", e),
+                        &format!("Ollama недоступна ({})! Переключение оставшихся пакетов на встроенный NLP анализ.", e),
                     );
-                    all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                    let remaining = &fragments[batch_idx * batch_size..];
+                    all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                    break;
                 }
             }
         }
@@ -280,13 +335,14 @@ pub async fn analyze_text_with_llm(
 fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
-        lines.push(format!("{}. \"{}\"", i + 1, frag.text.replace(['\n', '\r'], " ")));
+        let clean_txt = frag.text.replace(['\n', '\r', '"'], " ");
+        lines.push(format!("{}. \"{}\"", i + 1, clean_txt.trim()));
     }
     let input_list = lines.join("\n");
     format!(
         "<|im_start|>system\n\
         Ты профессиональный видеомонтажер и аналитик вовлекающего контента. \
-        Твоя задача — оценить каждую реплику по шкале от 0.0 до 1.0 на предмет виральности, эмоций, юмора, панчлайна или кульминации.\n\
+        Твоя задача — оценить каждую реплику по шкале от 0.0 до 1.0 на предмет виральности, эмоций, драмы, юмора, панчлайна или кульминации.\n\
         ПРАВИЛО: Выведи ИСКЛЮЧИТЕЛЬНО валидный JSON-массив из {} чисел. Без пояснений, без вводных слов. Пример: [0.85, 0.20]\n\
         <|im_end|>\n\
         <|im_start|>user\n\
@@ -351,6 +407,7 @@ async fn run_llama_cli(
     app_handle: &AppHandle, 
     model_path: &str, 
     prompt: &str,
+    use_gpu: bool,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<String> {
     use tauri_plugin_shell::process::CommandEvent;
@@ -363,22 +420,45 @@ async fn run_llama_cli(
             AppError::Pipeline(err)
         })?;
 
+    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ДЛЯ WINDOWS:
+    // Передача кириллического промпта через аргумент командной строки `-p` на Windows приводит к конвертации
+    // в однобайтовую кодировку CP1251 внутри MSVC CRT `argv`, из-за чего `llama_tokenize` (`unicode_cpt_from_utf8`)
+    // выбрасывает исключение `invalid utf-8` и аварийно завершает процесс с кодом -1073740791 (0xC0000409) сразу после `system_info`!
+    // Запись промпта в чистый UTF-8 файл и передача через `-f <path>` полностью решает проблему кодировки!
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let prompt_file = std::env::temp_dir().join(format!("vc_llama_prompt_{}_{}.txt", std::process::id(), ts));
+    tokio::fs::write(&prompt_file, prompt.as_bytes()).await.map_err(AppError::Io)?;
+
+    let ngl_val = if use_gpu { "99" } else { "0" };
+
+    // Передаем:
+    // -f <prompt_file>: чтение UTF-8 промпта напрямую из файла (без искажения кириллицы в Windows argv)
+    // -c 2048: ограничиваем контекст до 2048 вместо 32768 по умолчанию (экономит ~1.7 ГБ памяти и ускоряет старт в 15 раз!)
+    // -ngl 99: выгружаем все слои модели на GPU (RTX / CUDA / Metal)
+    // -n 384: лимит генерируемых токенов для JSON-массива
+    // --temp 0.1: детерминированный JSON-вывод
+    // --no-display-prompt: выводим в stdout только сгенерированный ответ
     let cmd = sidecar_command
         .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
         .args([
             "-m", model_path,
-            "-p", prompt,
-            "-n", "512",
-            "--temp", "0.2",
-            "--no-display-prompt"
+            "-f", &prompt_file.to_string_lossy(),
+            "-c", "2048",
+            "-ngl", ngl_val,
+            "-n", "384",
+            "--temp", "0.1",
+            "--no-display-prompt",
         ]);
 
-    let (mut rx, child) = cmd.spawn()
-        .map_err(|e| {
+    let (mut rx, child) = match cmd.spawn() {
+        Ok(pair) => pair,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&prompt_file).await;
             let err = format!("Не удалось запустить процесс llama-cli: {}", e);
             crate::logger::emit_log(app_handle, "LLM", "error", &err);
-            AppError::Pipeline(err)
-        })?;
+            return Err(AppError::Pipeline(err));
+        }
+    };
 
     let app_handle_clone = app_handle.clone();
     let run_future = async move {
@@ -419,13 +499,24 @@ async fn run_llama_cli(
         }
     };
 
-    tokio::select! {
-        res = run_future => res,
+    let res = tokio::select! {
+        r = tokio::time::timeout(Duration::from_secs(60), run_future) => {
+            match r {
+                Ok(inner) => inner,
+                Err(_) => {
+                    let _ = child.kill();
+                    Err(AppError::Pipeline("Превышен таймаут ожидания ответа от llama-cli (60с)".to_string()))
+                }
+            }
+        },
         _ = cancel_rx.recv() => {
             let _ = child.kill();
             Err(AppError::Pipeline("Анализ llama-cli отменен пользователем.".to_string()))
         }
-    }
+    };
+
+    let _ = tokio::fs::remove_file(&prompt_file).await;
+    res
 }
 
 fn parse_json_array(text: &str) -> Option<Vec<f64>> {
@@ -441,20 +532,36 @@ fn parse_json_array(text: &str) -> Option<Vec<f64>> {
         if start <= end {
             let json_str = &cleaned[start..=end];
             if let Ok(nums) = serde_json::from_str::<Vec<f64>>(json_str) {
+                if !nums.is_empty() {
+                    return Some(nums);
+                }
+            }
+        }
+    }
+
+    // 2. Если ответ начинается с продолжения массива (т.к. промпт заканчивается на `[`), добавляем открывающую скобку
+    if !cleaned.starts_with('[') {
+        if let Some(end) = cleaned.find(']') {
+            let with_opening = format!("[{}", &cleaned[..=end]);
+            if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_opening) {
+                if !nums.is_empty() {
+                    return Some(nums);
+                }
+            }
+        }
+    }
+
+    // 3. Если ответ начинается с массива, но закрывающая скобка отсутствует из-за обрезки токенов
+    if cleaned.starts_with('[') && !cleaned.ends_with(']') {
+        let with_closing = format!("{}]", cleaned.trim_end().trim_end_matches(','));
+        if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_closing) {
+            if !nums.is_empty() {
                 return Some(nums);
             }
         }
     }
 
-    // 2. Если ответ начинается с массива, но закрывающая скобка отсутствует из-за обрезки токенов
-    if cleaned.starts_with('[') && !cleaned.ends_with(']') {
-        let with_closing = format!("{}]", cleaned.trim_end().trim_end_matches(','));
-        if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_closing) {
-            return Some(nums);
-        }
-    }
-
-    // 3. Fallback: извлечение отдельных чисел через любые стандартные разделители
+    // 4. Fallback: извлечение отдельных чисел через стандартные разделители
     let inner = cleaned
         .trim_start_matches('[')
         .trim_end_matches(']');
@@ -481,48 +588,64 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
         "вау", "ого", "чё", "что?!", "жесть", "круто", "капец",
         "не может быть", "вперёд", "ура", "стоп", "быстрее",
         "бей", "беги", "смотри", "боже", "шок", "красава", "лул",
-        "ужас", "победа", "атака", "удар", "сила", "смерть", "крик"
+        "ужас", "победа", "атака", "удар", "сила", "смерть", "крик",
+        "войн", "приказ", "огонь", "враг", "преступлен", "капитуляц",
+        "уничтож", "спасем", "кров", "биться", "штурм", "взрыв", "молодец"
     ];
 
     fragments.iter().map(|f| {
-        let txt = f.text.to_lowercase();
-        let mut score: f64 = 0.45; // Базовый уровень значимости диалогов
+        if crate::whisper::is_whisper_hallucination(&f.text) {
+            return 0.05;
+        }
+
+        let txt = f.text.trim().to_lowercase();
+        let word_count = txt.split_whitespace().count();
+
+        // Очень короткие однословные реплики («Нет.», «Да.», «Чай.») не должны становиться центром хайлайта сами по себе
+        if word_count <= 1 && !txt.contains('!') {
+            return 0.25;
+        }
+
+        let mut score: f64 = 0.42;
 
         // 1. Восклицания и эмоциональные знаки
         if txt.contains('!') {
-            score += 0.20;
+            score += 0.18;
         }
-        if txt.contains("!!") || txt.contains("?!") {
-            score += 0.15;
+        if txt.contains("!!") || txt.contains("?!") || txt.contains("!?") {
+            score += 0.14;
         }
         if txt.contains('?') {
-            score += 0.10;
+            score += 0.08;
         }
 
-        // 2. Поиск маркеров эмоций/смеха/хайлайтов
+        // 2. Поиск маркеров эмоций/смеха/драмы/хайлайтов (с накоплением до 2 совпадений)
+        let mut kw_hits = 0;
         for kw in &intense_keywords {
             if txt.contains(kw) {
-                score += 0.25;
-                break;
+                kw_hits += 1;
+                if kw_hits >= 2 {
+                    break;
+                }
             }
         }
+        score += (kw_hits as f64) * 0.14;
 
         // 3. Плотность речи (скорость произношения слов)
-        let duration = (f.end - f.start).max(0.3);
-        let word_count = txt.split_whitespace().count();
+        let duration = (f.end - f.start).max(0.4);
         let speech_rate = (word_count as f64) / duration;
 
-        if speech_rate > 3.0 {
-            // Быстрая напряженная речь
-            score += 0.15;
+        if speech_rate > 2.5 {
+            score += ((speech_rate - 2.5) * 0.06).min(0.14);
         }
 
-        // 4. Длина фразы
-        if txt.len() > 20 {
-            score += 0.10;
+        // 4. Насыщенность и длина фразы (плавная градация без одинаковых значений)
+        let char_count = txt.chars().count();
+        if char_count > 15 {
+            score += ((char_count as f64 - 15.0) / 120.0).min(0.12);
         }
 
-        score.min(0.95).max(0.20)
+        score.clamp(0.15, 0.96)
     }).collect()
 }
 

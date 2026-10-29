@@ -1,5 +1,6 @@
 // src-tauri/src/render.rs
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
@@ -26,6 +27,74 @@ pub struct RenderConfig {
 pub struct RenderProgressPayload {
     pub percent: f64,
     pub stage: String,
+}
+
+/// Конвертирует HTML цвет `#RRGGBB` в формат ASS/libass `&H00BBGGRR`
+fn to_ass_color(color: &str) -> String {
+    let trimmed = color.trim();
+    if trimmed.starts_with("&H") || trimmed.starts_with("&h") {
+        return trimmed.to_string();
+    }
+    let hex = trimmed.trim_start_matches('#');
+    if hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        let r = &hex[0..2];
+        let g = &hex[2..4];
+        let b = &hex[4..6];
+        return format!("&H00{}{}{}", b.to_uppercase(), g.to_uppercase(), r.to_uppercase());
+    }
+    "&H00FFFFFF".to_string()
+}
+
+/// Вырезает и сдвигает по времени субтитры для конкретного клипа `[start_sec, start_sec + duration_sec]`.
+/// Поскольку FFmpeg при быстром поиске `-ss <start_sec> -i <video>` сбрасывает таймкоды выходного потока в `0.0 .. duration_sec`,
+/// индивидуальный `.srt` со сдвинутыми таймкодами гарантирует 100% точную синхронизацию речи и титров в каждом клипе!
+async fn create_clip_srt(
+    full_srt_path: &Path,
+    start_sec: f64,
+    duration_sec: f64,
+) -> Option<PathBuf> {
+    let content = tokio::fs::read_to_string(full_srt_path).await.ok()?;
+    let all_fragments = crate::text_analyzer::parse_srt(&content);
+    let end_sec = start_sec + duration_sec;
+
+    let mut clip_cues = String::new();
+    let mut cue_idx = 1usize;
+
+    for frag in all_fragments {
+        if frag.end <= start_sec + 0.05 || frag.start >= end_sec - 0.05 {
+            continue;
+        }
+        if crate::whisper::is_whisper_hallucination(&frag.text) {
+            continue;
+        }
+
+        let rel_start = (frag.start - start_sec).max(0.0);
+        let rel_end = (frag.end - start_sec).min(duration_sec);
+        if rel_end - rel_start < 0.15 {
+            continue;
+        }
+
+        clip_cues.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            cue_idx,
+            crate::whisper::format_srt_timestamp(rel_start),
+            crate::whisper::format_srt_timestamp(rel_end),
+            frag.text.trim()
+        ));
+        cue_idx += 1;
+    }
+
+    if cue_idx == 1 {
+        return None;
+    }
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_srt = std::env::temp_dir().join(format!("vc_clip_sub_{}_{}.srt", std::process::id(), ts));
+    tokio::fs::write(&temp_srt, clip_cues).await.ok()?;
+    Some(temp_srt)
 }
 
 /// Создает один клип из исходного видео с нарезкой, субтитрами и фильтрами.
@@ -79,31 +148,48 @@ pub async fn render_clip(
         vf_filters.push(crop_filter);
     }
 
-    // Наложение субтитров с безопасным экранированием спецсимволов для FFmpeg
-    if let Some(srt) = srt_path {
+    // Формируем индивидуальный синхронизированный SRT-файл для таймкода данного клипа [start_sec .. start_sec + duration_sec]
+    let mut temp_clip_srt: Option<PathBuf> = None;
+    if let Some(ref srt) = srt_path {
         if srt.exists() {
-            let srt_escaped = srt
-                .to_string_lossy()
-                .replace('\\', "/")
-                .replace(':', "\\:")
-                .replace('\'', "\\'")
-                .replace('[', "\\[")
-                .replace(']', "\\]");
-            
-            let mut sub_filter = format!("subtitles='{}'", srt_escaped);
-            
-            if let Some(style) = config.subtitle_style {
-                let font = if style.font_name.is_empty() { "Arial".to_string() } else { style.font_name };
-                let font_size = if style.font_size <= 0 { 24 } else { style.font_size };
-                let color = if style.color.is_empty() { "&H00FFFFFF".to_string() } else { style.color };
-                sub_filter.push_str(&format!(
-                    ":force_style='FontName={},FontSize={},PrimaryColour={}'", 
-                    font, font_size, color
-                ));
-            }
-
-            vf_filters.push(sub_filter);
+            temp_clip_srt = create_clip_srt(srt, start_sec, duration_sec).await;
         }
+    }
+
+    if let Some(ref clip_srt) = temp_clip_srt {
+        let srt_escaped = clip_srt
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(':', "\\:")
+            .replace('\'', "\\'")
+            .replace('[', "\\[")
+            .replace(']', "\\]");
+        
+        let mut sub_filter = format!("subtitles='{}'", srt_escaped);
+        
+        if let Some(style) = config.subtitle_style {
+            // Заменяем веб-шрифт Inter на системный Arial, чтобы libass не тратил время на поиск fallback-шрифтов
+            let font = if style.font_name.is_empty() || style.font_name.eq_ignore_ascii_case("Inter") {
+                "Arial".to_string()
+            } else {
+                style.font_name
+            };
+            let font_size = if style.font_size <= 0 { 18 } else { style.font_size.min(28) };
+            let primary_color = to_ass_color(&style.color);
+            let alignment = match style.placement.as_str() {
+                "top" => 8,
+                "middle" | "center" => 5,
+                _ => 2, // bottom center
+            };
+            sub_filter.push_str(&format!(
+                ":force_style='FontName={},FontSize={},PrimaryColour={},OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment={},MarginV=38'", 
+                font, font_size, primary_color, alignment
+            ));
+        } else {
+            sub_filter.push_str(":force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=2,MarginV=38'");
+        }
+
+        vf_filters.push(sub_filter);
     }
 
     if !vf_filters.is_empty() {
@@ -115,9 +201,9 @@ pub async fn render_clip(
     args.push("-c:v".to_string());
     args.push("libx264".to_string());
     args.push("-preset".to_string());
-    args.push("fast".to_string());
+    args.push("veryfast".to_string());
     args.push("-crf".to_string());
-    args.push("22".to_string());
+    args.push("21".to_string());
     args.push("-pix_fmt".to_string());
     args.push("yuv420p".to_string());
 
@@ -132,24 +218,34 @@ pub async fn render_clip(
         &app_handle,
         "Render",
         "info",
-        &format!("Рендеринг клипа: [{:.2}с - {:.2}с] -> '{}' (вертикально={})", start_sec, start_sec + duration_sec, output_path.display(), config.vertical_format),
+        &format!("Рендеринг клипа: [{:.2}с - {:.2}с] -> '{}' (вертикально={}, субтитры={})", start_sec, start_sec + duration_sec, output_path.display(), config.vertical_format, temp_clip_srt.is_some()),
     );
 
-    let command = shell.sidecar("ffmpeg")
-        .map_err(|e| {
+    let command = match shell.sidecar("ffmpeg") {
+        Ok(cmd) => cmd
+            .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
+            .args(args),
+        Err(e) => {
+            if let Some(ref tmp) = temp_clip_srt {
+                let _ = tokio::fs::remove_file(tmp).await;
+            }
             let err = format!("FFmpeg (render) не обнаружен: {}", e);
             crate::logger::emit_log(&app_handle, "Render", "error", &err);
-            AppError::Pipeline(err)
-        })?
-        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
-        .args(args);
+            return Err(AppError::Pipeline(err));
+        }
+    };
 
-    let (mut rx, child) = command.spawn()
-        .map_err(|e| {
+    let (mut rx, child) = match command.spawn() {
+        Ok(pair) => pair,
+        Err(e) => {
+            if let Some(ref tmp) = temp_clip_srt {
+                let _ = tokio::fs::remove_file(tmp).await;
+            }
             let err = format!("Не удалось запустить FFmpeg при рендере: {}", e);
             crate::logger::emit_log(&app_handle, "Render", "error", &err);
-            AppError::Pipeline(err)
-        })?;
+            return Err(AppError::Pipeline(err));
+        }
+    };
 
     let app_handle_clone = app_handle.clone();
     let out_display = output_path.display().to_string();
@@ -215,13 +311,19 @@ pub async fn render_clip(
     };
 
     // Ожидаем окончания или отмены
-    tokio::select! {
-        res = render_future => res,
+    let res = tokio::select! {
+        r = render_future => r,
         _ = cancel_rx.recv() => {
             let _ = child.kill();
             Err(AppError::Pipeline("Отрисовка отменена пользователем.".to_string()))
         }
+    };
+
+    if let Some(ref tmp) = temp_clip_srt {
+        let _ = tokio::fs::remove_file(tmp).await;
     }
+
+    res
 }
 
 /// Вычисляет коэффициент горизонтального положения лица/персонажа (0.0 .. 1.0) для центрирования 9:16

@@ -51,7 +51,7 @@ pub async fn run_pipeline(
         stage: "Инициализация конвейера...".to_string() 
     });
 
-    // Определяем длительность и метаданные видео через FFmpeg
+    // Определяем длительность и метаданных видео через FFmpeg
     let video_duration = match crate::ffmpeg::probe_video(video_path.clone(), app_handle.clone()).await {
         Ok(meta) if meta.duration > 1.0 => {
             crate::logger::emit_log(
@@ -65,73 +65,30 @@ pub async fn run_pipeline(
         _ => 180.0,
     };
 
-    // Генерируем временный путь для аудио в системной temp_dir
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     let file_stem = video_path.file_stem().and_then(|s| s.to_str()).unwrap_or("extracted");
-    let audio_output = std::env::temp_dir().join(format!("vc_pipe_audio_{}_{}.wav", std::process::id(), ts));
 
-    // 1. Извлечение аудио-дорожки через FFmpeg (быстро и надежно)
+    // 1-2. Получение готовых субтитров из кэша проекта или первичная транскрибация через FFmpeg + Whisper
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
         "info",
-        "[Шаг 1/5] Извлечение аудио-дорожки в формат 16kHz WAV через FFmpeg...",
+        "[Шаг 1-2/5] Подготовка аудио и субтитров (проверка кэша проекта / Whisper ASR)...",
     );
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
-        percent: 10.0, 
-        stage: "Извлечение аудио дорожки (FFmpeg)...".to_string() 
-    });
-
-    crate::ffmpeg::extract_audio(
-        video_path.clone(),
-        audio_output.clone(),
-        app_handle.clone(),
-        cancel_rx.resubscribe()
-    ).await?;
-
-    // 2. Распознавание речи через Whisper
-    crate::logger::emit_log(
-        &app_handle,
-        "Pipeline",
-        "info",
-        "[Шаг 2/5] Распознавание речи и формирование субтитров (Whisper ASR)...",
-    );
-    let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
-        percent: 30.0, 
-        stage: "ASR: распознавание речи и титров (Whisper)...".to_string() 
+        percent: 20.0, 
+        stage: "Подготовка субтитров (Whisper ASR)...".to_string() 
     });
 
     let asr_model = config.asr_model_path.clone().map(PathBuf::from);
-    let srt_path = match crate::whisper::transcribe_audio(
-        audio_output.clone(),
+    let srt_path = crate::whisper::get_or_create_subtitles(
+        video_path.clone(),
         asr_model,
         app_handle.clone(),
-        cancel_rx.resubscribe()
-    ).await {
-        Ok(path) => {
-            crate::logger::emit_log(
-                &app_handle,
-                "Pipeline",
-                "info",
-                &format!("Whisper успешно завершил транскрибацию: '{}'", path.display()),
-            );
-            Some(path)
-        },
-        Err(e) => {
-            crate::logger::emit_log(
-                &app_handle,
-                "Pipeline",
-                "warn",
-                &format!("Whisper ASR завершился с предупреждением: {}. Продолжаем обработку на основе видео-сцен.", e),
-            );
-            None
-        }
-    };
+        cancel_rx.resubscribe(),
+    ).await?;
 
     if mode == "manual" {
-        // Очистка временного аудио
-        let _ = tokio::fs::remove_file(&audio_output).await;
-        crate::logger::emit_log(&app_handle, "Pipeline", "info", "Ручной режим: аудио извлечено, готово к пользовательскому редактированию.");
+        crate::logger::emit_log(&app_handle, "Pipeline", "info", "Ручной режим: субтитры подготовлены и сохранены в папке проекта, готово к редактированию.");
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
             percent: 100.0, 
             stage: "Ручной режим готов к редактированию".to_string() 
@@ -167,7 +124,7 @@ pub async fn run_pipeline(
                     &app_handle,
                     "LLM",
                     "info",
-                    &format!("Найдено {} реплик в субтитрах. Запуск семантического анализа через движок '{}'...", frags.len(), config.text_engine),
+                    &format!("Найдено {} чистых реплик в субтитрах. Запуск семантического анализа через движок '{}'...", frags.len(), config.text_engine),
                 );
                 let text_config = crate::text_analyzer::TextAnalysisConfig {
                     engine: match config.text_engine.as_str() {
@@ -212,7 +169,7 @@ pub async fn run_pipeline(
         (Vec::new(), Vec::new())
     };
 
-    // 4. Опциональный визуальный анализ (адаптивно, если есть модель)
+    // 4. Визуальный и аудио-энергетический анализ ключевых сцен
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 75.0, 
         stage: "Визуальный анализ ключевых сцен...".to_string() 
@@ -226,64 +183,110 @@ pub async fn run_pipeline(
         cancel_rx.resubscribe()
     ).await.unwrap_or_default();
 
-    // 5. Построение списка лучших фрагментов (Хайлайтов)
+    // 5. Умное построение списка лучших фрагментов (Хайлайтов) с защитой от скученности и склеек
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 85.0, 
         stage: "Формирование лучших моментов (хайлайтов)...".to_string() 
     });
 
     let clip_duration = config.max_clip_duration_sec.min(video_duration).max(5.0);
-    let mut candidate_intervals: Vec<(f64, f64, f64)> = Vec::new(); // (start, end, score)
+    let mut candidate_intervals: Vec<(f64, f64, f64)> = Vec::new(); // (start, end, window_score)
 
-    // А. Из реплик и диалогов с высоким text_score
+    // Пропускаем первые секунды интро и финальные титры на длинных видео (> 3 мин)
+    let intro_skip = if video_duration > 180.0 { 4.0 } else { 0.0 };
+    let outro_limit = if video_duration > 300.0 { (video_duration - 25.0).max(clip_duration) } else { video_duration };
+
+    // А. Оцениваем полноценные окна длиной clip_duration вокруг ярких реплик
     for (i, frag) in fragments.iter().enumerate() {
-        let score = text_scores.get(i).copied().unwrap_or(0.4);
-        if score >= config.min_intensity_threshold {
-            let start = (frag.start - 1.5).max(0.0).min((video_duration - 5.0).max(0.0));
-            let end = (start + clip_duration).min(video_duration);
-            if end - start >= 3.0 {
-                candidate_intervals.push((start, end, score));
+        if frag.start < intro_skip || frag.start >= outro_limit {
+            continue;
+        }
+        if crate::whisper::is_whisper_hallucination(&frag.text) {
+            continue;
+        }
+
+        let base_score = text_scores.get(i).copied().unwrap_or(0.4);
+        let win_start = (frag.start - 1.0).max(intro_skip).min((outro_limit - clip_duration).max(0.0));
+        let win_end = (win_start + clip_duration).min(video_duration);
+        if win_end - win_start < 4.0 {
+            continue;
+        }
+
+        // Считаем агрегированную ценность всех реплик внутри окна [win_start, win_end]
+        let mut peak_score = base_score;
+        let mut sum_score = 0.0;
+        let mut cue_count = 0usize;
+        let mut active_speech_sec = 0.0;
+
+        for (j, other) in fragments.iter().enumerate() {
+            if other.end > win_start && other.start < win_end && !crate::whisper::is_whisper_hallucination(&other.text) {
+                let sc = text_scores.get(j).copied().unwrap_or(0.4);
+                if sc > peak_score {
+                    peak_score = sc;
+                }
+                sum_score += sc;
+                cue_count += 1;
+                let ov_start = other.start.max(win_start);
+                let ov_end = other.end.min(win_end);
+                active_speech_sec += (ov_end - ov_start).max(0.0);
             }
+        }
+
+        let avg_score = if cue_count > 0 { sum_score / (cue_count as f64) } else { base_score };
+        let speech_density = (active_speech_sec / clip_duration).clamp(0.0, 1.0);
+
+        // Бонус, если внутри окна есть визуальная смена сцены или звуковой пик
+        let has_scene_peak = scenes.iter().any(|s| s.timestamp_sec >= win_start && s.timestamp_sec <= win_end);
+        let scene_bonus = if has_scene_peak { 0.08 } else { 0.0 };
+
+        let window_score = (peak_score * 0.55 + avg_score * 0.25 + speech_density * 0.20 + scene_bonus).min(0.99);
+
+        if window_score >= config.min_intensity_threshold * 0.92 {
+            candidate_intervals.push((win_start, win_end, window_score));
         }
     }
 
-    // Б. Из сцен визуального анализа
+    // Б. Из сцен визуального/аудио анализа
     for scene in &scenes {
+        if scene.timestamp_sec < intro_skip || scene.timestamp_sec >= outro_limit {
+            continue;
+        }
         if scene.intensity >= config.min_intensity_threshold {
-            let start = (scene.timestamp_sec - 2.0).max(0.0).min((video_duration - 5.0).max(0.0));
+            let start = (scene.timestamp_sec - 2.0).max(intro_skip).min((outro_limit - clip_duration).max(0.0));
             let end = (start + clip_duration).min(video_duration);
-            if end - start >= 3.0 {
+            if end - start >= 4.0 {
                 candidate_intervals.push((start, end, scene.intensity));
             }
         }
     }
 
-    // Если нет ни одного фрагмента выше порога — выбираем топ лучших моментов
+    // Если нет ни одного фрагмента выше порога — выбираем топ лучших моментов по относительной ценности
     if candidate_intervals.is_empty() {
         crate::logger::emit_log(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("Ни один фрагмент не превысил порог {}. Автоматический выбор моментов по относительной ценности...", config.min_intensity_threshold),
+            &format!("Ни один фрагмент не превысил порог {}. Автоматический выбор лучших моментов по относительной ценности...", config.min_intensity_threshold),
         );
         if !fragments.is_empty() {
             let mut frag_with_scores: Vec<(usize, f64)> = fragments
                 .iter()
                 .enumerate()
+                .filter(|(_, f)| !crate::whisper::is_whisper_hallucination(&f.text))
                 .map(|(i, _)| (i, text_scores.get(i).copied().unwrap_or(0.5)))
                 .collect();
             frag_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (idx, sc) in frag_with_scores.into_iter().take(5) {
+            for (idx, sc) in frag_with_scores.into_iter().take(15) {
                 let frag = &fragments[idx];
-                let start = (frag.start - 1.0).max(0.0).min((video_duration - 5.0).max(0.0));
+                let start = (frag.start - 1.0).max(0.0).min((video_duration - clip_duration).max(0.0));
                 let end = (start + clip_duration).min(video_duration);
                 if end - start >= 3.0 {
                     candidate_intervals.push((start, end, sc));
                 }
             }
         } else if !scenes.is_empty() {
-            for scn in scenes.iter().take(5) {
-                let start = (scn.timestamp_sec - 1.0).max(0.0).min((video_duration - 5.0).max(0.0));
+            for scn in scenes.iter().take(10) {
+                let start = (scn.timestamp_sec - 1.0).max(0.0).min((video_duration - clip_duration).max(0.0));
                 let end = (start + clip_duration).min(video_duration);
                 if end - start >= 3.0 {
                     candidate_intervals.push((start, end, scn.intensity));
@@ -302,18 +305,18 @@ pub async fn run_pipeline(
         }
     }
 
-    // Устраняем сильные перекрытия (Non-Maximum Suppression): подавляем только если пересечение > 40%
+    // Устраняем перекрытия и скученность (Non-Maximum Suppression с минимальной дистанцией между клипами):
+    // Для длинных видео гарантируем минимальный отступ min_gap между концом одного клипа и началом другого,
+    // чтобы не нарезать 7 клипов подряд из первых 2 минут серии!
+    let min_gap = (video_duration / 45.0).clamp(4.0, 25.0);
     candidate_intervals.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
     let mut selected_intervals: Vec<(f64, f64, f64)> = Vec::new();
     for candidate in candidate_intervals {
-        let overlaps = selected_intervals.iter().any(|sel| {
-            let overlap_start = candidate.0.max(sel.0);
-            let overlap_end = candidate.1.min(sel.1);
-            let overlap_len = (overlap_end - overlap_start).max(0.0);
-            let min_len = (candidate.1 - candidate.0).min(sel.1 - sel.0);
-            min_len > 0.0 && (overlap_len / min_len) > 0.4
+        let too_close_or_overlaps = selected_intervals.iter().any(|sel| {
+            candidate.0 < (sel.1 + min_gap) && candidate.1 > (sel.0 - min_gap)
         });
-        if !overlaps {
+        if !too_close_or_overlaps {
             selected_intervals.push(candidate);
         }
         if selected_intervals.len() >= 10 {
@@ -321,7 +324,7 @@ pub async fn run_pipeline(
         }
     }
 
-    // Сортируем по времени начала
+    // Сортируем по времени начала в хронологическом порядке
     selected_intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
     let suggested_fragments: Vec<crate::commands::FragmentDto> = selected_intervals
@@ -333,14 +336,14 @@ pub async fn run_pipeline(
         &app_handle,
         "Pipeline",
         "info",
-        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} лучших моментов для таймлайна", suggested_fragments.len()),
+        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} равномерно распределенных моментов для таймлайна", suggested_fragments.len()),
     );
-    for (i, frag) in suggested_fragments.iter().enumerate() {
+    for (i, (start, end, score)) in selected_intervals.iter().enumerate() {
         crate::logger::emit_log(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("  → Клип #{}: [{:.1}с - {:.1}с] (длительность {:.1}с)", i + 1, frag.start, frag.end, frag.end - frag.start),
+            &format!("  → Клип #{}: [{:.1}с - {:.1}с] (длительность {:.1}с, рейтинг {:.2})", i + 1, start, end, end - start, score),
         );
     }
 
@@ -350,12 +353,11 @@ pub async fn run_pipeline(
     });
 
     if mode == "confirm" {
-        let _ = tokio::fs::remove_file(&audio_output).await;
         crate::logger::emit_log(
             &app_handle,
             "Pipeline",
             "info",
-            "Режим подтверждения: фрагменты отправлены на таймлайн для подтверждения и экспорта пользователем.",
+            "Режим подтверждения: фрагменты отправлены на таймлайн, субтитры сохранены в кэше проекта (повторный запуск Whisper при экспорте не потребуется).",
         );
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
             percent: 100.0, 
@@ -387,16 +389,6 @@ pub async fn run_pipeline(
     let project_dir = video_parent.join(format!("{}_Проект", file_stem));
     let clips_dir = project_dir.join("Готовые клипы");
     let _ = tokio::fs::create_dir_all(&clips_dir).await;
-
-    // Копируем файл субтитров в папку проекта, если они были созданы
-    if let Some(ref srt) = srt_path {
-        if srt.exists() {
-            let subs_dir = project_dir.join("Субтитры");
-            let _ = tokio::fs::create_dir_all(&subs_dir).await;
-            let dest_srt = subs_dir.join(format!("{}_Субтитры.srt", file_stem));
-            let _ = tokio::fs::copy(srt, &dest_srt).await;
-        }
-    }
 
     crate::logger::emit_log(
         &app_handle,
@@ -451,11 +443,6 @@ pub async fn run_pipeline(
         generated_clips.push(clip_path);
     }
 
-    // Гарантированная очистка всех временных файлов
-    let _ = tokio::fs::remove_file(&audio_output).await;
-    if let Some(ref srt) = srt_path {
-        let _ = tokio::fs::remove_file(srt).await;
-    }
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
@@ -469,4 +456,3 @@ pub async fn run_pipeline(
 
     Ok((generated_clips, suggested_fragments))
 }
-
