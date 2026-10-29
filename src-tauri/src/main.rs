@@ -44,7 +44,9 @@ async fn main() -> anyhow::Result<()> {
             commands::cancel_pipeline,
             commands::open_folder,
             models::get_models_status,
-            models::download_model
+            models::download_model,
+            models::delete_model,
+            models::cancel_model_download
         ])
         .setup(|app| {
             let augmented_path = logger::build_sidecar_env_path(app.handle());

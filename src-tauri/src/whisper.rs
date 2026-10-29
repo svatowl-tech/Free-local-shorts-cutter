@@ -296,14 +296,9 @@ pub async fn transcribe_audio(
             AppError::Pipeline(err_msg)
         })?;
 
-    // Ищем модель в папке ресурсов или рядом с бинарником с помощью умного резолвера
-    let model = match model_path {
-        Some(p) => crate::models::resolve_model_path(&app_handle, &p.to_string_lossy()),
-        None => None,
-    }
-    .or_else(|| crate::models::resolve_model_path(&app_handle, "ggml-base.bin"))
-    .or_else(|| crate::models::resolve_model_path(&app_handle, "ggml-tiny.bin"))
-    .or_else(|| crate::models::resolve_model_path(&app_handle, "models/ggml-base.bin"));
+    // Ищем выбранную модель Whisper или любую установленную в папке models
+    let preferred_path = model_path.as_ref().map(|p| p.to_string_lossy().to_string());
+    let model = crate::models::resolve_any_whisper_model(&app_handle, preferred_path.as_deref());
     
     let model = match model {
         Some(m) if m.exists() => {
@@ -311,12 +306,12 @@ pub async fn transcribe_audio(
                 &app_handle,
                 "Whisper",
                 "info",
-                &format!("Найдена модель распознавания речи: '{}'", m.display()),
+                &format!("Используется модель распознавания речи: '{}'", m.display()),
             );
             m
         },
         _ => {
-            let err_msg = "Предустановленная модель Whisper (ggml-base.bin / ggml-tiny.bin) не найдена в папке models. Загрузите модель во вкладке Моделей.".to_string();
+            let err_msg = "Модель распознавания речи Whisper не найдена в папке models. Пожалуйста, скачайте любую модель Whisper в Менеджере ИИ-Моделей.".to_string();
             crate::logger::emit_log(&app_handle, "Whisper", "error", &err_msg);
             return Err(AppError::Pipeline(err_msg));
         }

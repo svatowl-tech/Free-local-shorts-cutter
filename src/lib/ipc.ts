@@ -168,6 +168,8 @@ export interface ModelInfo {
   url: string;
   size_mb: number;
   description: string;
+  category: 'whisper' | 'llm' | 'vision' | string;
+  params: string;
   exists: boolean;
   local_path: string;
 }
@@ -177,7 +179,7 @@ export interface ModelDownloadProgressPayload {
   percent: number;
   downloaded_bytes: number;
   total_bytes: number;
-  status: 'downloading' | 'completed' | 'failed';
+  status: 'downloading' | 'completed' | 'failed' | 'cancelled';
 }
 
 export async function getModelsStatus(): Promise<ModelInfo[]> {
@@ -193,6 +195,22 @@ export async function downloadModel(modelId: string): Promise<string> {
     return await invoke<string>('download_model', { modelId });
   } catch (err) {
     throw new Error(`Ошибка запуска скачивания: ${err}`);
+  }
+}
+
+export async function deleteModel(modelId: string): Promise<string> {
+  try {
+    return await invoke<string>('delete_model', { modelId });
+  } catch (err) {
+    throw new Error(`Ошибка удаления модели: ${err}`);
+  }
+}
+
+export async function cancelModelDownload(modelId: string): Promise<string> {
+  try {
+    return await invoke<string>('cancel_model_download', { modelId });
+  } catch (err) {
+    throw new Error(`Ошибка отмены загрузки: ${err}`);
   }
 }
 

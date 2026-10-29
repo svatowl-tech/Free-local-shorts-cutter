@@ -155,9 +155,9 @@ pub async fn analyze_text_with_llm(
             app_handle,
             "LLM",
             "info",
-            &format!("Поиск весов модели для llama-cli: '{}'...", config.model_name),
+            &format!("Поиск локальной GGUF-модели для llama-cli (предпочтительная: '{}')...", config.model_name),
         );
-        if let Some(model_path) = crate::models::resolve_model_path(app_handle, &config.model_name) {
+        if let Some(model_path) = crate::models::resolve_any_llm_model(app_handle, Some(&config.model_name)) {
             crate::logger::emit_log(
                 app_handle,
                 "LLM",

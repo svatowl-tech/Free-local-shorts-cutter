@@ -60,7 +60,7 @@ const DEFAULT_CONFIG: PipelineConfig = {
   vertical_format: true,
   asr_model_path: 'models/ggml-base.bin',
   vision_model_path: 'models/qwen-vl-2b.gguf',
-  text_engine: 'builtin',
+  text_engine: 'llama',
   text_model_name: 'qwen-1.5b-chat.gguf',
   ollama_url: 'http://localhost:11434',
   output_dir: 'output_cuts/',

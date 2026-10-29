@@ -1,12 +1,18 @@
 <!-- src/lib/components/SettingsPanel.svelte -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { pipelineStore } from '../stores/pipeline';
   import { fragmentsStore } from '../stores/fragments';
+  import { modelsStore } from '../stores/models';
   import { ChevronDown, ChevronUp } from '@lucide/svelte';
 
   export let onOpenModelManager: () => void = () => {};
 
   let showAdvanced = false;
+
+  onMount(() => {
+    modelsStore.init();
+  });
 
   function handleIntensityChange(e: Event) {
     const value = parseFloat((e.target as HTMLInputElement).value);
@@ -24,7 +30,7 @@
   }
 
   function handleAsrModelChange(e: Event) {
-    const value = (e.target as HTMLInputElement).value;
+    const value = (e.target as HTMLSelectElement | HTMLInputElement).value;
     pipelineStore.updateConfig({ asr_model_path: value });
   }
 
@@ -44,7 +50,7 @@
   }
 
   function handleTextModelChange(e: Event) {
-    const value = (e.target as HTMLInputElement).value;
+    const value = (e.target as HTMLSelectElement | HTMLInputElement).value;
     pipelineStore.updateConfig({ text_model_name: value });
   }
 
@@ -70,6 +76,9 @@
   function startProcess() {
     pipelineStore.startPipelineProcess();
   }
+
+  $: whisperModels = $modelsStore.models.filter(m => m.category === 'whisper');
+  $: llmModels = $modelsStore.models.filter(m => m.category === 'llm');
 </script>
 
 <div class="panel p-6 sm:p-8 flex flex-col justify-between h-full">
@@ -204,40 +213,32 @@
       {#if showAdvanced}
         <div class="mt-3.5 p-4 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] flex flex-col gap-3">
           <div class="flex items-center justify-between">
-            <span class="label-mono text-[#5865f2]">Менеджер весов</span>
+            <span class="label-mono text-[#5865f2]">Менеджер весов (≤3B)</span>
             <button 
               type="button"
               on:click={onOpenModelManager}
-              class="label-mono text-[#5865f2] hover:underline cursor-pointer"
+              class="label-mono text-[#5865f2] hover:underline cursor-pointer font-bold"
             >
-              [ОТКРЫТЬ МЕНЕДЖЕР МОДЕЛЕЙ]
+              [СКАЧАТЬ / УДАЛИТЬ МОДЕЛИ]
             </button>
           </div>
 
           <!-- ASR model -->
           <div class="flex flex-col gap-1">
-            <label for="asr_model" class="label-mono">Путь к модели Whisper</label>
-            <input 
+            <label for="asr_model" class="label-mono">Модель распознавания речи (Whisper)</label>
+            <select
               id="asr_model"
-              type="text" 
               value={$pipelineStore.config.asr_model_path}
-              on:input={handleAsrModelChange}
+              on:change={handleAsrModelChange}
               disabled={$pipelineStore.status === 'running'}
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
-            />
-          </div>
-
-          <!-- Vision model -->
-          <div class="flex flex-col gap-1">
-            <label for="vision_model" class="label-mono">Путь к модели Qwen-VL (llama)</label>
-            <input 
-              id="vision_model"
-              type="text" 
-              value={$pipelineStore.config.vision_model_path}
-              on:input={handleVisionModelChange}
-              disabled={$pipelineStore.status === 'running'}
-              class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
-            />
+            >
+              {#each whisperModels as wm}
+                <option value={`models/${wm.filename}`}>
+                  {wm.exists ? '✓ ' : ''}{wm.name} ({wm.size_mb} МБ){wm.exists ? ' [Скачана]' : ' [Не скачана]'}
+                </option>
+              {/each}
+            </select>
           </div>
 
           <!-- NLP Text Engine -->
@@ -250,20 +251,38 @@
               disabled={$pipelineStore.status === 'running'}
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
             >
-              <option value="builtin">Встроенный автономный ИИ (Рекомендуется — без сторонних программ)</option>
-              <option value="llama">Локальный llama-cli (GGUF веса в /models)</option>
+              <option value="llama">Локальная ИИ-модель GGUF (llama-cli + авто-резерв NLP)</option>
+              <option value="builtin">Быстрый эвристический NLP-алгоритм (без LLM)</option>
               <option value="ollama">Внешний Ollama сервер (Опционально)</option>
             </select>
           </div>
 
           <!-- NLP Model -->
           <div class="flex flex-col gap-1">
-            <label for="text_model" class="label-mono">Имя модели текста</label>
-            <input 
+            <label for="text_model" class="label-mono">Модель анализа диалогов (LLM до 3B)</label>
+            <select
               id="text_model"
-              type="text" 
               value={$pipelineStore.config.text_model_name}
-              on:input={handleTextModelChange}
+              on:change={handleTextModelChange}
+              disabled={$pipelineStore.status === 'running'}
+              class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+            >
+              {#each llmModels as lm}
+                <option value={lm.filename}>
+                  {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Скачана]' : '[Не скачана]'}
+                </option>
+              {/each}
+            </select>
+          </div>
+
+          <!-- Vision model -->
+          <div class="flex flex-col gap-1">
+            <label for="vision_model" class="label-mono">Модель анализа кадров (Vision AI)</label>
+            <input 
+              id="vision_model"
+              type="text" 
+              value={$pipelineStore.config.vision_model_path}
+              on:input={handleVisionModelChange}
               disabled={$pipelineStore.status === 'running'}
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
             />
