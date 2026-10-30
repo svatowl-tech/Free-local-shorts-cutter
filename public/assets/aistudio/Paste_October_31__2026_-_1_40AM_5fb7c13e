@@ -1,0 +1,1501 @@
+[22:37:15.466] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:37:15.466] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:37:15.466] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:37:15.466] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:37:15.466] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:37:15.466] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:37:15.466] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:37:15.466] [LLM] llm_load_print_meta: model type       = ?B
+[22:37:15.466] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:37:15.466] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:37:15.466] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:37:15.466] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:37:15.466] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:37:15.466] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:37:15.466] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:37:15.466] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:37:15.466] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:37:15.466] [LLM] llm_load_print_meta: max token length = 256
+[22:37:15.488] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:37:15.488] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:37:15.488] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:37:15.488] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:37:15.579] [LLM] llm_load_tensors: ggml ctx size =    0.32 MiB
+[22:37:15.665] [LLM] llm_load_tensors: offloading 28 repeating layers to GPU
+[22:37:15.665] [LLM] llm_load_tensors: offloading non-repeating layers to GPU
+[22:37:15.665] [LLM] llm_load_tensors: offloaded 29/29 layers to GPU
+[22:37:15.665] [LLM] llm_load_tensors:        CPU buffer size =   125.19 MiB
+[22:37:15.665] [LLM] llm_load_tensors:      CUDA0 buffer size =   934.70 MiB
+[22:37:16.028] [LLM] .........................................................................
+[22:37:16.036] [LLM] llama_new_context_with_model: n_ctx      = 2048
+[22:37:16.036] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:37:16.036] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:37:16.036] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:37:16.036] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:37:16.036] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:37:16.039] [LLM] llama_kv_cache_init:      CUDA0 KV buffer size =    56.00 MiB
+[22:37:16.039] [LLM] llama_new_context_with_model: KV self size  =   56.00 MiB, K (f16):   28.00 MiB, V (f16):   28.00 MiB
+[22:37:16.039] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:37:16.043] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   299.75 MiB
+[22:37:16.043] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =     7.01 MiB
+[22:37:16.043] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:37:16.043] [LLM] llama_new_context_with_model: graph splits = 2
+[22:37:16.124] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:37:16.129] [LLM] sampling:
+[22:37:16.129] [LLM] repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+[22:37:16.129] [LLM] top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.100
+[22:37:16.129] [LLM] mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+[22:37:16.129] [LLM] sampling order:
+[22:37:16.129] [LLM] CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temperature
+[22:37:16.129] [LLM] generate: n_ctx = 2048, n_batch = 2048, n_predict = 384, n_keep = 0
+[22:37:22.495] [LLM] llama_print_timings:        load time =     658.20 ms
+[22:37:22.495] [LLM] llama_print_timings:      sample time =      49.39 ms /   384 runs   (    0.13 ms per token,  7774.54 tokens per second)
+[22:37:22.495] [LLM] llama_print_timings: prompt eval time =     134.20 ms /   658 tokens (    0.20 ms per token,  4903.13 tokens per second)
+[22:37:22.495] [LLM] llama_print_timings:        eval time =    5771.47 ms /   383 runs   (   15.07 ms per token,    66.36 tokens per second)
+[22:37:22.495] [LLM] llama_print_timings:       total time =    6370.39 ms /  1041 tokens
+[22:37:22.746] [LLM] Log end
+[22:37:22.812] [LLM] GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+[22:37:22.850] [LLM] llama-cli завершился успешно (код Some(0))
+[22:37:22.851] [LLM] Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.
+[22:37:22.851] [LLM] Пакет 15/19: анализ 35 реплик через llama-cli (GPU offload=true)...
+[22:37:22.940] [LLM] Log start
+[22:37:22.940] [LLM] main: build = 3201 (adf480c3)
+[22:37:22.940] [LLM] main: built with MSVC 19.29.30154.0 for x64
+[22:37:22.940] [LLM] main: seed  = 1793399842
+[22:37:22.972] [LLM] llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from C:\Users\svato\AppData\Local\Video Cutter Pro\models\qwen-1.5b-chat.gguf (version GGUF V3 (latest))
+[22:37:22.973] [LLM] llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+[22:37:22.973] [LLM] llama_model_loader: - kv   0:                       general.architecture str              = qwen2
+[22:37:22.973] [LLM] llama_model_loader: - kv   1:                               general.type str              = model
+[22:37:22.973] [LLM] llama_model_loader: - kv   2:                               general.name str              = qwen2.5-1.5b-instruct
+[22:37:22.973] [LLM] llama_model_loader: - kv   3:                            general.version str              = v0.1
+[22:37:22.973] [LLM] llama_model_loader: - kv   4:                           general.finetune str              = qwen2.5-1.5b-instruct
+[22:37:22.973] [LLM] llama_model_loader: - kv   5:                         general.size_label str              = 1.8B
+[22:37:22.973] [LLM] llama_model_loader: - kv   6:                          qwen2.block_count u32              = 28
+[22:37:22.973] [LLM] llama_model_loader: - kv   7:                       qwen2.context_length u32              = 32768
+[22:37:22.973] [LLM] llama_model_loader: - kv   8:                     qwen2.embedding_length u32              = 1536
+[22:37:22.973] [LLM] llama_model_loader: - kv   9:                  qwen2.feed_forward_length u32              = 8960
+[22:37:22.973] [LLM] llama_model_loader: - kv  10:                 qwen2.attention.head_count u32              = 12
+[22:37:22.973] [LLM] llama_model_loader: - kv  11:              qwen2.attention.head_count_kv u32              = 2
+[22:37:22.973] [LLM] llama_model_loader: - kv  12:                       qwen2.rope.freq_base f32              = 1000000.000000
+[22:37:22.973] [LLM] llama_model_loader: - kv  13:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+[22:37:22.973] [LLM] llama_model_loader: - kv  14:                          general.file_type u32              = 15
+[22:37:22.973] [LLM] llama_model_loader: - kv  15:                       tokenizer.ggml.model str              = gpt2
+[22:37:22.973] [LLM] llama_model_loader: - kv  16:                         tokenizer.ggml.pre str              = qwen2
+[22:37:23.014] [LLM] llama_model_loader: - kv  17:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+[22:37:23.031] [LLM] llama_model_loader: - kv  18:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+[22:37:23.078] [LLM] llama_model_loader: - kv  19:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+[22:37:23.078] [LLM] llama_model_loader: - kv  20:                tokenizer.ggml.eos_token_id u32              = 151645
+[22:37:23.078] [LLM] llama_model_loader: - kv  21:            tokenizer.ggml.padding_token_id u32              = 151643
+[22:37:23.078] [LLM] llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 151643
+[22:37:23.078] [LLM] llama_model_loader: - kv  23:               tokenizer.ggml.add_bos_token bool             = false
+[22:37:23.078] [LLM] llama_model_loader: - kv  24:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+[22:37:23.078] [LLM] llama_model_loader: - kv  25:               general.quantization_version u32              = 2
+[22:37:23.078] [LLM] llama_model_loader: - type  f32:  141 tensors
+[22:37:23.078] [LLM] llama_model_loader: - type q4_K:  169 tensors
+[22:37:23.078] [LLM] llama_model_loader: - type q6_K:   29 tensors
+[22:37:23.277] [LLM] llm_load_vocab: special tokens cache size = 293
+[22:37:23.344] [LLM] llm_load_vocab: token to piece cache size = 0.9310 MB
+[22:37:23.344] [LLM] llm_load_print_meta: format           = GGUF V3 (latest)
+[22:37:23.344] [LLM] llm_load_print_meta: arch             = qwen2
+[22:37:23.344] [LLM] llm_load_print_meta: vocab type       = BPE
+[22:37:23.344] [LLM] llm_load_print_meta: n_vocab          = 151936
+[22:37:23.344] [LLM] llm_load_print_meta: n_merges         = 151387
+[22:37:23.344] [LLM] llm_load_print_meta: n_ctx_train      = 32768
+[22:37:23.344] [LLM] llm_load_print_meta: n_embd           = 1536
+[22:37:23.344] [LLM] llm_load_print_meta: n_head           = 12
+[22:37:23.345] [LLM] llm_load_print_meta: n_head_kv        = 2
+[22:37:23.345] [LLM] llm_load_print_meta: n_layer          = 28
+[22:37:23.345] [LLM] llm_load_print_meta: n_rot            = 128
+[22:37:23.345] [LLM] llm_load_print_meta: n_embd_head_k    = 128
+[22:37:23.345] [LLM] llm_load_print_meta: n_embd_head_v    = 128
+[22:37:23.345] [LLM] llm_load_print_meta: n_gqa            = 6
+[22:37:23.345] [LLM] llm_load_print_meta: n_embd_k_gqa     = 256
+[22:37:23.345] [LLM] llm_load_print_meta: n_embd_v_gqa     = 256
+[22:37:23.345] [LLM] llm_load_print_meta: f_norm_eps       = 0.0e+00
+[22:37:23.345] [LLM] llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+[22:37:23.345] [LLM] llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+[22:37:23.345] [LLM] llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+[22:37:23.345] [LLM] llm_load_print_meta: f_logit_scale    = 0.0e+00
+[22:37:23.345] [LLM] llm_load_print_meta: n_ff             = 8960
+[22:37:23.345] [LLM] llm_load_print_meta: n_expert         = 0
+[22:37:23.345] [LLM] llm_load_print_meta: n_expert_used    = 0
+[22:37:23.345] [LLM] llm_load_print_meta: causal attn      = 1
+[22:37:23.345] [LLM] llm_load_print_meta: pooling type     = 0
+[22:37:23.345] [LLM] llm_load_print_meta: rope type        = 2
+[22:37:23.345] [LLM] llm_load_print_meta: rope scaling     = linear
+[22:37:23.345] [LLM] llm_load_print_meta: freq_base_train  = 1000000.0
+[22:37:23.345] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:37:23.345] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:37:23.345] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:37:23.345] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:37:23.345] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:37:23.345] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:37:23.345] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:37:23.345] [LLM] llm_load_print_meta: model type       = ?B
+[22:37:23.345] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:37:23.345] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:37:23.345] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:37:23.345] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:37:23.345] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:37:23.345] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:37:23.345] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:37:23.345] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:37:23.345] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:37:23.345] [LLM] llm_load_print_meta: max token length = 256
+[22:37:23.366] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:37:23.366] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:37:23.366] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:37:23.367] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:37:23.485] [LLM] llm_load_tensors: ggml ctx size =    0.32 MiB
+[22:37:23.579] [LLM] llm_load_tensors: offloading 28 repeating layers to GPU
+[22:37:23.579] [LLM] llm_load_tensors: offloading non-repeating layers to GPU
+[22:37:23.580] [LLM] llm_load_tensors: offloaded 29/29 layers to GPU
+[22:37:23.580] [LLM] llm_load_tensors:        CPU buffer size =   125.19 MiB
+[22:37:23.580] [LLM] llm_load_tensors:      CUDA0 buffer size =   934.70 MiB
+[22:37:23.988] [LLM] .........................................................................
+[22:37:23.997] [LLM] llama_new_context_with_model: n_ctx      = 2048
+[22:37:23.997] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:37:23.997] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:37:23.997] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:37:23.997] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:37:23.997] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:37:24.000] [LLM] llama_kv_cache_init:      CUDA0 KV buffer size =    56.00 MiB
+[22:37:24.000] [LLM] llama_new_context_with_model: KV self size  =   56.00 MiB, K (f16):   28.00 MiB, V (f16):   28.00 MiB
+[22:37:24.000] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:37:24.005] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   299.75 MiB
+[22:37:24.005] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =     7.01 MiB
+[22:37:24.005] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:37:24.005] [LLM] llama_new_context_with_model: graph splits = 2
+[22:37:24.088] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:37:24.092] [LLM] sampling:
+[22:37:24.092] [LLM] repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+[22:37:24.092] [LLM] top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.100
+[22:37:24.092] [LLM] mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+[22:37:24.092] [LLM] sampling order:
+[22:37:24.092] [LLM] CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temperature
+[22:37:24.092] [LLM] generate: n_ctx = 2048, n_batch = 2048, n_predict = 384, n_keep = 0
+[22:37:30.603] [LLM] llama_print_timings:        load time =     742.95 ms
+[22:37:30.603] [LLM] llama_print_timings:      sample time =      54.21 ms /   384 runs   (    0.14 ms per token,  7083.17 tokens per second)
+[22:37:30.603] [LLM] llama_print_timings: prompt eval time =     124.81 ms /   630 tokens (    0.20 ms per token,  5047.79 tokens per second)
+[22:37:30.603] [LLM] llama_print_timings:        eval time =    5909.10 ms /   383 runs   (   15.43 ms per token,    64.82 tokens per second)
+[22:37:30.603] [LLM] llama_print_timings:       total time =    6515.25 ms /  1013 tokens
+[22:37:30.828] [LLM] Log end
+[22:37:30.904] [LLM] GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+[22:37:30.942] [LLM] llama-cli завершился успешно (код Some(0))
+[22:37:30.943] [LLM] Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.
+[22:37:30.943] [LLM] Пакет 16/19: анализ 35 реплик через llama-cli (GPU offload=true)...
+[22:37:31.032] [LLM] Log start
+[22:37:31.032] [LLM] main: build = 3201 (adf480c3)
+[22:37:31.032] [LLM] main: built with MSVC 19.29.30154.0 for x64
+[22:37:31.032] [LLM] main: seed  = 1793399851
+[22:37:31.067] [LLM] llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from C:\Users\svato\AppData\Local\Video Cutter Pro\models\qwen-1.5b-chat.gguf (version GGUF V3 (latest))
+[22:37:31.067] [LLM] llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+[22:37:31.067] [LLM] llama_model_loader: - kv   0:                       general.architecture str              = qwen2
+[22:37:31.067] [LLM] llama_model_loader: - kv   1:                               general.type str              = model
+[22:37:31.067] [LLM] llama_model_loader: - kv   2:                               general.name str              = qwen2.5-1.5b-instruct
+[22:37:31.067] [LLM] llama_model_loader: - kv   3:                            general.version str              = v0.1
+[22:37:31.067] [LLM] llama_model_loader: - kv   4:                           general.finetune str              = qwen2.5-1.5b-instruct
+[22:37:31.067] [LLM] llama_model_loader: - kv   5:                         general.size_label str              = 1.8B
+[22:37:31.067] [LLM] llama_model_loader: - kv   6:                          qwen2.block_count u32              = 28
+[22:37:31.067] [LLM] llama_model_loader: - kv   7:                       qwen2.context_length u32              = 32768
+[22:37:31.067] [LLM] llama_model_loader: - kv   8:                     qwen2.embedding_length u32              = 1536
+[22:37:31.067] [LLM] llama_model_loader: - kv   9:                  qwen2.feed_forward_length u32              = 8960
+[22:37:31.067] [LLM] llama_model_loader: - kv  10:                 qwen2.attention.head_count u32              = 12
+[22:37:31.067] [LLM] llama_model_loader: - kv  11:              qwen2.attention.head_count_kv u32              = 2
+[22:37:31.067] [LLM] llama_model_loader: - kv  12:                       qwen2.rope.freq_base f32              = 1000000.000000
+[22:37:31.067] [LLM] llama_model_loader: - kv  13:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+[22:37:31.067] [LLM] llama_model_loader: - kv  14:                          general.file_type u32              = 15
+[22:37:31.067] [LLM] llama_model_loader: - kv  15:                       tokenizer.ggml.model str              = gpt2
+[22:37:31.067] [LLM] llama_model_loader: - kv  16:                         tokenizer.ggml.pre str              = qwen2
+[22:37:31.112] [LLM] llama_model_loader: - kv  17:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+[22:37:31.128] [LLM] llama_model_loader: - kv  18:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+[22:37:31.173] [LLM] llama_model_loader: - kv  19:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+[22:37:31.173] [LLM] llama_model_loader: - kv  20:                tokenizer.ggml.eos_token_id u32              = 151645
+[22:37:31.173] [LLM] llama_model_loader: - kv  21:            tokenizer.ggml.padding_token_id u32              = 151643
+[22:37:31.173] [LLM] llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 151643
+[22:37:31.173] [LLM] llama_model_loader: - kv  23:               tokenizer.ggml.add_bos_token bool             = false
+[22:37:31.173] [LLM] llama_model_loader: - kv  24:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+[22:37:31.173] [LLM] llama_model_loader: - kv  25:               general.quantization_version u32              = 2
+[22:37:31.174] [LLM] llama_model_loader: - type  f32:  141 tensors
+[22:37:31.174] [LLM] llama_model_loader: - type q4_K:  169 tensors
+[22:37:31.174] [LLM] llama_model_loader: - type q6_K:   29 tensors
+[22:37:31.375] [LLM] llm_load_vocab: special tokens cache size = 293
+[22:37:31.442] [LLM] llm_load_vocab: token to piece cache size = 0.9310 MB
+[22:37:31.442] [LLM] llm_load_print_meta: format           = GGUF V3 (latest)
+[22:37:31.442] [LLM] llm_load_print_meta: arch             = qwen2
+[22:37:31.442] [LLM] llm_load_print_meta: vocab type       = BPE
+[22:37:31.442] [LLM] llm_load_print_meta: n_vocab          = 151936
+[22:37:31.442] [LLM] llm_load_print_meta: n_merges         = 151387
+[22:37:31.442] [LLM] llm_load_print_meta: n_ctx_train      = 32768
+[22:37:31.442] [LLM] llm_load_print_meta: n_embd           = 1536
+[22:37:31.442] [LLM] llm_load_print_meta: n_head           = 12
+[22:37:31.442] [LLM] llm_load_print_meta: n_head_kv        = 2
+[22:37:31.442] [LLM] llm_load_print_meta: n_layer          = 28
+[22:37:31.442] [LLM] llm_load_print_meta: n_rot            = 128
+[22:37:31.442] [LLM] llm_load_print_meta: n_embd_head_k    = 128
+[22:37:31.442] [LLM] llm_load_print_meta: n_embd_head_v    = 128
+[22:37:31.442] [LLM] llm_load_print_meta: n_gqa            = 6
+[22:37:31.442] [LLM] llm_load_print_meta: n_embd_k_gqa     = 256
+[22:37:31.442] [LLM] llm_load_print_meta: n_embd_v_gqa     = 256
+[22:37:31.442] [LLM] llm_load_print_meta: f_norm_eps       = 0.0e+00
+[22:37:31.442] [LLM] llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+[22:37:31.442] [LLM] llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+[22:37:31.442] [LLM] llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+[22:37:31.442] [LLM] llm_load_print_meta: f_logit_scale    = 0.0e+00
+[22:37:31.442] [LLM] llm_load_print_meta: n_ff             = 8960
+[22:37:31.442] [LLM] llm_load_print_meta: n_expert         = 0
+[22:37:31.442] [LLM] llm_load_print_meta: n_expert_used    = 0
+[22:37:31.442] [LLM] llm_load_print_meta: causal attn      = 1
+[22:37:31.442] [LLM] llm_load_print_meta: pooling type     = 0
+[22:37:31.442] [LLM] llm_load_print_meta: rope type        = 2
+[22:37:31.443] [LLM] llm_load_print_meta: rope scaling     = linear
+[22:37:31.443] [LLM] llm_load_print_meta: freq_base_train  = 1000000.0
+[22:37:31.443] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:37:31.443] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:37:31.443] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:37:31.443] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:37:31.443] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:37:31.443] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:37:31.443] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:37:31.443] [LLM] llm_load_print_meta: model type       = ?B
+[22:37:31.443] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:37:31.443] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:37:31.443] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:37:31.443] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:37:31.443] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:37:31.443] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:37:31.443] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:37:31.443] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:37:31.443] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:37:31.443] [LLM] llm_load_print_meta: max token length = 256
+[22:37:31.465] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:37:31.465] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:37:31.465] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:37:31.465] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:37:31.549] [LLM] llm_load_tensors: ggml ctx size =    0.32 MiB
+[22:37:31.633] [LLM] llm_load_tensors: offloading 28 repeating layers to GPU
+[22:37:31.633] [LLM] llm_load_tensors: offloading non-repeating layers to GPU
+[22:37:31.634] [LLM] llm_load_tensors: offloaded 29/29 layers to GPU
+[22:37:31.634] [LLM] llm_load_tensors:        CPU buffer size =   125.19 MiB
+[22:37:31.634] [LLM] llm_load_tensors:      CUDA0 buffer size =   934.70 MiB
+[22:37:32.016] [LLM] .........................................................................
+[22:37:32.023] [LLM] llama_new_context_with_model: n_ctx      = 2048
+[22:37:32.023] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:37:32.023] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:37:32.023] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:37:32.023] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:37:32.023] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:37:32.027] [LLM] llama_kv_cache_init:      CUDA0 KV buffer size =    56.00 MiB
+[22:37:32.027] [LLM] llama_new_context_with_model: KV self size  =   56.00 MiB, K (f16):   28.00 MiB, V (f16):   28.00 MiB
+[22:37:32.028] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:37:32.032] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   299.75 MiB
+[22:37:32.032] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =     7.01 MiB
+[22:37:32.032] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:37:32.032] [LLM] llama_new_context_with_model: graph splits = 2
+[22:37:32.109] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:37:32.113] [LLM] sampling:
+[22:37:32.113] [LLM] repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+[22:37:32.113] [LLM] top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.100
+[22:37:32.113] [LLM] mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+[22:37:32.113] [LLM] sampling order:
+[22:37:32.113] [LLM] CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temperature
+[22:37:32.113] [LLM] generate: n_ctx = 2048, n_batch = 2048, n_predict = 384, n_keep = 0
+[22:37:38.504] [LLM] llama_print_timings:        load time =     666.59 ms
+[22:37:38.504] [LLM] llama_print_timings:      sample time =      51.95 ms /   384 runs   (    0.14 ms per token,  7391.87 tokens per second)
+[22:37:38.504] [LLM] llama_print_timings: prompt eval time =     130.84 ms /   651 tokens (    0.20 ms per token,  4975.54 tokens per second)
+[22:37:38.504] [LLM] llama_print_timings:        eval time =    5792.50 ms /   383 runs   (   15.12 ms per token,    66.12 tokens per second)
+[22:37:38.504] [LLM] llama_print_timings:       total time =    6394.63 ms /  1034 tokens
+[22:37:38.739] [LLM] Log end
+[22:37:38.813] [LLM] GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+[22:37:38.848] [LLM] llama-cli завершился успешно (код Some(0))
+[22:37:38.849] [LLM] Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.
+[22:37:38.849] [LLM] Пакет 17/19: анализ 35 реплик через llama-cli (GPU offload=true)...
+[22:37:38.939] [LLM] Log start
+[22:37:38.939] [LLM] main: build = 3201 (adf480c3)
+[22:37:38.939] [LLM] main: built with MSVC 19.29.30154.0 for x64
+[22:37:38.939] [LLM] main: seed  = 1793399858
+[22:37:38.973] [LLM] llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from C:\Users\svato\AppData\Local\Video Cutter Pro\models\qwen-1.5b-chat.gguf (version GGUF V3 (latest))
+[22:37:38.973] [LLM] llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+[22:37:38.973] [LLM] llama_model_loader: - kv   0:                       general.architecture str              = qwen2
+[22:37:38.973] [LLM] llama_model_loader: - kv   1:                               general.type str              = model
+[22:37:38.973] [LLM] llama_model_loader: - kv   2:                               general.name str              = qwen2.5-1.5b-instruct
+[22:37:38.973] [LLM] llama_model_loader: - kv   3:                            general.version str              = v0.1
+[22:37:38.973] [LLM] llama_model_loader: - kv   4:                           general.finetune str              = qwen2.5-1.5b-instruct
+[22:37:38.973] [LLM] llama_model_loader: - kv   5:                         general.size_label str              = 1.8B
+[22:37:38.973] [LLM] llama_model_loader: - kv   6:                          qwen2.block_count u32              = 28
+[22:37:38.973] [LLM] llama_model_loader: - kv   7:                       qwen2.context_length u32              = 32768
+[22:37:38.973] [LLM] llama_model_loader: - kv   8:                     qwen2.embedding_length u32              = 1536
+[22:37:38.974] [LLM] llama_model_loader: - kv   9:                  qwen2.feed_forward_length u32              = 8960
+[22:37:38.974] [LLM] llama_model_loader: - kv  10:                 qwen2.attention.head_count u32              = 12
+[22:37:38.974] [LLM] llama_model_loader: - kv  11:              qwen2.attention.head_count_kv u32              = 2
+[22:37:38.974] [LLM] llama_model_loader: - kv  12:                       qwen2.rope.freq_base f32              = 1000000.000000
+[22:37:38.974] [LLM] llama_model_loader: - kv  13:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+[22:37:38.974] [LLM] llama_model_loader: - kv  14:                          general.file_type u32              = 15
+[22:37:38.974] [LLM] llama_model_loader: - kv  15:                       tokenizer.ggml.model str              = gpt2
+[22:37:38.974] [LLM] llama_model_loader: - kv  16:                         tokenizer.ggml.pre str              = qwen2
+[22:37:39.015] [LLM] llama_model_loader: - kv  17:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+[22:37:39.032] [LLM] llama_model_loader: - kv  18:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+[22:37:39.076] [LLM] llama_model_loader: - kv  19:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+[22:37:39.076] [LLM] llama_model_loader: - kv  20:                tokenizer.ggml.eos_token_id u32              = 151645
+[22:37:39.076] [LLM] llama_model_loader: - kv  21:            tokenizer.ggml.padding_token_id u32              = 151643
+[22:37:39.076] [LLM] llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 151643
+[22:37:39.076] [LLM] llama_model_loader: - kv  23:               tokenizer.ggml.add_bos_token bool             = false
+[22:37:39.076] [LLM] llama_model_loader: - kv  24:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+[22:37:39.076] [LLM] llama_model_loader: - kv  25:               general.quantization_version u32              = 2
+[22:37:39.076] [LLM] llama_model_loader: - type  f32:  141 tensors
+[22:37:39.076] [LLM] llama_model_loader: - type q4_K:  169 tensors
+[22:37:39.076] [LLM] llama_model_loader: - type q6_K:   29 tensors
+[22:37:39.273] [LLM] llm_load_vocab: special tokens cache size = 293
+[22:37:39.337] [LLM] llm_load_vocab: token to piece cache size = 0.9310 MB
+[22:37:39.337] [LLM] llm_load_print_meta: format           = GGUF V3 (latest)
+[22:37:39.337] [LLM] llm_load_print_meta: arch             = qwen2
+[22:37:39.337] [LLM] llm_load_print_meta: vocab type       = BPE
+[22:37:39.337] [LLM] llm_load_print_meta: n_vocab          = 151936
+[22:37:39.337] [LLM] llm_load_print_meta: n_merges         = 151387
+[22:37:39.337] [LLM] llm_load_print_meta: n_ctx_train      = 32768
+[22:37:39.337] [LLM] llm_load_print_meta: n_embd           = 1536
+[22:37:39.337] [LLM] llm_load_print_meta: n_head           = 12
+[22:37:39.337] [LLM] llm_load_print_meta: n_head_kv        = 2
+[22:37:39.337] [LLM] llm_load_print_meta: n_layer          = 28
+[22:37:39.337] [LLM] llm_load_print_meta: n_rot            = 128
+[22:37:39.337] [LLM] llm_load_print_meta: n_embd_head_k    = 128
+[22:37:39.337] [LLM] llm_load_print_meta: n_embd_head_v    = 128
+[22:37:39.337] [LLM] llm_load_print_meta: n_gqa            = 6
+[22:37:39.337] [LLM] llm_load_print_meta: n_embd_k_gqa     = 256
+[22:37:39.337] [LLM] llm_load_print_meta: n_embd_v_gqa     = 256
+[22:37:39.337] [LLM] llm_load_print_meta: f_norm_eps       = 0.0e+00
+[22:37:39.337] [LLM] llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+[22:37:39.337] [LLM] llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+[22:37:39.337] [LLM] llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+[22:37:39.337] [LLM] llm_load_print_meta: f_logit_scale    = 0.0e+00
+[22:37:39.337] [LLM] llm_load_print_meta: n_ff             = 8960
+[22:37:39.337] [LLM] llm_load_print_meta: n_expert         = 0
+[22:37:39.337] [LLM] llm_load_print_meta: n_expert_used    = 0
+[22:37:39.337] [LLM] llm_load_print_meta: causal attn      = 1
+[22:37:39.337] [LLM] llm_load_print_meta: pooling type     = 0
+[22:37:39.337] [LLM] llm_load_print_meta: rope type        = 2
+[22:37:39.337] [LLM] llm_load_print_meta: rope scaling     = linear
+[22:37:39.337] [LLM] llm_load_print_meta: freq_base_train  = 1000000.0
+[22:37:39.337] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:37:39.337] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:37:39.337] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:37:39.337] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:37:39.337] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:37:39.337] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:37:39.337] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:37:39.337] [LLM] llm_load_print_meta: model type       = ?B
+[22:37:39.337] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:37:39.337] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:37:39.337] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:37:39.337] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:37:39.337] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:37:39.337] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:37:39.337] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:37:39.337] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:37:39.337] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:37:39.337] [LLM] llm_load_print_meta: max token length = 256
+[22:37:39.360] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:37:39.360] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:37:39.360] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:37:39.360] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:37:39.439] [LLM] llm_load_tensors: ggml ctx size =    0.32 MiB
+[22:37:39.527] [LLM] llm_load_tensors: offloading 28 repeating layers to GPU
+[22:37:39.527] [LLM] llm_load_tensors: offloading non-repeating layers to GPU
+[22:37:39.527] [LLM] llm_load_tensors: offloaded 29/29 layers to GPU
+[22:37:39.527] [LLM] llm_load_tensors:        CPU buffer size =   125.19 MiB
+[22:37:39.527] [LLM] llm_load_tensors:      CUDA0 buffer size =   934.70 MiB
+[22:37:39.920] [LLM] .........................................................................
+[22:37:39.929] [LLM] llama_new_context_with_model: n_ctx      = 2048
+[22:37:39.929] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:37:39.929] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:37:39.929] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:37:39.929] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:37:39.929] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:37:39.932] [LLM] llama_kv_cache_init:      CUDA0 KV buffer size =    56.00 MiB
+[22:37:39.932] [LLM] llama_new_context_with_model: KV self size  =   56.00 MiB, K (f16):   28.00 MiB, V (f16):   28.00 MiB
+[22:37:39.932] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:37:39.936] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   299.75 MiB
+[22:37:39.936] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =     7.01 MiB
+[22:37:39.936] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:37:39.936] [LLM] llama_new_context_with_model: graph splits = 2
+[22:37:40.014] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:37:40.019] [LLM] sampling:
+[22:37:40.019] [LLM] repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+[22:37:40.019] [LLM] top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.100
+[22:37:40.019] [LLM] mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+[22:37:40.019] [LLM] sampling order:
+[22:37:40.019] [LLM] CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temperature
+[22:37:40.019] [LLM] generate: n_ctx = 2048, n_batch = 2048, n_predict = 384, n_keep = 0
+[22:37:46.636] [LLM] llama_print_timings:        load time =     677.21 ms
+[22:37:46.636] [LLM] llama_print_timings:      sample time =      52.97 ms /   384 runs   (    0.14 ms per token,  7248.84 tokens per second)
+[22:37:46.636] [LLM] llama_print_timings: prompt eval time =     133.42 ms /   664 tokens (    0.20 ms per token,  4976.69 tokens per second)
+[22:37:46.636] [LLM] llama_print_timings:        eval time =    6004.13 ms /   383 runs   (   15.68 ms per token,    63.79 tokens per second)
+[22:37:46.636] [LLM] llama_print_timings:       total time =    6621.14 ms /  1047 tokens
+[22:37:46.868] [LLM] Log end
+[22:37:46.942] [LLM] GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+[22:37:46.977] [LLM] llama-cli завершился успешно (код Some(0))
+[22:37:46.977] [LLM] Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.
+[22:37:46.977] [LLM] Пакет 18/19: анализ 35 реплик через llama-cli (GPU offload=true)...
+[22:37:47.065] [LLM] Log start
+[22:37:47.065] [LLM] main: build = 3201 (adf480c3)
+[22:37:47.065] [LLM] main: built with MSVC 19.29.30154.0 for x64
+[22:37:47.065] [LLM] main: seed  = 1793399867
+[22:37:47.100] [LLM] llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from C:\Users\svato\AppData\Local\Video Cutter Pro\models\qwen-1.5b-chat.gguf (version GGUF V3 (latest))
+[22:37:47.100] [LLM] llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+[22:37:47.100] [LLM] llama_model_loader: - kv   0:                       general.architecture str              = qwen2
+[22:37:47.100] [LLM] llama_model_loader: - kv   1:                               general.type str              = model
+[22:37:47.100] [LLM] llama_model_loader: - kv   2:                               general.name str              = qwen2.5-1.5b-instruct
+[22:37:47.100] [LLM] llama_model_loader: - kv   3:                            general.version str              = v0.1
+[22:37:47.100] [LLM] llama_model_loader: - kv   4:                           general.finetune str              = qwen2.5-1.5b-instruct
+[22:37:47.100] [LLM] llama_model_loader: - kv   5:                         general.size_label str              = 1.8B
+[22:37:47.100] [LLM] llama_model_loader: - kv   6:                          qwen2.block_count u32              = 28
+[22:37:47.100] [LLM] llama_model_loader: - kv   7:                       qwen2.context_length u32              = 32768
+[22:37:47.100] [LLM] llama_model_loader: - kv   8:                     qwen2.embedding_length u32              = 1536
+[22:37:47.100] [LLM] llama_model_loader: - kv   9:                  qwen2.feed_forward_length u32              = 8960
+[22:37:47.100] [LLM] llama_model_loader: - kv  10:                 qwen2.attention.head_count u32              = 12
+[22:37:47.100] [LLM] llama_model_loader: - kv  11:              qwen2.attention.head_count_kv u32              = 2
+[22:37:47.100] [LLM] llama_model_loader: - kv  12:                       qwen2.rope.freq_base f32              = 1000000.000000
+[22:37:47.100] [LLM] llama_model_loader: - kv  13:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+[22:37:47.100] [LLM] llama_model_loader: - kv  14:                          general.file_type u32              = 15
+[22:37:47.100] [LLM] llama_model_loader: - kv  15:                       tokenizer.ggml.model str              = gpt2
+[22:37:47.100] [LLM] llama_model_loader: - kv  16:                         tokenizer.ggml.pre str              = qwen2
+[22:37:47.144] [LLM] llama_model_loader: - kv  17:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+[22:37:47.161] [LLM] llama_model_loader: - kv  18:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+[22:37:47.203] [LLM] llama_model_loader: - kv  19:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+[22:37:47.203] [LLM] llama_model_loader: - kv  20:                tokenizer.ggml.eos_token_id u32              = 151645
+[22:37:47.203] [LLM] llama_model_loader: - kv  21:            tokenizer.ggml.padding_token_id u32              = 151643
+[22:37:47.203] [LLM] llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 151643
+[22:37:47.203] [LLM] llama_model_loader: - kv  23:               tokenizer.ggml.add_bos_token bool             = false
+[22:37:47.203] [LLM] llama_model_loader: - kv  24:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+[22:37:47.203] [LLM] llama_model_loader: - kv  25:               general.quantization_version u32              = 2
+[22:37:47.203] [LLM] llama_model_loader: - type  f32:  141 tensors
+[22:37:47.203] [LLM] llama_model_loader: - type q4_K:  169 tensors
+[22:37:47.204] [LLM] llama_model_loader: - type q6_K:   29 tensors
+[22:37:47.411] [LLM] llm_load_vocab: special tokens cache size = 293
+[22:37:47.480] [LLM] llm_load_vocab: token to piece cache size = 0.9310 MB
+[22:37:47.480] [LLM] llm_load_print_meta: format           = GGUF V3 (latest)
+[22:37:47.480] [LLM] llm_load_print_meta: arch             = qwen2
+[22:37:47.480] [LLM] llm_load_print_meta: vocab type       = BPE
+[22:37:47.480] [LLM] llm_load_print_meta: n_vocab          = 151936
+[22:37:47.480] [LLM] llm_load_print_meta: n_merges         = 151387
+[22:37:47.480] [LLM] llm_load_print_meta: n_ctx_train      = 32768
+[22:37:47.480] [LLM] llm_load_print_meta: n_embd           = 1536
+[22:37:47.480] [LLM] llm_load_print_meta: n_head           = 12
+[22:37:47.480] [LLM] llm_load_print_meta: n_head_kv        = 2
+[22:37:47.480] [LLM] llm_load_print_meta: n_layer          = 28
+[22:37:47.480] [LLM] llm_load_print_meta: n_rot            = 128
+[22:37:47.480] [LLM] llm_load_print_meta: n_embd_head_k    = 128
+[22:37:47.480] [LLM] llm_load_print_meta: n_embd_head_v    = 128
+[22:37:47.480] [LLM] llm_load_print_meta: n_gqa            = 6
+[22:37:47.480] [LLM] llm_load_print_meta: n_embd_k_gqa     = 256
+[22:37:47.480] [LLM] llm_load_print_meta: n_embd_v_gqa     = 256
+[22:37:47.480] [LLM] llm_load_print_meta: f_norm_eps       = 0.0e+00
+[22:37:47.480] [LLM] llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+[22:37:47.480] [LLM] llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+[22:37:47.480] [LLM] llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+[22:37:47.480] [LLM] llm_load_print_meta: f_logit_scale    = 0.0e+00
+[22:37:47.480] [LLM] llm_load_print_meta: n_ff             = 8960
+[22:37:47.480] [LLM] llm_load_print_meta: n_expert         = 0
+[22:37:47.480] [LLM] llm_load_print_meta: n_expert_used    = 0
+[22:37:47.480] [LLM] llm_load_print_meta: causal attn      = 1
+[22:37:47.480] [LLM] llm_load_print_meta: pooling type     = 0
+[22:37:47.480] [LLM] llm_load_print_meta: rope type        = 2
+[22:37:47.480] [LLM] llm_load_print_meta: rope scaling     = linear
+[22:37:47.480] [LLM] llm_load_print_meta: freq_base_train  = 1000000.0
+[22:37:47.480] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:37:47.480] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:37:47.480] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:37:47.480] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:37:47.480] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:37:47.480] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:37:47.480] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:37:47.480] [LLM] llm_load_print_meta: model type       = ?B
+[22:37:47.480] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:37:47.480] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:37:47.480] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:37:47.481] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:37:47.481] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:37:47.481] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:37:47.481] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:37:47.481] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:37:47.481] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:37:47.481] [LLM] llm_load_print_meta: max token length = 256
+[22:37:47.504] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:37:47.504] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:37:47.504] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:37:47.504] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:37:47.594] [LLM] llm_load_tensors: ggml ctx size =    0.32 MiB
+[22:37:47.685] [LLM] llm_load_tensors: offloading 28 repeating layers to GPU
+[22:37:47.685] [LLM] llm_load_tensors: offloading non-repeating layers to GPU
+[22:37:47.685] [LLM] llm_load_tensors: offloaded 29/29 layers to GPU
+[22:37:47.685] [LLM] llm_load_tensors:        CPU buffer size =   125.19 MiB
+[22:37:47.685] [LLM] llm_load_tensors:      CUDA0 buffer size =   934.70 MiB
+[22:37:48.101] [LLM] .........................................................................
+[22:37:48.109] [LLM] llama_new_context_with_model: n_ctx      = 2048
+[22:37:48.109] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:37:48.109] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:37:48.109] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:37:48.109] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:37:48.109] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:37:48.111] [LLM] llama_kv_cache_init:      CUDA0 KV buffer size =    56.00 MiB
+[22:37:48.111] [LLM] llama_new_context_with_model: KV self size  =   56.00 MiB, K (f16):   28.00 MiB, V (f16):   28.00 MiB
+[22:37:48.112] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:37:48.116] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   299.75 MiB
+[22:37:48.116] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =     7.01 MiB
+[22:37:48.116] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:37:48.116] [LLM] llama_new_context_with_model: graph splits = 2
+[22:37:48.199] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:37:48.203] [LLM] sampling:
+[22:37:48.203] [LLM] repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+[22:37:48.203] [LLM] top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.100
+[22:37:48.203] [LLM] mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+[22:37:48.203] [LLM] sampling order:
+[22:37:48.203] [LLM] CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temperature
+[22:37:48.203] [LLM] generate: n_ctx = 2048, n_batch = 2048, n_predict = 384, n_keep = 0
+[22:37:54.621] [LLM] llama_print_timings:        load time =     718.25 ms
+[22:37:54.621] [LLM] llama_print_timings:      sample time =      51.27 ms /   384 runs   (    0.13 ms per token,  7490.05 tokens per second)
+[22:37:54.621] [LLM] llama_print_timings: prompt eval time =     126.35 ms /   580 tokens (    0.22 ms per token,  4590.42 tokens per second)
+[22:37:54.621] [LLM] llama_print_timings:        eval time =    5836.61 ms /   383 runs   (   15.24 ms per token,    65.62 tokens per second)
+[22:37:54.621] [LLM] llama_print_timings:       total time =    6421.82 ms /   963 tokens
+[22:37:54.872] [LLM] Log end
+[22:37:54.941] [LLM] GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+[22:37:54.982] [LLM] llama-cli завершился успешно (код Some(0))
+[22:37:54.982] [LLM] Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.
+[22:37:54.982] [LLM] Пакет 19/19: анализ 19 реплик через llama-cli (GPU offload=true)...
+[22:37:55.079] [LLM] Log start
+[22:37:55.079] [LLM] main: build = 3201 (adf480c3)
+[22:37:55.079] [LLM] main: built with MSVC 19.29.30154.0 for x64
+[22:37:55.079] [LLM] main: seed  = 1793399875
+[22:37:55.113] [LLM] llama_model_loader: loaded meta data with 26 key-value pairs and 339 tensors from C:\Users\svato\AppData\Local\Video Cutter Pro\models\qwen-1.5b-chat.gguf (version GGUF V3 (latest))
+[22:37:55.113] [LLM] llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+[22:37:55.113] [LLM] llama_model_loader: - kv   0:                       general.architecture str              = qwen2
+[22:37:55.113] [LLM] llama_model_loader: - kv   1:                               general.type str              = model
+[22:37:55.113] [LLM] llama_model_loader: - kv   2:                               general.name str              = qwen2.5-1.5b-instruct
+[22:37:55.113] [LLM] llama_model_loader: - kv   3:                            general.version str              = v0.1
+[22:37:55.113] [LLM] llama_model_loader: - kv   4:                           general.finetune str              = qwen2.5-1.5b-instruct
+[22:37:55.113] [LLM] llama_model_loader: - kv   5:                         general.size_label str              = 1.8B
+[22:37:55.113] [LLM] llama_model_loader: - kv   6:                          qwen2.block_count u32              = 28
+[22:37:55.113] [LLM] llama_model_loader: - kv   7:                       qwen2.context_length u32              = 32768
+[22:37:55.113] [LLM] llama_model_loader: - kv   8:                     qwen2.embedding_length u32              = 1536
+[22:37:55.113] [LLM] llama_model_loader: - kv   9:                  qwen2.feed_forward_length u32              = 8960
+[22:37:55.113] [LLM] llama_model_loader: - kv  10:                 qwen2.attention.head_count u32              = 12
+[22:37:55.113] [LLM] llama_model_loader: - kv  11:              qwen2.attention.head_count_kv u32              = 2
+[22:37:55.113] [LLM] llama_model_loader: - kv  12:                       qwen2.rope.freq_base f32              = 1000000.000000
+[22:37:55.113] [LLM] llama_model_loader: - kv  13:     qwen2.attention.layer_norm_rms_epsilon f32              = 0.000001
+[22:37:55.113] [LLM] llama_model_loader: - kv  14:                          general.file_type u32              = 15
+[22:37:55.113] [LLM] llama_model_loader: - kv  15:                       tokenizer.ggml.model str              = gpt2
+[22:37:55.113] [LLM] llama_model_loader: - kv  16:                         tokenizer.ggml.pre str              = qwen2
+[22:37:55.155] [LLM] llama_model_loader: - kv  17:                      tokenizer.ggml.tokens arr[str,151936]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+[22:37:55.170] [LLM] llama_model_loader: - kv  18:                  tokenizer.ggml.token_type arr[i32,151936]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+[22:37:55.215] [LLM] llama_model_loader: - kv  19:                      tokenizer.ggml.merges arr[str,151387]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+[22:37:55.215] [LLM] llama_model_loader: - kv  20:                tokenizer.ggml.eos_token_id u32              = 151645
+[22:37:55.215] [LLM] llama_model_loader: - kv  21:            tokenizer.ggml.padding_token_id u32              = 151643
+[22:37:55.215] [LLM] llama_model_loader: - kv  22:                tokenizer.ggml.bos_token_id u32              = 151643
+[22:37:55.215] [LLM] llama_model_loader: - kv  23:               tokenizer.ggml.add_bos_token bool             = false
+[22:37:55.215] [LLM] llama_model_loader: - kv  24:                    tokenizer.chat_template str              = {%- if tools %}\n    {{- '<|im_start|>...
+[22:37:55.215] [LLM] llama_model_loader: - kv  25:               general.quantization_version u32              = 2
+[22:37:55.215] [LLM] llama_model_loader: - type  f32:  141 tensors
+[22:37:55.215] [LLM] llama_model_loader: - type q4_K:  169 tensors
+[22:37:55.215] [LLM] llama_model_loader: - type q6_K:   29 tensors
+[22:37:55.417] [LLM] llm_load_vocab: special tokens cache size = 293
+[22:37:55.484] [LLM] llm_load_vocab: token to piece cache size = 0.9310 MB
+[22:37:55.484] [LLM] llm_load_print_meta: format           = GGUF V3 (latest)
+[22:37:55.484] [LLM] llm_load_print_meta: arch             = qwen2
+[22:37:55.484] [LLM] llm_load_print_meta: vocab type       = BPE
+[22:37:55.484] [LLM] llm_load_print_meta: n_vocab          = 151936
+[22:37:55.484] [LLM] llm_load_print_meta: n_merges         = 151387
+[22:37:55.484] [LLM] llm_load_print_meta: n_ctx_train      = 32768
+[22:37:55.484] [LLM] llm_load_print_meta: n_embd           = 1536
+[22:37:55.484] [LLM] llm_load_print_meta: n_head           = 12
+[22:37:55.484] [LLM] llm_load_print_meta: n_head_kv        = 2
+[22:37:55.484] [LLM] llm_load_print_meta: n_layer          = 28
+[22:37:55.484] [LLM] llm_load_print_meta: n_rot            = 128
+[22:37:55.484] [LLM] llm_load_print_meta: n_embd_head_k    = 128
+[22:37:55.484] [LLM] llm_load_print_meta: n_embd_head_v    = 128
+[22:37:55.484] [LLM] llm_load_print_meta: n_gqa            = 6
+[22:37:55.484] [LLM] llm_load_print_meta: n_embd_k_gqa     = 256
+[22:37:55.484] [LLM] llm_load_print_meta: n_embd_v_gqa     = 256
+[22:37:55.484] [LLM] llm_load_print_meta: f_norm_eps       = 0.0e+00
+[22:37:55.484] [LLM] llm_load_print_meta: f_norm_rms_eps   = 1.0e-06
+[22:37:55.484] [LLM] llm_load_print_meta: f_clamp_kqv      = 0.0e+00
+[22:37:55.484] [LLM] llm_load_print_meta: f_max_alibi_bias = 0.0e+00
+[22:37:55.484] [LLM] llm_load_print_meta: f_logit_scale    = 0.0e+00
+[22:37:55.484] [LLM] llm_load_print_meta: n_ff             = 8960
+[22:37:55.484] [LLM] llm_load_print_meta: n_expert         = 0
+[22:37:55.484] [LLM] llm_load_print_meta: n_expert_used    = 0
+[22:37:55.484] [LLM] llm_load_print_meta: causal attn      = 1
+[22:37:55.484] [LLM] llm_load_print_meta: pooling type     = 0
+[22:37:55.484] [LLM] llm_load_print_meta: rope type        = 2
+[22:37:55.485] [LLM] llm_load_print_meta: rope scaling     = linear
+[22:37:55.485] [LLM] llm_load_print_meta: freq_base_train  = 1000000.0
+[22:37:55.485] [LLM] llm_load_print_meta: freq_scale_train = 1
+[22:37:55.485] [LLM] llm_load_print_meta: n_ctx_orig_yarn  = 32768
+[22:37:55.485] [LLM] llm_load_print_meta: rope_finetuned   = unknown
+[22:37:55.485] [LLM] llm_load_print_meta: ssm_d_conv       = 0
+[22:37:55.485] [LLM] llm_load_print_meta: ssm_d_inner      = 0
+[22:37:55.485] [LLM] llm_load_print_meta: ssm_d_state      = 0
+[22:37:55.485] [LLM] llm_load_print_meta: ssm_dt_rank      = 0
+[22:37:55.485] [LLM] llm_load_print_meta: model type       = ?B
+[22:37:55.485] [LLM] llm_load_print_meta: model ftype      = Q4_K - Medium
+[22:37:55.485] [LLM] llm_load_print_meta: model params     = 1.78 B
+[22:37:55.485] [LLM] llm_load_print_meta: model size       = 1.04 GiB (5.00 BPW)
+[22:37:55.485] [LLM] llm_load_print_meta: general.name     = qwen2.5-1.5b-instruct
+[22:37:55.485] [LLM] llm_load_print_meta: BOS token        = 151643 '<|endoftext|>'
+[22:37:55.485] [LLM] llm_load_print_meta: EOS token        = 151645 '<|im_end|>'
+[22:37:55.485] [LLM] llm_load_print_meta: PAD token        = 151643 '<|endoftext|>'
+[22:37:55.485] [LLM] llm_load_print_meta: LF token         = 148848 'ÄĬ'
+[22:37:55.485] [LLM] llm_load_print_meta: EOT token        = 151645 '<|im_end|>'
+[22:37:55.485] [LLM] llm_load_print_meta: max token length = 256
+[22:37:55.506] [LLM] ggml_cuda_init: GGML_CUDA_FORCE_MMQ:   no
+[22:37:55.506] [LLM] ggml_cuda_init: CUDA_USE_TENSOR_CORES: yes
+[22:37:55.506] [LLM] ggml_cuda_init: found 1 CUDA devices:
+[22:37:55.506] [LLM] Device 0: NVIDIA GeForce RTX 2080, compute capability 7.5, VMM: yes
+[22:37:55.587] [LLM] llm_load_tensors: ggml ctx size =    0.32 MiB
+[22:37:55.677] [LLM] llm_load_tensors: offloading 28 repeating layers to GPU
+[22:37:55.677] [LLM] llm_load_tensors: offloading non-repeating layers to GPU
+[22:37:55.677] [LLM] llm_load_tensors: offloaded 29/29 layers to GPU
+[22:37:55.677] [LLM] llm_load_tensors:        CPU buffer size =   125.19 MiB
+[22:37:55.677] [LLM] llm_load_tensors:      CUDA0 buffer size =   934.70 MiB
+[22:37:56.073] [LLM] .........................................................................
+[22:37:56.081] [LLM] llama_new_context_with_model: n_ctx      = 2048
+[22:37:56.082] [LLM] llama_new_context_with_model: n_batch    = 2048
+[22:37:56.082] [LLM] llama_new_context_with_model: n_ubatch   = 512
+[22:37:56.082] [LLM] llama_new_context_with_model: flash_attn = 0
+[22:37:56.082] [LLM] llama_new_context_with_model: freq_base  = 1000000.0
+[22:37:56.082] [LLM] llama_new_context_with_model: freq_scale = 1
+[22:37:56.084] [LLM] llama_kv_cache_init:      CUDA0 KV buffer size =    56.00 MiB
+[22:37:56.084] [LLM] llama_new_context_with_model: KV self size  =   56.00 MiB, K (f16):   28.00 MiB, V (f16):   28.00 MiB
+[22:37:56.085] [LLM] llama_new_context_with_model:  CUDA_Host  output buffer size =     0.58 MiB
+[22:37:56.089] [LLM] llama_new_context_with_model:      CUDA0 compute buffer size =   299.75 MiB
+[22:37:56.089] [LLM] llama_new_context_with_model:  CUDA_Host compute buffer size =     7.01 MiB
+[22:37:56.089] [LLM] llama_new_context_with_model: graph nodes  = 986
+[22:37:56.089] [LLM] llama_new_context_with_model: graph splits = 2
+[22:37:56.168] [LLM] system_info: n_threads = 8 / 16 | AVX = 1 | AVX_VNNI = 0 | AVX2 = 1 | AVX512 = 0 | AVX512_VBMI = 0 | AVX512_VNNI = 0 | AVX512_BF16 = 0 | FMA = 1 | NEON = 0 | SVE = 0 | ARM_FMA = 0 | F16C = 1 | FP16_VA = 0 | WASM_SIMD = 0 | BLAS = 1 | SSE3 = 1 | SSSE3 = 1 | VSX = 0 | MATMUL_INT8 = 0 | LLAMAFILE = 1 |
+[22:37:56.171] [LLM] sampling:
+[22:37:56.171] [LLM] repeat_last_n = 64, repeat_penalty = 1.000, frequency_penalty = 0.000, presence_penalty = 0.000
+[22:37:56.171] [LLM] top_k = 40, tfs_z = 1.000, top_p = 0.950, min_p = 0.050, typical_p = 1.000, temp = 0.100
+[22:37:56.171] [LLM] mirostat = 0, mirostat_lr = 0.100, mirostat_ent = 5.000
+[22:37:56.171] [LLM] sampling order:
+[22:37:56.171] [LLM] CFG -> Penalties -> top_k -> tfs_z -> typical_p -> top_p -> min_p -> temperature
+[22:37:56.171] [LLM] generate: n_ctx = 2048, n_batch = 2048, n_predict = 384, n_keep = 0
+[22:38:02.559] [LLM] llama_print_timings:        load time =     683.46 ms
+[22:38:02.560] [LLM] llama_print_timings:      sample time =      50.57 ms /   384 runs   (    0.13 ms per token,  7593.89 tokens per second)
+[22:38:02.560] [LLM] llama_print_timings: prompt eval time =      74.81 ms /   409 tokens (    0.18 ms per token,  5467.48 tokens per second)
+[22:38:02.560] [LLM] llama_print_timings:        eval time =    5836.68 ms /   383 runs   (   15.24 ms per token,    65.62 tokens per second)
+[22:38:02.560] [LLM] llama_print_timings:       total time =    6391.08 ms /   792 tokens
+[22:38:02.811] [LLM] Log end
+[22:38:02.881] [LLM] GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG
+[22:38:02.918] [LLM] llama-cli завершился успешно (код Some(0))
+[22:38:02.919] [LLM] Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.
+[01:38:03] [App] Пайплайн [Визуальный анализ ключевых сцен...]: Прогресс 75%
+[22:38:02.920] [Analyzer] Запуск анализа видео-сцен: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4'
+[22:38:02.921] [Analyzer] Запуск двухфакторного алгоритма анализа хайлайтов (смена сцен FFmpeg + звуковая активность)...
+[01:38:03] [App] Анализ сцен: Шаг detecting_scene_cuts (0/100)
+[22:38:02.921] [FFmpeg] Анализ метаданных исходного видео: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4'
+[22:38:02.979] [FFmpeg] Метаданные видео определены: длительность = 1421.23 сек, размер = 1094860952 байт, кодек = Some("h264 (Constrained Baseline) (avc1 / 0x31637661)")
+[22:38:02.979] [Analyzer] Быстрый поиск динамичных смен сцен по ключевым кадрам (FFmpeg scene detect)...
+[22:38:19.703] [Analyzer] Обнаружено 301 ключевых смен кадров/сцен.
+[01:38:19] [App] Анализ сцен: Шаг detecting_audio_energy (60/100)
+[22:38:19.703] [Analyzer] Анализ аудио-энергии и поиск речевой активности через FFmpeg silencedetect...
+[22:38:21.200] [Analyzer] Обнаружено 68 активных эмоциональных звуковых сегментов.
+[01:38:21] [App] Анализ сцен: Шаг ranking_highlights (90/100)
+[22:38:21.202] [Analyzer] ✓ Двухфакторный анализ завершен: найдено 12 качественных сцен-хайлайтов.
+[01:38:21] [App] Анализ сцен: Шаг complete (12/12)
+[01:38:21] [App] Пайплайн [Формирование лучших моментов (хайлайтов)...]: Прогресс 85%
+[22:38:21.215] [Pipeline] [Шаг 4/5] Отбор хайлайтов завершен: сформировано 10 равномерно распределенных моментов для таймлайна
+[22:38:21.215] [Pipeline]   → Клип #1: [17.0с - 32.0с] (длительность 15.0с, рейтинг 0.88)
+[22:38:21.215] [Pipeline]   → Клип #2: [58.0с - 73.0с] (длительность 15.0с, рейтинг 0.88)
+[22:38:21.215] [Pipeline]   → Клип #3: [110.0с - 125.0с] (длительность 15.0с, рейтинг 0.88)
+[22:38:21.215] [Pipeline]   → Клип #4: [160.0с - 175.0с] (длительность 15.0с, рейтинг 0.88)
+[22:38:21.215] [Pipeline]   → Клип #5: [264.3с - 279.3с] (длительность 15.0с, рейтинг 0.75)
+[22:38:21.215] [Pipeline]   → Клип #6: [371.4с - 386.4с] (длительность 15.0с, рейтинг 0.75)
+[22:38:21.215] [Pipeline]   → Клип #7: [509.9с - 525.0с] (длительность 15.0с, рейтинг 0.82)
+[22:38:21.215] [Pipeline]   → Клип #8: [747.5с - 762.5с] (длительность 15.0с, рейтинг 0.77)
+[22:38:21.215] [Pipeline]   → Клип #9: [900.8с - 915.8с] (длительность 15.0с, рейтинг 0.83)
+[22:38:21.215] [Pipeline]   → Клип #10: [1237.2с - 1252.2с] (длительность 15.0с, рейтинг 0.79)
+[01:38:21] [App] Получено 10 фрагментов, предложенных ИИ.
+[22:38:21.215] [Pipeline] Режим подтверждения: фрагменты отправлены на таймлайн, субтитры сохранены в кэше проекта (повторный запуск Whisper при экспорте не потребуется).
+[01:38:21] [App] Пайплайн [Хайлайты успешно найдены и готовы к предпросмотру]: Прогресс 100%
+[01:38:21] [App] ✓ Успешно выделено 10 хайлайт-фрагментов на таймлайне.
+[01:38:21] [App] ИИ завершил анализ. Фрагменты перенесены на таймлайн для подтверждения. Нажмите "Экспортировать клипы" после редактирования.
+[01:39:06] [App] Запуск экспорта 10 клипов в формате 9:16 с синхронизированными субтитрами...
+[22:39:06.957] [Whisper] ✓ Найдены готовые субтитры в папке проекта (649 реплик): 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Субтитры\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Субтитры.srt'. Повторная транскрибация не требуется!
+[01:39:06] [App] Whisper: Используются готовые субтитры из кэша проекта - 100%
+[22:39:06.958] [Render] Директория сохранения готовых клипов: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы'
+[22:39:07.099] [Render] Smart Face Centering: фокус персонажа определен в 46.9% ширины кадра
+[22:39:07.100] [Render] Рендеринг клипа: [17.00с - 32.00с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 01 [00m17s - 00m32s].mp4' (вертикально=true, субтитры=true)
+[01:39:07] [App] Рендеринг: rendering started - 0%
+[22:39:07.129] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:07.129] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:07.129] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:07.129] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:07.129] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:07.129] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:07.129] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:07.129] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:07.129] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:07.129] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:07.149] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:07.149] [Render] Metadata:
+[22:39:07.149] [Render] major_brand     : mp42
+[22:39:07.149] [Render] minor_version   : 0
+[22:39:07.149] [Render] compatible_brands: mp41isom
+[22:39:07.149] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:07.149] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:07.149] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:07.149] [Render] Metadata:
+[22:39:07.149] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:07.149] [Render] handler_name    : VideoHandler
+[22:39:07.149] [Render] encoder         : AVC Coding
+[22:39:07.149] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:07.149] [Render] Metadata:
+[22:39:07.149] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:07.149] [Render] handler_name    : SoundHandler
+[22:39:07.151] [Render] [Parsed_subtitles_2 @ 000001b8f7097880] libass API version: 0x1705000
+[22:39:07.151] [Render] [Parsed_subtitles_2 @ 000001b8f7097880] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:07.156] [Render] [Parsed_subtitles_2 @ 000001b8f7097880] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:07.160] [Render] [Parsed_subtitles_2 @ 000001b8f7097880] Using font provider directwrite (with GDI)
+[22:39:07.164] [Render] Stream mapping:
+[22:39:07.165] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:07.165] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:07.175] [Render] [Parsed_subtitles_2 @ 000001b8f7096680] libass API version: 0x1705000
+[22:39:07.175] [Render] [Parsed_subtitles_2 @ 000001b8f7096680] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:07.176] [Render] [Parsed_subtitles_2 @ 000001b8f7096680] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:07.176] [Render] [Parsed_subtitles_2 @ 000001b8f7096680] Using font provider directwrite (with GDI)
+[22:39:07.246] [Render] [Parsed_subtitles_2 @ 000001b8f7096680] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:07.261] [Render] [libx264 @ 000001b8f9ac00c0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:07.264] [Render] [libx264 @ 000001b8f9ac00c0] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:07.264] [Render] [libx264 @ 000001b8f9ac00c0] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:07.266] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 01 [00m17s - 00m32s].mp4':
+[22:39:07.266] [Render] Metadata:
+[22:39:07.266] [Render] encoder         : Lavf63.17.100
+[22:39:07.266] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:07.266] [Render] Metadata:
+[22:39:07.266] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:07.266] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:07.266] [Render] handler_name    : VideoHandler
+[22:39:07.266] [Render] Side data:
+[22:39:07.266] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:07.266] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:07.266] [Render] Metadata:
+[22:39:07.266] [Render] encoder         : Lavc63.25.101 aac
+[22:39:07.266] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:07.266] [Render] handler_name    : SoundHandler
+[01:39:07] [App] Рендеринг: 2.8с / 15.0с - 19%
+[01:39:08] [App] Рендеринг: 5.7с / 15.0с - 38%
+[01:39:08] [App] Рендеринг: 9.2с / 15.0с - 61%
+[01:39:09] [App] Рендеринг: 12.7с / 15.0с - 85%
+[22:39:09.677] [Render] [out#0/mp4 @ 000001b8f70a3b40] video:2912KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.534067%
+[01:39:09] [App] Рендеринг: 15.0с / 15.0с - 99%
+[22:39:09.678] [Render] [libx264 @ 000001b8f9ac00c0] frame I:3     Avg QP:16.25  size:203724
+[22:39:09.678] [Render] [libx264 @ 000001b8f9ac00c0] frame P:125   Avg QP:19.91  size: 16225
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] frame B:322   Avg QP:21.80  size:  1061
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] consecutive B-frames:  3.1%  2.7%  5.3% 88.9%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] mb I  I16..4: 25.9% 20.6% 53.4%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] mb P  I16..4:  3.5%  2.9%  2.4%  P16..4: 15.2%  2.2%  1.2%  0.0%  0.0%    skip:72.6%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] mb B  I16..4:  0.2%  0.1%  0.0%  B16..8:  2.1%  0.4%  0.0%  direct: 1.2%  skip:95.8%  L0:42.7% L1:50.4% BI: 6.9%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] 8x8 transform intra:30.4% inter:37.2%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] coded y,uvDC,uvAC intra: 51.0% 54.7% 30.1% inter: 1.7% 3.5% 0.1%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] i16 v,h,dc,p: 49% 31% 12%  8%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 22% 28% 20%  7%  5%  4%  5%  4%  5%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 23% 28% 10%  6%  7%  6%  9%  5%  7%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] i8c dc,h,v,p: 49% 25% 20%  6%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:09.679] [Render] [libx264 @ 000001b8f9ac00c0] kb/s:1589.80
+[22:39:09.742] [Render] [aac @ 000001b8f9065cc0] Qavg: 0.411  Tr: 7.5%  TNS(L): 13.9%  TNS(S): 0.9%  M/S: 67.5%  I/S: 24.2%  PNS: 0.0%
+[22:39:09.752] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 01 [00m17s - 00m32s].mp4'
+[01:39:10] [App] Рендеринг: rendering complete - 100%
+[22:39:09.926] [Render] Smart Face Centering: фокус персонажа определен в 36.6% ширины кадра
+[22:39:09.927] [Render] Рендеринг клипа: [58.00с - 73.00с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 02 [00m58s - 01m13s].mp4' (вертикально=true, субтитры=true)
+[22:39:09.961] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:09.961] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:09.961] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:09.961] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:09.961] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:09.961] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:09.961] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:09.961] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:09.961] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:09.961] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:10.071] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:10.071] [Render] Metadata:
+[22:39:10.071] [Render] major_brand     : mp42
+[22:39:10.071] [Render] minor_version   : 0
+[22:39:10.071] [Render] compatible_brands: mp41isom
+[22:39:10.071] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:10.071] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:10.071] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:10.071] [Render] Metadata:
+[22:39:10.071] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:10.071] [Render] handler_name    : VideoHandler
+[22:39:10.072] [Render] encoder         : AVC Coding
+[22:39:10.072] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:10.072] [Render] Metadata:
+[22:39:10.072] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:10.072] [Render] handler_name    : SoundHandler
+[22:39:10.072] [Render] [Parsed_subtitles_2 @ 000001f4f0738980] libass API version: 0x1705000
+[22:39:10.072] [Render] [Parsed_subtitles_2 @ 000001f4f0738980] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:10.073] [Render] [Parsed_subtitles_2 @ 000001f4f0738980] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:10.074] [Render] [Parsed_subtitles_2 @ 000001f4f0738980] Using font provider directwrite (with GDI)
+[22:39:10.454] [Render] Stream mapping:
+[22:39:10.454] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:10.454] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:10.477] [Render] [Parsed_subtitles_2 @ 000001f4f0737d80] libass API version: 0x1705000
+[22:39:10.477] [Render] [Parsed_subtitles_2 @ 000001f4f0737d80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:10.479] [Render] [Parsed_subtitles_2 @ 000001f4f0737d80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:10.481] [Render] [Parsed_subtitles_2 @ 000001f4f0737d80] Using font provider directwrite (with GDI)
+[22:39:10.553] [Render] [Parsed_subtitles_2 @ 000001f4f0737d80] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:10.559] [Render] [libx264 @ 000001f4f32900c0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:10.563] [Render] [libx264 @ 000001f4f32900c0] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:10.563] [Render] [libx264 @ 000001f4f32900c0] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:10.563] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 02 [00m58s - 01m13s].mp4':
+[22:39:10.563] [Render] Metadata:
+[22:39:10.563] [Render] encoder         : Lavf63.17.100
+[22:39:10.563] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:10.563] [Render] Metadata:
+[22:39:10.563] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:10.563] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:10.563] [Render] handler_name    : VideoHandler
+[22:39:10.563] [Render] Side data:
+[22:39:10.563] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:10.563] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:10.563] [Render] Metadata:
+[22:39:10.563] [Render] encoder         : Lavc63.25.101 aac
+[22:39:10.563] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:10.563] [Render] handler_name    : SoundHandler
+[22:39:13.556] [Render] [out#0/mp4 @ 000001f4f07360c0] video:2683KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.574052%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] frame I:3     Avg QP:16.66  size:198118
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] frame P:135   Avg QP:18.69  size: 14271
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] frame B:312   Avg QP:20.41  size:   724
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] consecutive B-frames:  5.1%  6.2%  3.3% 85.3%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] mb I  I16..4: 20.7% 15.8% 63.5%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] mb P  I16..4:  5.9%  5.4%  2.7%  P16..4:  9.4%  2.6%  1.0%  0.0%  0.0%    skip:73.0%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] mb B  I16..4:  0.2%  0.1%  0.0%  B16..8:  1.5%  0.3%  0.0%  direct: 1.1%  skip:96.9%  L0:40.0% L1:57.6% BI: 2.3%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] 8x8 transform intra:35.7% inter:32.6%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] coded y,uvDC,uvAC intra: 44.7% 56.1% 27.2% inter: 0.8% 2.9% 0.1%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] i16 v,h,dc,p: 56% 29%  9%  6%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 26% 28% 18%  4%  5%  5%  5%  5%  4%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 27% 21% 12%  6%  7%  8%  6%  8%  5%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] i8c dc,h,v,p: 50% 22% 21%  7%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:13.558] [Render] [libx264 @ 000001f4f32900c0] kb/s:1464.96
+[22:39:13.614] [Render] [aac @ 000001f4f28cbcc0] Qavg: 0.975  Tr: 4.0%  TNS(L): 3.9%  TNS(S): 0.0%  M/S: 70.1%  I/S: 14.2%  PNS: 0.0%
+[22:39:13.626] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 02 [00m58s - 01m13s].mp4'
+[01:39:13] [App] Рендеринг: rendering complete - 100%
+[22:39:13.798] [Render] Smart Face Centering: фокус персонажа определен в 46.4% ширины кадра
+[22:39:13.799] [Render] Рендеринг клипа: [110.00с - 125.00с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 03 [01m50s - 02m05s].mp4' (вертикально=true, субтитры=true)
+[22:39:13.833] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:13.833] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:13.833] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:13.833] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:13.833] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:13.833] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:13.833] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:13.833] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:13.833] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:13.833] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:13.856] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:13.856] [Render] Metadata:
+[22:39:13.856] [Render] major_brand     : mp42
+[22:39:13.856] [Render] minor_version   : 0
+[22:39:13.856] [Render] compatible_brands: mp41isom
+[22:39:13.856] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:13.856] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:13.857] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:13.857] [Render] Metadata:
+[22:39:13.857] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:13.857] [Render] handler_name    : VideoHandler
+[22:39:13.857] [Render] encoder         : AVC Coding
+[22:39:13.857] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:13.858] [Render] Metadata:
+[22:39:13.858] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:13.858] [Render] handler_name    : SoundHandler
+[22:39:13.858] [Render] [Parsed_subtitles_2 @ 000002323c9b7c80] libass API version: 0x1705000
+[22:39:13.858] [Render] [Parsed_subtitles_2 @ 000002323c9b7c80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:13.859] [Render] [Parsed_subtitles_2 @ 000002323c9b7c80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:13.860] [Render] [Parsed_subtitles_2 @ 000002323c9b7c80] Using font provider directwrite (with GDI)
+[22:39:13.864] [Render] Stream mapping:
+[22:39:13.864] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:13.864] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:13.885] [Render] [Parsed_subtitles_2 @ 000002323c9b7880] libass API version: 0x1705000
+[22:39:13.885] [Render] [Parsed_subtitles_2 @ 000002323c9b7880] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:13.886] [Render] [Parsed_subtitles_2 @ 000002323c9b7880] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:13.887] [Render] [Parsed_subtitles_2 @ 000002323c9b7880] Using font provider directwrite (with GDI)
+[22:39:13.960] [Render] [Parsed_subtitles_2 @ 000002323c9b7880] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:13.968] [Render] [libx264 @ 000002323f4600c0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:13.972] [Render] [libx264 @ 000002323f4600c0] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:13.972] [Render] [libx264 @ 000002323f4600c0] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:13.972] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 03 [01m50s - 02m05s].mp4':
+[22:39:13.972] [Render] Metadata:
+[22:39:13.972] [Render] encoder         : Lavf63.17.100
+[22:39:13.972] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:13.972] [Render] Metadata:
+[22:39:13.972] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:13.972] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:13.973] [Render] handler_name    : VideoHandler
+[22:39:13.973] [Render] Side data:
+[22:39:13.973] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:13.973] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:13.973] [Render] Metadata:
+[22:39:13.973] [Render] encoder         : Lavc63.25.101 aac
+[22:39:13.973] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:13.973] [Render] handler_name    : SoundHandler
+[22:39:16.868] [Render] [out#0/mp4 @ 000002323ca0c6c0] video:1587KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.903190%
+[22:39:16.869] [Render] [libx264 @ 000002323f4600c0] frame I:3     Avg QP:17.58  size:154594
+[22:39:16.869] [Render] [libx264 @ 000002323f4600c0] frame P:113   Avg QP:17.98  size:  8601
+[22:39:16.869] [Render] [libx264 @ 000002323f4600c0] frame B:334   Avg QP:20.76  size:   565
+[22:39:16.869] [Render] [libx264 @ 000002323f4600c0] consecutive B-frames:  0.9%  0.4%  0.0% 98.7%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] mb I  I16..4: 24.4% 24.1% 51.5%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] mb P  I16..4:  2.7%  1.8%  1.0%  P16..4:  4.6%  1.5%  1.2%  0.0%  0.0%    skip:87.1%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] mb B  I16..4:  0.2%  0.0%  0.0%  B16..8:  1.7%  0.2%  0.0%  direct: 0.9%  skip:96.9%  L0:47.7% L1:49.7% BI: 2.6%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] 8x8 transform intra:28.3% inter:24.8%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] coded y,uvDC,uvAC intra: 43.6% 52.1% 26.0% inter: 0.6% 1.7% 0.0%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] i16 v,h,dc,p: 62% 23%  9%  6%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 34% 27% 21%  3%  2%  3%  2%  3%  5%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 28% 26% 10%  5%  6%  6%  6%  5%  7%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] i8c dc,h,v,p: 47% 23% 24%  5%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:16.870] [Render] [libx264 @ 000002323f4600c0] kb/s:866.46
+[22:39:16.924] [Render] [aac @ 000002323ca50dc0] Qavg: 0.651  Tr: 4.8%  TNS(L): 6.0%  TNS(S): 0.0%  M/S: 69.3%  I/S: 18.8%  PNS: 0.0%
+[22:39:16.941] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 03 [01m50s - 02m05s].mp4'
+[01:39:17] [App] Рендеринг: rendering complete - 100%
+[22:39:17.147] [Render] Smart Face Centering: фокус персонажа определен в 46.4% ширины кадра
+[22:39:17.149] [Render] Рендеринг клипа: [160.00с - 175.00с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 04 [02m40s - 02m55s].mp4' (вертикально=true, субтитры=true)
+[22:39:17.195] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:17.195] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:17.195] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:17.195] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:17.195] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:17.195] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:17.195] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:17.195] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:17.195] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:17.195] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:17.229] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:17.229] [Render] Metadata:
+[22:39:17.230] [Render] major_brand     : mp42
+[22:39:17.230] [Render] minor_version   : 0
+[22:39:17.230] [Render] compatible_brands: mp41isom
+[22:39:17.230] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:17.230] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:17.230] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:17.230] [Render] Metadata:
+[22:39:17.230] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:17.230] [Render] handler_name    : VideoHandler
+[22:39:17.230] [Render] encoder         : AVC Coding
+[22:39:17.230] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:17.230] [Render] Metadata:
+[22:39:17.230] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:17.230] [Render] handler_name    : SoundHandler
+[22:39:17.230] [Render] [Parsed_subtitles_2 @ 0000014ea0d38e00] libass API version: 0x1705000
+[22:39:17.230] [Render] [Parsed_subtitles_2 @ 0000014ea0d38e00] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:17.231] [Render] [Parsed_subtitles_2 @ 0000014ea0d38e00] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:17.232] [Render] [Parsed_subtitles_2 @ 0000014ea0d38e00] Using font provider directwrite (with GDI)
+[22:39:17.236] [Render] Stream mapping:
+[22:39:17.236] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:17.236] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:17.262] [Render] [Parsed_subtitles_2 @ 0000014ea0d38300] libass API version: 0x1705000
+[22:39:17.262] [Render] [Parsed_subtitles_2 @ 0000014ea0d38300] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:17.263] [Render] [Parsed_subtitles_2 @ 0000014ea0d38300] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:17.265] [Render] [Parsed_subtitles_2 @ 0000014ea0d38300] Using font provider directwrite (with GDI)
+[22:39:17.337] [Render] [Parsed_subtitles_2 @ 0000014ea0d38300] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:17.346] [Render] [libx264 @ 0000014ea0dfebc0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:17.351] [Render] [libx264 @ 0000014ea0dfebc0] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:17.351] [Render] [libx264 @ 0000014ea0dfebc0] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:17.351] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 04 [02m40s - 02m55s].mp4':
+[22:39:17.351] [Render] Metadata:
+[22:39:17.351] [Render] encoder         : Lavf63.17.100
+[22:39:17.351] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:17.351] [Render] Metadata:
+[22:39:17.351] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:17.351] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:17.351] [Render] handler_name    : VideoHandler
+[22:39:17.351] [Render] Side data:
+[22:39:17.351] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:17.352] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:17.352] [Render] Metadata:
+[22:39:17.352] [Render] encoder         : Lavc63.25.101 aac
+[22:39:17.352] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:17.352] [Render] handler_name    : SoundHandler
+[22:39:20.488] [Render] [out#0/mp4 @ 0000014ea0d45380] video:5407KiB audio:354KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.299648%
+[22:39:20.490] [Render] [libx264 @ 0000014ea0dfebc0] frame I:3     Avg QP:16.96  size:150886
+[22:39:20.491] [Render] [libx264 @ 0000014ea0dfebc0] frame P:158   Avg QP:19.27  size: 26813
+[22:39:20.491] [Render] [libx264 @ 0000014ea0dfebc0] frame B:289   Avg QP:20.02  size:  2933
+[22:39:20.491] [Render] [libx264 @ 0000014ea0dfebc0] consecutive B-frames:  8.2% 14.2% 12.7% 64.9%
+[22:39:20.491] [Render] [libx264 @ 0000014ea0dfebc0] mb I  I16..4: 21.5% 22.7% 55.8%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] mb P  I16..4: 13.9%  5.2%  1.4%  P16..4: 20.4%  9.6%  4.2%  0.0%  0.0%    skip:45.3%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] mb B  I16..4:  0.9%  0.1%  0.0%  B16..8:  8.8%  1.7%  0.1%  direct: 3.6%  skip:84.9%  L0:44.8% L1:49.9% BI: 5.3%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] 8x8 transform intra:24.1% inter:28.7%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] coded y,uvDC,uvAC intra: 28.5% 50.7% 21.8% inter: 4.2% 7.3% 0.1%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] i16 v,h,dc,p: 63% 23% 12%  3%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 21% 21% 32%  4%  5%  6%  4%  3%  4%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 27% 18% 16%  5%  8% 10%  6%  6%  4%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] i8c dc,h,v,p: 55% 18% 23%  4%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:20.492] [Render] [libx264 @ 0000014ea0dfebc0] kb/s:2952.83
+[22:39:20.548] [Render] [aac @ 0000014ea340bf00] Qavg: 0.207  Tr: 6.5%  TNS(L): 9.8%  TNS(S): 0.0%  M/S: 70.4%  I/S: 16.5%  PNS: 0.0%
+[22:39:20.560] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 04 [02m40s - 02m55s].mp4'
+[01:39:21] [App] Рендеринг: rendering complete - 100%
+[22:39:20.727] [Render] Smart Face Centering: фокус персонажа определен в 64.2% ширины кадра
+[22:39:20.729] [Render] Рендеринг клипа: [264.30с - 279.30с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 05 [04m24s - 04m39s].mp4' (вертикально=true, субтитры=true)
+[22:39:20.764] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:20.764] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:20.764] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:20.764] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:20.764] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:20.764] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:20.764] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:20.764] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:20.764] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:20.765] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:20.790] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:20.790] [Render] Metadata:
+[22:39:20.790] [Render] major_brand     : mp42
+[22:39:20.790] [Render] minor_version   : 0
+[22:39:20.790] [Render] compatible_brands: mp41isom
+[22:39:20.790] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:20.790] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:20.790] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:20.790] [Render] Metadata:
+[22:39:20.790] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:20.790] [Render] handler_name    : VideoHandler
+[22:39:20.790] [Render] encoder         : AVC Coding
+[22:39:20.790] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:20.790] [Render] Metadata:
+[22:39:20.790] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:20.791] [Render] handler_name    : SoundHandler
+[22:39:20.791] [Render] [Parsed_subtitles_2 @ 0000020537818280] libass API version: 0x1705000
+[22:39:20.791] [Render] [Parsed_subtitles_2 @ 0000020537818280] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:20.791] [Render] [Parsed_subtitles_2 @ 0000020537818280] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:20.792] [Render] [Parsed_subtitles_2 @ 0000020537818280] Using font provider directwrite (with GDI)
+[22:39:20.795] [Render] Stream mapping:
+[22:39:20.795] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:20.795] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:20.812] [Render] [Parsed_subtitles_2 @ 0000020537819f80] libass API version: 0x1705000
+[22:39:20.813] [Render] [Parsed_subtitles_2 @ 0000020537819f80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:20.813] [Render] [Parsed_subtitles_2 @ 0000020537819f80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:20.815] [Render] [Parsed_subtitles_2 @ 0000020537819f80] Using font provider directwrite (with GDI)
+[22:39:20.892] [Render] [Parsed_subtitles_2 @ 0000020537819f80] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:20.901] [Render] [libx264 @ 000002053a6d8280] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:20.906] [Render] [libx264 @ 000002053a6d8280] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:20.906] [Render] [libx264 @ 000002053a6d8280] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:20.907] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 05 [04m24s - 04m39s].mp4':
+[22:39:20.907] [Render] Metadata:
+[22:39:20.907] [Render] encoder         : Lavf63.17.100
+[22:39:20.907] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:20.907] [Render] Metadata:
+[22:39:20.907] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:20.907] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:20.907] [Render] handler_name    : VideoHandler
+[22:39:20.907] [Render] Side data:
+[22:39:20.907] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:20.907] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:20.907] [Render] Metadata:
+[22:39:20.907] [Render] encoder         : Lavc63.25.101 aac
+[22:39:20.907] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:20.907] [Render] handler_name    : SoundHandler
+[22:39:23.999] [Render] [out#0/mp4 @ 000002053786d000] video:1932KiB audio:352KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.765840%
+[22:39:24.000] [Render] [libx264 @ 000002053a6d8280] frame I:3     Avg QP:14.55  size:121905
+[22:39:24.000] [Render] [libx264 @ 000002053a6d8280] frame P:114   Avg QP:17.59  size:  9770
+[22:39:24.000] [Render] [libx264 @ 000002053a6d8280] frame B:333   Avg QP:19.47  size:  1495
+[22:39:24.000] [Render] [libx264 @ 000002053a6d8280] consecutive B-frames:  0.9%  0.4%  2.7% 96.0%
+[22:39:24.000] [Render] [libx264 @ 000002053a6d8280] mb I  I16..4: 43.1% 17.9% 39.1%
+[22:39:24.000] [Render] [libx264 @ 000002053a6d8280] mb P  I16..4:  7.2%  4.3%  1.2%  P16..4:  8.0%  2.8%  0.9%  0.0%  0.0%    skip:75.7%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] mb B  I16..4:  0.4%  0.2%  0.0%  B16..8:  5.0%  0.8%  0.0%  direct: 1.8%  skip:91.8%  L0:47.8% L1:49.2% BI: 3.0%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] 8x8 transform intra:31.9% inter:23.2%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] coded y,uvDC,uvAC intra: 32.1% 50.9% 23.5% inter: 0.6% 2.9% 0.0%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] i16 v,h,dc,p: 67% 22%  8%  3%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 31% 25% 20%  4%  4%  5%  4%  5%  4%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 31% 22% 14%  5%  5%  8%  5%  7%  4%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] i8c dc,h,v,p: 53% 19% 23%  5%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:24.001] [Render] [libx264 @ 000002053a6d8280] kb/s:1054.52
+[22:39:24.060] [Render] [aac @ 0000020539d51300] Qavg: 0.393  Tr: 6.8%  TNS(L): 13.1%  TNS(S): 6.2%  M/S: 67.8%  I/S: 26.5%  PNS: 0.0%
+[22:39:24.071] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 05 [04m24s - 04m39s].mp4'
+[01:39:24] [App] Рендеринг: rendering complete - 100%
+[22:39:24.238] [Render] Smart Face Centering: фокус персонажа определен в 48.2% ширины кадра
+[22:39:24.240] [Render] Рендеринг клипа: [371.40с - 386.40с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 06 [06m11s - 06m26s].mp4' (вертикально=true, субтитры=true)
+[22:39:24.281] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:24.281] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:24.281] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:24.281] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:24.281] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:24.281] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:24.281] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:24.282] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:24.282] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:24.282] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:24.306] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:24.306] [Render] Metadata:
+[22:39:24.306] [Render] major_brand     : mp42
+[22:39:24.306] [Render] minor_version   : 0
+[22:39:24.307] [Render] compatible_brands: mp41isom
+[22:39:24.307] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:24.307] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:24.307] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:24.307] [Render] Metadata:
+[22:39:24.307] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:24.307] [Render] handler_name    : VideoHandler
+[22:39:24.307] [Render] encoder         : AVC Coding
+[22:39:24.307] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:24.307] [Render] Metadata:
+[22:39:24.307] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:24.307] [Render] handler_name    : SoundHandler
+[22:39:24.307] [Render] [Parsed_subtitles_2 @ 0000024f513de800] libass API version: 0x1705000
+[22:39:24.307] [Render] [Parsed_subtitles_2 @ 0000024f513de800] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:24.308] [Render] [Parsed_subtitles_2 @ 0000024f513de800] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:24.309] [Render] [Parsed_subtitles_2 @ 0000024f513de800] Using font provider directwrite (with GDI)
+[22:39:24.313] [Render] Stream mapping:
+[22:39:24.313] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:24.313] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:24.328] [Render] [Parsed_subtitles_2 @ 0000024f513df400] libass API version: 0x1705000
+[22:39:24.328] [Render] [Parsed_subtitles_2 @ 0000024f513df400] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:24.329] [Render] [Parsed_subtitles_2 @ 0000024f513df400] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:24.331] [Render] [Parsed_subtitles_2 @ 0000024f513df400] Using font provider directwrite (with GDI)
+[22:39:24.399] [Render] [Parsed_subtitles_2 @ 0000024f513df400] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:24.402] [Render] [libx264 @ 0000024f544d0280] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:24.407] [Render] [libx264 @ 0000024f544d0280] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:24.407] [Render] [libx264 @ 0000024f544d0280] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:24.407] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 06 [06m11s - 06m26s].mp4':
+[22:39:24.408] [Render] Metadata:
+[22:39:24.408] [Render] encoder         : Lavf63.17.100
+[22:39:24.408] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:24.408] [Render] Metadata:
+[22:39:24.408] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:24.408] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:24.408] [Render] handler_name    : VideoHandler
+[22:39:24.408] [Render] Side data:
+[22:39:24.408] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:24.408] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:24.408] [Render] Metadata:
+[22:39:24.408] [Render] encoder         : Lavc63.25.101 aac
+[22:39:24.408] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:24.408] [Render] handler_name    : SoundHandler
+[22:39:27.816] [Render] [out#0/mp4 @ 0000024f51409c80] video:3316KiB audio:351KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.470676%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] frame I:2     Avg QP:18.50  size:117928
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] frame P:156   Avg QP:19.91  size: 16819
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] frame B:292   Avg QP:20.81  size:  1832
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] consecutive B-frames:  7.1% 14.7% 13.3% 64.9%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] mb I  I16..4: 37.7% 24.3% 37.9%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] mb P  I16..4:  7.7%  3.8%  1.5%  P16..4: 18.7%  6.4%  2.4%  0.0%  0.0%    skip:59.4%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] mb B  I16..4:  0.5%  0.1%  0.0%  B16..8:  6.4%  1.2%  0.1%  direct: 2.0%  skip:89.9%  L0:44.6% L1:49.4% BI: 6.0%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] 8x8 transform intra:28.0% inter:36.6%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] coded y,uvDC,uvAC intra: 30.4% 49.2% 18.8% inter: 2.5% 5.0% 0.1%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] i16 v,h,dc,p: 60% 27%  9%  4%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 27% 36% 21%  2%  2%  2%  4%  2%  3%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 27% 25% 13%  5%  6%  5%  7%  5%  8%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] i8c dc,h,v,p: 47% 25% 24%  4%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:27.818] [Render] [libx264 @ 0000024f544d0280] kb/s:1810.37
+[22:39:27.871] [Render] [aac @ 0000024f514a2080] Qavg: 0.561  Tr: 5.8%  TNS(L): 15.2%  TNS(S): 2.4%  M/S: 63.2%  I/S: 25.3%  PNS: 0.0%
+[22:39:27.883] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 06 [06m11s - 06m26s].mp4'
+[01:39:28] [App] Рендеринг: rendering complete - 100%
+[22:39:28.065] [Render] Smart Face Centering: фокус персонажа определен в 50.9% ширины кадра
+[22:39:28.067] [Render] Рендеринг клипа: [510.00с - 525.00с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 07 [08m30s - 08m45s].mp4' (вертикально=true, субтитры=true)
+[22:39:28.106] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:28.106] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:28.106] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:28.106] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:28.106] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:28.106] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:28.106] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:28.106] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:28.106] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:28.106] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:28.134] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:28.134] [Render] Metadata:
+[22:39:28.135] [Render] major_brand     : mp42
+[22:39:28.135] [Render] minor_version   : 0
+[22:39:28.135] [Render] compatible_brands: mp41isom
+[22:39:28.135] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:28.135] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:28.135] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:28.135] [Render] Metadata:
+[22:39:28.135] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:28.135] [Render] handler_name    : VideoHandler
+[22:39:28.135] [Render] encoder         : AVC Coding
+[22:39:28.135] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:28.135] [Render] Metadata:
+[22:39:28.135] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:28.135] [Render] handler_name    : SoundHandler
+[22:39:28.135] [Render] [Parsed_subtitles_2 @ 000002fd14bd72c0] libass API version: 0x1705000
+[22:39:28.135] [Render] [Parsed_subtitles_2 @ 000002fd14bd72c0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:28.136] [Render] [Parsed_subtitles_2 @ 000002fd14bd72c0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:28.137] [Render] [Parsed_subtitles_2 @ 000002fd14bd72c0] Using font provider directwrite (with GDI)
+[22:39:28.142] [Render] Stream mapping:
+[22:39:28.142] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:28.142] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:28.158] [Render] [Parsed_subtitles_2 @ 000002fd14bd78c0] libass API version: 0x1705000
+[22:39:28.158] [Render] [Parsed_subtitles_2 @ 000002fd14bd78c0] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:28.159] [Render] [Parsed_subtitles_2 @ 000002fd14bd78c0] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:28.161] [Render] [Parsed_subtitles_2 @ 000002fd14bd78c0] Using font provider directwrite (with GDI)
+[22:39:28.233] [Render] [Parsed_subtitles_2 @ 000002fd14bd78c0] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:28.242] [Render] [libx264 @ 000002fd16f90740] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:28.246] [Render] [libx264 @ 000002fd16f90740] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:28.247] [Render] [libx264 @ 000002fd16f90740] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:28.247] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 07 [08m30s - 08m45s].mp4':
+[22:39:28.247] [Render] Metadata:
+[22:39:28.247] [Render] encoder         : Lavf63.17.100
+[22:39:28.247] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:28.247] [Render] Metadata:
+[22:39:28.247] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:28.247] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:28.247] [Render] handler_name    : VideoHandler
+[22:39:28.247] [Render] Side data:
+[22:39:28.247] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:28.247] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:28.247] [Render] Metadata:
+[22:39:28.247] [Render] encoder         : Lavc63.25.101 aac
+[22:39:28.247] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:28.247] [Render] handler_name    : SoundHandler
+[22:39:31.531] [Render] [out#0/mp4 @ 000002fd14c2b8c0] video:2660KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.580188%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] frame I:2     Avg QP:16.82  size:101640
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] frame P:118   Avg QP:17.81  size: 17068
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] frame B:330   Avg QP:18.83  size:  1532
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] consecutive B-frames:  1.1%  2.2%  3.3% 93.3%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] mb I  I16..4: 32.7% 30.1% 37.3%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] mb P  I16..4: 13.2%  6.1%  0.9%  P16..4: 21.3%  7.7%  2.8%  0.0%  0.0%    skip:47.9%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] mb B  I16..4:  0.6%  0.1%  0.0%  B16..8:  5.1%  0.7%  0.0%  direct: 3.5%  skip:89.9%  L0:48.8% L1:49.7% BI: 1.6%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] 8x8 transform intra:28.4% inter:31.7%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] coded y,uvDC,uvAC intra: 22.6% 35.0% 8.9% inter: 1.8% 6.5% 0.0%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] i16 v,h,dc,p: 49% 33% 12%  7%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 26% 26% 29%  4%  3%  4%  2%  3%  3%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 35% 20% 15%  4%  5%  8%  4%  4%  4%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] i8c dc,h,v,p: 61% 18% 17%  3%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:31.533] [Render] [libx264 @ 000002fd16f90740] kb/s:1452.14
+[22:39:31.582] [Render] [aac @ 000002fd14c6f680] Qavg: 0.178  Tr: 10.1%  TNS(L): 25.3%  TNS(S): 3.5%  M/S: 72.3%  I/S: 24.6%  PNS: 0.0%
+[22:39:31.595] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 07 [08m30s - 08m45s].mp4'
+[01:39:32] [App] Рендеринг: rendering complete - 100%
+[22:39:31.750] [Render] Smart Face Centering: фокус персонажа определен в 42.6% ширины кадра
+[22:39:31.752] [Render] Рендеринг клипа: [747.50с - 762.50с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 08 [12m27s - 12m42s].mp4' (вертикально=true, субтитры=true)
+[22:39:31.786] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:31.786] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:31.786] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:31.786] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:31.786] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:31.786] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:31.786] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:31.786] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:31.786] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:31.786] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:31.809] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:31.809] [Render] Metadata:
+[22:39:31.809] [Render] major_brand     : mp42
+[22:39:31.809] [Render] minor_version   : 0
+[22:39:31.809] [Render] compatible_brands: mp41isom
+[22:39:31.809] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:31.809] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:31.809] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:31.809] [Render] Metadata:
+[22:39:31.809] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:31.809] [Render] handler_name    : VideoHandler
+[22:39:31.810] [Render] encoder         : AVC Coding
+[22:39:31.810] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:31.810] [Render] Metadata:
+[22:39:31.810] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:31.810] [Render] handler_name    : SoundHandler
+[22:39:31.810] [Render] [Parsed_subtitles_2 @ 000002a3dffd6780] libass API version: 0x1705000
+[22:39:31.810] [Render] [Parsed_subtitles_2 @ 000002a3dffd6780] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:31.810] [Render] [Parsed_subtitles_2 @ 000002a3dffd6780] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:31.811] [Render] [Parsed_subtitles_2 @ 000002a3dffd6780] Using font provider directwrite (with GDI)
+[22:39:31.815] [Render] Stream mapping:
+[22:39:31.815] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:31.815] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:31.826] [Render] [Parsed_subtitles_2 @ 000002a3dffd5c80] libass API version: 0x1705000
+[22:39:31.826] [Render] [Parsed_subtitles_2 @ 000002a3dffd5c80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:31.827] [Render] [Parsed_subtitles_2 @ 000002a3dffd5c80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:31.828] [Render] [Parsed_subtitles_2 @ 000002a3dffd5c80] Using font provider directwrite (with GDI)
+[22:39:31.882] [Render] [Parsed_subtitles_2 @ 000002a3dffd5c80] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:31.891] [Render] [libx264 @ 000002a3e2dfe400] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:31.895] [Render] [libx264 @ 000002a3e2dfe400] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:31.895] [Render] [libx264 @ 000002a3e2dfe400] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:31.895] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 08 [12m27s - 12m42s].mp4':
+[22:39:31.895] [Render] Metadata:
+[22:39:31.895] [Render] encoder         : Lavf63.17.100
+[22:39:31.895] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:31.895] [Render] Metadata:
+[22:39:31.895] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:31.895] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:31.895] [Render] handler_name    : VideoHandler
+[22:39:31.895] [Render] Side data:
+[22:39:31.895] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:31.895] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:31.895] [Render] Metadata:
+[22:39:31.895] [Render] encoder         : Lavc63.25.101 aac
+[22:39:31.895] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:31.895] [Render] handler_name    : SoundHandler
+[22:39:34.628] [Render] [out#0/mp4 @ 000002a3dffe2080] video:2072KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.716416%
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] frame I:3     Avg QP:14.55  size: 51512
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] frame P:135   Avg QP:16.61  size: 12151
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] frame B:312   Avg QP:18.73  size:  1046
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] consecutive B-frames:  4.9%  5.8%  6.7% 82.7%
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] mb I  I16..4: 54.5% 27.8% 17.6%
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] mb P  I16..4: 14.3%  8.2%  1.9%  P16..4:  6.1%  2.5%  0.9%  0.0%  0.0%    skip:66.1%
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] mb B  I16..4:  0.7%  0.4%  0.1%  B16..8:  1.9%  0.3%  0.0%  direct: 1.3%  skip:95.4%  L0:46.6% L1:52.1% BI: 1.3%
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] 8x8 transform intra:33.3% inter:16.1%
+[22:39:34.630] [Render] [libx264 @ 000002a3e2dfe400] coded y,uvDC,uvAC intra: 23.4% 32.7% 6.3% inter: 0.6% 2.2% 0.0%
+[22:39:34.631] [Render] [libx264 @ 000002a3e2dfe400] i16 v,h,dc,p: 51% 33%  9%  6%
+[22:39:34.631] [Render] [libx264 @ 000002a3e2dfe400] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 21% 34% 26%  4%  3%  3%  4%  3%  3%
+[22:39:34.631] [Render] [libx264 @ 000002a3e2dfe400] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 28% 21% 18%  5%  6%  7%  5%  6%  3%
+[22:39:34.631] [Render] [libx264 @ 000002a3e2dfe400] i8c dc,h,v,p: 56% 23% 17%  3%
+[22:39:34.631] [Render] [libx264 @ 000002a3e2dfe400] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:34.631] [Render] [libx264 @ 000002a3e2dfe400] kb/s:1131.29
+[22:39:34.677] [Render] [aac @ 000002a3e08e8f80] Qavg: 1.426  Tr: 5.2%  TNS(L): 7.6%  TNS(S): 0.0%  M/S: 73.6%  I/S: 20.0%  PNS: 0.0%
+[22:39:34.693] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 08 [12m27s - 12m42s].mp4'
+[01:39:35] [App] Рендеринг: rendering complete - 100%
+[22:39:34.865] [Render] Smart Face Centering: фокус персонажа определен в 62.0% ширины кадра
+[22:39:34.867] [Render] Рендеринг клипа: [900.80с - 915.80с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 09 [15m00s - 15m15s].mp4' (вертикально=true, субтитры=true)
+[22:39:34.900] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:34.900] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:34.900] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:34.900] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:34.900] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:34.900] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:34.900] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:34.900] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:34.900] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:34.900] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:34.924] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:34.924] [Render] Metadata:
+[22:39:34.924] [Render] major_brand     : mp42
+[22:39:34.924] [Render] minor_version   : 0
+[22:39:34.924] [Render] compatible_brands: mp41isom
+[22:39:34.924] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:34.924] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:34.924] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:34.924] [Render] Metadata:
+[22:39:34.924] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:34.925] [Render] handler_name    : VideoHandler
+[22:39:34.925] [Render] encoder         : AVC Coding
+[22:39:34.925] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:34.925] [Render] Metadata:
+[22:39:34.925] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:34.925] [Render] handler_name    : SoundHandler
+[22:39:34.925] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] libass API version: 0x1705000
+[22:39:34.925] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:34.925] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:34.926] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] Using font provider directwrite (with GDI)
+[22:39:34.929] [Render] Stream mapping:
+[22:39:34.929] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:34.930] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:34.942] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] libass API version: 0x1705000
+[22:39:34.942] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:34.943] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:34.944] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] Using font provider directwrite (with GDI)
+[22:39:35.009] [Render] [Parsed_subtitles_2 @ 00000226e8046f80] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:35.014] [Render] [libx264 @ 00000226e9f280c0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:35.018] [Render] [libx264 @ 00000226e9f280c0] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:35.018] [Render] [libx264 @ 00000226e9f280c0] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:35.018] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 09 [15m00s - 15m15s].mp4':
+[22:39:35.018] [Render] Metadata:
+[22:39:35.018] [Render] encoder         : Lavf63.17.100
+[22:39:35.018] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:35.018] [Render] Metadata:
+[22:39:35.018] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:35.018] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:35.018] [Render] handler_name    : VideoHandler
+[22:39:35.018] [Render] Side data:
+[22:39:35.018] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:35.018] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:35.018] [Render] Metadata:
+[22:39:35.019] [Render] encoder         : Lavc63.25.101 aac
+[22:39:35.019] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:35.019] [Render] handler_name    : SoundHandler
+[22:39:38.383] [Render] [out#0/mp4 @ 00000226e8043e80] video:3888KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.409933%
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] frame I:2     Avg QP:17.23  size: 68729
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] frame P:133   Avg QP:18.34  size: 19988
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] frame B:315   Avg QP:19.72  size:  3761
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] consecutive B-frames:  2.7%  8.9%  9.3% 79.1%
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] mb I  I16..4: 37.9% 36.6% 25.5%
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] mb P  I16..4: 19.4% 12.3%  2.8%  P16..4: 12.5%  4.4%  1.5%  0.0%  0.0%    skip:47.2%
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] mb B  I16..4:  1.9%  0.8%  0.1%  B16..8:  8.5%  1.8%  0.1%  direct: 3.4%  skip:83.4%  L0:47.9% L1:48.9% BI: 3.2%
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] 8x8 transform intra:34.7% inter:25.4%
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] coded y,uvDC,uvAC intra: 24.2% 32.6% 8.2% inter: 1.6% 5.6% 0.1%
+[22:39:38.385] [Render] [libx264 @ 00000226e9f280c0] i16 v,h,dc,p: 49% 28% 14%  9%
+[22:39:38.386] [Render] [libx264 @ 00000226e9f280c0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 25% 23% 27%  4%  5%  5%  5%  3%  3%
+[22:39:38.386] [Render] [libx264 @ 00000226e9f280c0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 26% 20% 17%  6%  7%  7%  6%  6%  4%
+[22:39:38.386] [Render] [libx264 @ 00000226e9f280c0] i8c dc,h,v,p: 62% 16% 19%  4%
+[22:39:38.386] [Render] [libx264 @ 00000226e9f280c0] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:38.386] [Render] [libx264 @ 00000226e9f280c0] kb/s:2122.98
+[22:39:38.428] [Render] [aac @ 00000226ea82c100] Qavg: 0.880  Tr: 3.5%  TNS(L): 6.5%  TNS(S): 0.0%  M/S: 72.8%  I/S: 15.9%  PNS: 0.0%
+[22:39:38.438] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 09 [15m00s - 15m15s].mp4'
+[01:39:38] [App] Рендеринг: rendering complete - 100%
+[22:39:38.589] [Render] Smart Face Centering: фокус персонажа определен в 62.6% ширины кадра
+[22:39:38.590] [Render] Рендеринг клипа: [1237.30с - 1252.30с] -> 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 10 [20m37s - 20m52s].mp4' (вертикально=true, субтитры=true)
+[22:39:38.623] [Render] ffmpeg version N-128212-g17a4a474f4-20261030 Copyright (c) 2000-2026 the FFmpeg developers
+[22:39:38.623] [Render] built with gcc 16.2.0 (crosstool-NG 1.29.0.7_b1a94f6)
+[22:39:38.623] [Render] configuration: --prefix=/ffbuild/prefix --pkg-config-flags=--static --pkg-config=pkg-config --cross-prefix=x86_64-w64-mingw32- --arch=x86_64 --target-os=mingw32 --enable-gpl --enable-version3 --disable-debug --disable-w32threads --enable-pthreads --enable-iconv --enable-zlib --enable-libxml2 --enable-libvmaf --disable-libxcb --disable-xlib --enable-fontconfig --enable-libharfbuzz --enable-libfreetype --enable-libfribidi --enable-lcms2 --enable-vulkan --enable-libdav1d --enable-libvorbis --enable-librav1e --enable-librsvg --disable-libpulse --enable-gmp --enable-lzma --enable-liblcevc-dec --enable-opencl --enable-amf --enable-libaom --enable-avisynth --enable-chromaprint --enable-libdavs2 --enable-libdvdread --enable-libdvdnav --disable-libfdk-aac --enable-ffnvcodec --enable-cuda-llvm --enable-frei0r --enable-libgme --enable-libkvazaar --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libcurl --enable-libjxl --enable-libmp3lame --enable-libopus --enable-libplacebo --enable-librist --enable-libssh --enable-libtheora --enable-libvpx --enable-libwebp --enable-libzmq --enable-lv2 --enable-libvpl --enable-openal --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-librubberband --enable-schannel --enable-sdl2 --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libsvtav1 --enable-libtwolame --enable-libuavs3d --disable-libdrm --enable-vaapi --enable-vapoursynth --enable-libvidstab --enable-libvvenc --disable-whisper --enable-libx264 --enable-libx265 --enable-libxavs2 --enable-libxvid --enable-libzimg --enable-libzvbi --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-libs=-lgomp --extra-ldflags=-pthread --extra-ldexeflags= --cc=x86_64-w64-mingw32-gcc --cxx=x86_64-w64-mingw32-g++ --ar=x86_64-w64-mingw32-gcc-ar --ranlib=x86_64-w64-mingw32-gcc-ranlib --nm=x86_64-w64-mingw32-gcc-nm --extra-version=20261030
+[22:39:38.623] [Render] libavutil      61. 20.100 / 61. 20.100
+[22:39:38.623] [Render] libavcodec     63. 25.101 / 63. 25.101
+[22:39:38.623] [Render] libavformat    63. 17.100 / 63. 17.100
+[22:39:38.624] [Render] libavdevice    63.  6.100 / 63.  6.100
+[22:39:38.624] [Render] libavfilter    12. 12.100 / 12. 12.100
+[22:39:38.624] [Render] libswscale     10.  6.100 / 10.  6.100
+[22:39:38.624] [Render] libswresample   7.  7.100 /  7.  7.100
+[22:39:38.646] [Render] Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1).mp4':
+[22:39:38.646] [Render] Metadata:
+[22:39:38.646] [Render] major_brand     : mp42
+[22:39:38.646] [Render] minor_version   : 0
+[22:39:38.646] [Render] compatible_brands: mp41isom
+[22:39:38.646] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:38.646] [Render] Duration: 00:23:41.23, start: 0.000000, bitrate: 6162 kb/s
+[22:39:38.646] [Render] Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 1920x1080, 6031 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+[22:39:38.646] [Render] Metadata:
+[22:39:38.646] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:38.646] [Render] handler_name    : VideoHandler
+[22:39:38.646] [Render] encoder         : AVC Coding
+[22:39:38.646] [Render] Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+[22:39:38.646] [Render] Metadata:
+[22:39:38.646] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:38.646] [Render] handler_name    : SoundHandler
+[22:39:38.647] [Render] [Parsed_subtitles_2 @ 000002633a04a580] libass API version: 0x1705000
+[22:39:38.647] [Render] [Parsed_subtitles_2 @ 000002633a04a580] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:38.647] [Render] [Parsed_subtitles_2 @ 000002633a04a580] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:38.648] [Render] [Parsed_subtitles_2 @ 000002633a04a580] Using font provider directwrite (with GDI)
+[22:39:38.651] [Render] Stream mapping:
+[22:39:38.651] [Render] Stream #0:0 -> #0:0 (h264 (native) -> h264 (libx264))
+[22:39:38.651] [Render] Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+[22:39:38.668] [Render] [Parsed_subtitles_2 @ 000002633a049a80] libass API version: 0x1705000
+[22:39:38.668] [Render] [Parsed_subtitles_2 @ 000002633a049a80] libass source: meson, commit: f61db567e6593df3470e91594bcd4ad2d0473aff
+[22:39:38.669] [Render] [Parsed_subtitles_2 @ 000002633a049a80] Shaper: FriBidi 1.0.17 (SIMPLE) HarfBuzz-ng 15.0.0 (COMPLEX)
+[22:39:38.670] [Render] [Parsed_subtitles_2 @ 000002633a049a80] Using font provider directwrite (with GDI)
+[22:39:38.724] [Render] [Parsed_subtitles_2 @ 000002633a049a80] fontselect: (Arial, 700, 0) -> Arial-BoldMT, 0, Arial-BoldMT
+[22:39:38.731] [Render] [libx264 @ 000002633c19ea40] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[22:39:38.735] [Render] [libx264 @ 000002633c19ea40] profile High, level 4.0, 4:2:0, 8-bit
+[22:39:38.735] [Render] [libx264 @ 000002633c19ea40] 264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=24 lookahead_threads=8 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=21.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+[22:39:38.735] [Render] Output #0, mp4, to 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 10 [20m37s - 20m52s].mp4':
+[22:39:38.735] [Render] Metadata:
+[22:39:38.735] [Render] encoder         : Lavf63.17.100
+[22:39:38.735] [Render] Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 1080x1920, q=2-31, 30 fps, 15360 tbn (default)
+[22:39:38.735] [Render] Metadata:
+[22:39:38.735] [Render] encoder         : Lavc63.25.101 libx264
+[22:39:38.735] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:38.735] [Render] handler_name    : VideoHandler
+[22:39:38.735] [Render] Side data:
+[22:39:38.735] [Render] CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[22:39:38.735] [Render] Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+[22:39:38.735] [Render] Metadata:
+[22:39:38.735] [Render] encoder         : Lavc63.25.101 aac
+[22:39:38.735] [Render] creation_time   : 2026-10-18T21:32:41.000000Z
+[22:39:38.735] [Render] handler_name    : SoundHandler
+[22:39:41.662] [Render] [out#0/mp4 @ 000002633a057100] video:2035KiB audio:353KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.728082%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] frame I:2     Avg QP:15.73  size: 74302
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] frame P:131   Avg QP:16.68  size: 11949
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] frame B:317   Avg QP:19.52  size:  1165
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] consecutive B-frames:  3.6%  5.3%  6.7% 84.4%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] mb I  I16..4: 37.0% 37.1% 25.9%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] mb P  I16..4: 12.1%  6.9%  1.7%  P16..4:  6.6%  2.9%  1.0%  0.0%  0.0%    skip:68.8%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] mb B  I16..4:  0.7%  0.3%  0.0%  B16..8:  2.6%  0.4%  0.0%  direct: 1.3%  skip:94.6%  L0:41.0% L1:56.6% BI: 2.4%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] 8x8 transform intra:32.8% inter:22.0%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] coded y,uvDC,uvAC intra: 26.2% 23.8% 4.9% inter: 0.8% 2.1% 0.0%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] i16 v,h,dc,p: 44% 38%  9%  8%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 29% 28% 22%  3%  3%  4%  4%  3%  4%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 33% 21% 17%  4%  5%  6%  5%  5%  4%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] i8c dc,h,v,p: 66% 15% 16%  2%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] Weighted P-Frames: Y:0.0% UV:0.0%
+[22:39:41.664] [Render] [libx264 @ 000002633c19ea40] kb/s:1111.00
+[22:39:41.703] [Render] [aac @ 000002633c73d840] Qavg: 2.626  Tr: 2.1%  TNS(L): 5.7%  TNS(S): 0.0%  M/S: 71.0%  I/S: 21.5%  PNS: 0.0%
+[22:39:41.714] [Render] Клип успешно создан: 'I:\YandexDisk\Озвучка\Некий ITEM тёмной стороны\Готовое\[1 серия] Некий ITEM темной стороны TV1 [Озвучка аниме _ Оканэ] (1)_Проект\Готовые клипы\Клип 10 [20m37s - 20m52s].mp4'
+[01:39:42] [App] Рендеринг: rendering complete - 100%
+[01:39:42] [App] Экспорт успешно завершен! Сгенерировано Reels: 10

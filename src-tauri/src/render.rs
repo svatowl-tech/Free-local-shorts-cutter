@@ -121,6 +121,7 @@ pub async fn render_clip(
     
     // Формируем аргументы для FFmpeg
     let mut args = vec![
+        "-hide_banner".to_string(),
         "-nostdin".to_string(),
         "-y".to_string(),
         "-ss".to_string(), format!("{:.3}", start_sec),
@@ -261,9 +262,9 @@ pub async fn render_clip(
                 CommandEvent::Stderr(bytes) => {
                     crate::logger::emit_stream_lines(&app_handle_clone, "Render", "debug", &bytes);
                     let log_line = String::from_utf8_lossy(&bytes);
-                    if let Some(pos) = log_line.find("time=") {
+                    if let Some(pos) = log_line.rfind("time=") {
                         let time_part = &log_line[pos + 5..];
-                        let space_pos = time_part.find(' ').unwrap_or(time_part.len());
+                        let space_pos = time_part.find(|c: char| c.is_whitespace()).unwrap_or(time_part.len());
                         let time_str = &time_part[..space_pos];
                         let parts: Vec<&str> = time_str.trim().split(':').collect();
                         if parts.len() == 3 {
@@ -399,40 +400,81 @@ async fn detect_character_center_ratio(
         if row_start + width * 3 > pixel_data.len() {
             break;
         }
+        // В BMP строки хранятся снизу вверх: y = height - 1 — верхний край кадра (0.0), y = 0 — нижний край (1.0)
+        let y_from_top = (height - 1 - y) as f64 / height as f64;
+        // Зона лиц и голов персонажей в кадре 16:9: от 10% до 62% сверху
+        let y_mult = if y_from_top >= 0.10 && y_from_top <= 0.62 {
+            2.8
+        } else if y_from_top > 0.62 && y_from_top <= 0.80 {
+            1.0
+        } else {
+            0.15
+        };
+
+        let mut prev_luma = 0.0f64;
         for x in 0..width {
             let b = pixel_data[row_start + x * 3] as f64;
             let g = pixel_data[row_start + x * 3 + 1] as f64;
             let r = pixel_data[row_start + x * 3 + 2] as f64;
 
-            // Детекция оттенков кожи и лиц (RGB модель: R > 95, G > 40, B > 20, max-min > 15, |R-G| > 15, R > G, R > B)
-            let is_skin = r > 95.0 && g > 40.0 && b > 20.0 
-                && (r.max(g).max(b) - r.min(g).min(b)) > 15.0 
-                && (r - g).abs() > 15.0 
-                && r > g && r > b;
+            let max_c = r.max(g).max(b);
+            let min_c = r.min(g).min(b);
+            let sat = max_c - min_c;
+            let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            let edge_diff = if x > 0 { (luma - prev_luma).abs() } else { 0.0 };
+            prev_luma = luma;
 
-            // Вес лица: верхняя треть/половина кадра имеет больший приоритет (там обычно голова)
-            let y_rel = (height - 1 - y) as f64 / height as f64;
-            let y_mult = if y_rel > 0.35 && y_rel < 0.95 { 2.5 } else { 0.5 };
+            // 1. Реалистичные тона кожи (R > G > B)
+            let is_real_skin = r > 95.0 && g > 40.0 && b > 20.0
+                && sat > 15.0
+                && (r - g) > 12.0
+                && r > g && g >= b;
 
-            if is_skin {
-                col_weights[x] += 3.0 * y_mult;
-            } else {
-                let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-                col_weights[x] += (luminance / 255.0) * 0.1 * y_mult;
+            // 2. Светлые тона кожи в аниме/анимации (высокая яркость, теплый персиково-розовый оттенок)
+            let is_anime_skin = r > 175.0 && g > 135.0 && b > 115.0
+                && r >= g && g >= b
+                && (r - b) >= 12.0 && (r - b) <= 65.0
+                && (r - g) <= 45.0;
+
+            if is_real_skin || is_anime_skin {
+                col_weights[x] += (4.5 + (edge_diff * 0.08).min(2.5)) * y_mult;
+            } else if edge_diff > 22.0 && sat > 25.0 && luma > 35.0 && luma < 240.0 {
+                // Четкие контуры глаз/волос/персонажа на переднем плане (без учета плоского фона)
+                col_weights[x] += 1.2 * y_mult;
             }
         }
     }
 
     let total_weight: f64 = col_weights.iter().sum();
-    if total_weight <= 1.0 {
+    if total_weight <= 5.0 {
         return 0.5;
     }
 
+    // Поиск оптимального окна кадрирования 9:16 (ширина окна = 180 * 9 / 16 = 101 пиксель из 320)
+    // Метод скользящего окна находит реальную позицию персонажа (например, 28% или 72%), не размывая её фоном до 50%
+    let crop_win = ((height * 9) / 16).clamp(60, width);
+    let half_win = crop_win / 2;
+    let mut best_window_sum = -1.0f64;
+    let mut best_center_x = width / 2;
+
+    for center_x in half_win..=(width - half_win) {
+        let start_x = center_x - half_win;
+        let end_x = (start_x + crop_win).min(width);
+        let win_sum: f64 = col_weights[start_x..end_x].iter().sum();
+        if win_sum > best_window_sum {
+            best_window_sum = win_sum;
+            best_center_x = center_x;
+        }
+    }
+
+    let window_ratio = (best_center_x as f64) / (width as f64);
     let mut center_of_mass = 0.0f64;
     for (x, &w) in col_weights.iter().enumerate() {
         center_of_mass += (x as f64) * w;
     }
+    let com_ratio = (center_of_mass / total_weight) / (width as f64);
 
-    let calculated_ratio = (center_of_mass / total_weight) / (width as f64);
-    calculated_ratio.clamp(0.15, 0.85)
+    // Комбинируем пик скользящего окна (70%) и центр масс значимых контуров (30%)
+    let calculated_ratio = window_ratio * 0.70 + com_ratio * 0.30;
+    calculated_ratio.clamp(0.18, 0.82)
 }

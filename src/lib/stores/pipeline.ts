@@ -107,9 +107,19 @@ const createPipelineStore = () => {
   });
   const { subscribe, set, update } = store;
 
+  const formatLocalTimestamp = (): string => {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ss = String(now.getSeconds()).padStart(2, '0');
+    const ms = String(now.getMilliseconds()).padStart(3, '0');
+    return `${hh}:${mm}:${ss}.${ms}`;
+  };
+
   // Вспомогательная функция глубокого логирования с выводом в системную консоль браузера
   const appendLog = (params: { message: string; stage?: string; level?: 'info' | 'warn' | 'error' | 'debug'; timestamp?: string }) => {
-    const ts = params.timestamp || new Date().toLocaleTimeString();
+    // Используем единое локальное время пользователя (с миллисекундами), чтобы логи Rust (UTC) и фронтенда не расходились по часовым поясам
+    const ts = formatLocalTimestamp();
     const stage = params.stage || 'Frontend';
     const level = params.level || 'info';
     const message = params.message;
@@ -137,8 +147,8 @@ const createPipelineStore = () => {
 
     update(s => ({
       ...s,
-      logs: [...s.logs.slice(-1500), formattedLine],
-      detailedLogs: [...s.detailedLogs.slice(-1500), entry]
+      logs: [...s.logs.slice(-3000), formattedLine],
+      detailedLogs: [...s.detailedLogs.slice(-3000), entry]
     }));
   };
 
@@ -528,7 +538,10 @@ const createPipelineStore = () => {
               }
             }));
             const rounded = Math.round(payload.percent);
-            if (rounded - lastRenderPct >= 5 || rounded === 100) {
+            if (rounded < lastRenderPct) {
+              lastRenderPct = -10;
+            }
+            if (rounded - lastRenderPct >= 10 || rounded === 100) {
               lastRenderPct = rounded;
               addLog(`Рендеринг: ${payload.stage} - ${rounded}%`);
             }
@@ -755,7 +768,10 @@ const createPipelineStore = () => {
               }
             }));
             const rounded = Math.round(payload.percent);
-            if (rounded - lastRenderPct >= 5 || rounded === 100) {
+            if (rounded < lastRenderPct) {
+              lastRenderPct = -10;
+            }
+            if (rounded - lastRenderPct >= 10 || rounded === 100) {
               lastRenderPct = rounded;
               addLog(`FFmpeg Рендеринг: ${payload.stage} - ${rounded}%`);
             }

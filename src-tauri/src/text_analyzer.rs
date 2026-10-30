@@ -168,6 +168,7 @@ pub async fn analyze_text_with_llm(
             let batch_size = 35;
             let total_batches = (fragments.len() + batch_size - 1) / batch_size;
             let mut use_gpu = true;
+            let mut consecutive_parse_failures = 0usize;
 
             for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
                 if cancel_rx.try_recv().is_ok() {
@@ -191,13 +192,19 @@ pub async fn analyze_text_with_llm(
                     cancel_rx.resubscribe(),
                 ).await;
 
-                // Если запуск с GPU offload (-ngl 99) упал, пробуем один раз на CPU (-ngl 0)
-                if batch_res.is_err() && use_gpu {
+                // Если запуск с GPU offload (-ngl 99) упал ИЛИ вернул поврежденный вывод (например, 'GGGG...' из-за переполнения FP16 NaN в CUDA на RTX 20xx),
+                // немедленно переключаемся на стабильный режим CPU (-ngl 0) и повторяем текущий пакет!
+                let gpu_output_corrupted = match &batch_res {
+                    Ok(out) => parse_json_array(out).is_none(),
+                    Err(_) => true,
+                };
+
+                if gpu_output_corrupted && use_gpu {
                     crate::logger::emit_log(
                         app_handle,
                         "LLM",
                         "warn",
-                        "Попытка запуска llama-cli с GPU-ускорением не удалась, пробуем режим CPU (-ngl 0)...",
+                        "Обнаружен сбой генерации на GPU (артефакты CUDA FP16 / невалидный вывод). Автоматическое переключение llama-cli в стабильный режим CPU (-ngl 0) и повтор пакета...",
                     );
                     use_gpu = false;
                     batch_res = run_llama_cli(
@@ -213,6 +220,7 @@ pub async fn analyze_text_with_llm(
                     Ok(result) => {
                         let parsed = parse_json_array(&result);
                         if let Some(ref batch_scores) = parsed {
+                            consecutive_parse_failures = 0;
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
@@ -221,6 +229,7 @@ pub async fn analyze_text_with_llm(
                             );
                             all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
                         } else {
+                            consecutive_parse_failures += 1;
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
@@ -228,6 +237,18 @@ pub async fn analyze_text_with_llm(
                                 "Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.",
                             );
                             all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+
+                            if consecutive_parse_failures >= 2 && batch_idx + 1 < total_batches {
+                                crate::logger::emit_log(
+                                    app_handle,
+                                    "LLM",
+                                    "warn",
+                                    "Предохранитель LLM: повторный невалидный вывод модели. Автоматическое переключение оставшихся пакетов на скоростной встроенный NLP-движок без потери времени.",
+                                );
+                                let remaining = &fragments[(batch_idx + 1) * batch_size..];
+                                all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                                break;
+                            }
                         }
                     }
                     Err(e) => {
@@ -340,17 +361,17 @@ fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     }
     let input_list = lines.join("\n");
     format!(
-        "<|im_start|>system\n\
-        Ты профессиональный видеомонтажер и аналитик вовлекающего контента. \
-        Твоя задача — оценить каждую реплику по шкале от 0.0 до 1.0 на предмет виральности, эмоций, драмы, юмора, панчлайна или кульминации.\n\
-        ПРАВИЛО: Выведи ИСКЛЮЧИТЕЛЬНО валидный JSON-массив из {} чисел. Без пояснений, без вводных слов. Пример: [0.85, 0.20]\n\
-        <|im_end|>\n\
-        <|im_start|>user\n\
-        Оцени следующие реплики:\n{}\n\
-        <|im_end|>\n\
-        <|im_start|>assistant\n[",
+        "Instruction: Ты профессиональный видеомонтажер и аналитик вирусных роликов (Shorts, Reels, TikTok).\n\
+Оцени каждую из {} реплик по шкале от 0.0 до 1.0 на предмет виральности, эмоций, драмы, юмора, панчлайна или кульминации.\n\
+ПРАВИЛО: Выведи ТОЛЬКО валидный JSON-массив из {} чисел с плавающей точкой в том же порядке. Без текста и без пояснений.\n\
+Пример ответа: [0.85, 0.30, 0.65]\n\n\
+Реплики ({} шт.):\n{}\n\n\
+Ответ (JSON-массив из {} чисел):\n[",
         fragments.len(),
-        input_list
+        fragments.len(),
+        fragments.len(),
+        input_list,
+        fragments.len()
     )
 }
 
@@ -430,13 +451,19 @@ async fn run_llama_cli(
     tokio::fs::write(&prompt_file, prompt.as_bytes()).await.map_err(AppError::Io)?;
 
     let ngl_val = if use_gpu { "99" } else { "0" };
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get().clamp(2, 8))
+        .unwrap_or(4)
+        .to_string();
 
     // Передаем:
     // -f <prompt_file>: чтение UTF-8 промпта напрямую из файла (без искажения кириллицы в Windows argv)
     // -c 2048: ограничиваем контекст до 2048 вместо 32768 по умолчанию (экономит ~1.7 ГБ памяти и ускоряет старт в 15 раз!)
-    // -ngl 99: выгружаем все слои модели на GPU (RTX / CUDA / Metal)
+    // -ngl 99/0: выгружаем слои модели на GPU или CPU
+    // -t <threads>: оптимальное число потоков CPU
     // -n 384: лимит генерируемых токенов для JSON-массива
     // --temp 0.1: детерминированный JSON-вывод
+    // --repeat-penalty 1.15: защита от зацикливания одного токена
     // --no-display-prompt: выводим в stdout только сгенерированный ответ
     let cmd = sidecar_command
         .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
@@ -445,8 +472,10 @@ async fn run_llama_cli(
             "-f", &prompt_file.to_string_lossy(),
             "-c", "2048",
             "-ngl", ngl_val,
+            "-t", &threads,
             "-n", "384",
             "--temp", "0.1",
+            "--repeat-penalty", "1.15",
             "--no-display-prompt",
         ]);
 

@@ -235,11 +235,19 @@ pub async fn run_pipeline(
         let avg_score = if cue_count > 0 { sum_score / (cue_count as f64) } else { base_score };
         let speech_density = (active_speech_sec / clip_duration).clamp(0.0, 1.0);
 
-        // Бонус, если внутри окна есть визуальная смена сцены или звуковой пик
-        let has_scene_peak = scenes.iter().any(|s| s.timestamp_sec >= win_start && s.timestamp_sec <= win_end);
-        let scene_bonus = if has_scene_peak { 0.08 } else { 0.0 };
+        // Динамический бонус, если внутри окна есть визуальная смена сцены или звуковой пик
+        let max_scene_in_win = scenes
+            .iter()
+            .filter(|s| s.timestamp_sec >= win_start && s.timestamp_sec <= win_end)
+            .map(|s| s.intensity)
+            .fold(0.0_f64, f64::max);
+        let scene_bonus = if max_scene_in_win > 0.0 {
+            (max_scene_in_win * 0.11).clamp(0.04, 0.10)
+        } else {
+            0.0
+        };
 
-        let window_score = (peak_score * 0.55 + avg_score * 0.25 + speech_density * 0.20 + scene_bonus).min(0.99);
+        let window_score = (peak_score * 0.58 + avg_score * 0.24 + speech_density * 0.18 + scene_bonus).min(0.99);
 
         if window_score >= config.min_intensity_threshold * 0.92 {
             candidate_intervals.push((win_start, win_end, window_score));
@@ -251,11 +259,21 @@ pub async fn run_pipeline(
         if scene.timestamp_sec < intro_skip || scene.timestamp_sec >= outro_limit {
             continue;
         }
-        if scene.intensity >= config.min_intensity_threshold {
-            let start = (scene.timestamp_sec - 2.0).max(intro_skip).min((outro_limit - clip_duration).max(0.0));
-            let end = (start + clip_duration).min(video_duration);
-            if end - start >= 4.0 {
-                candidate_intervals.push((start, end, scene.intensity));
+        let start = (scene.timestamp_sec - 2.0).max(intro_skip).min((outro_limit - clip_duration).max(0.0));
+        let end = (start + clip_duration).min(video_duration);
+        if end - start >= 4.0 {
+            // Если в видео есть субтитры, проверяем наличие живой речи внутри визуальной сцены,
+            // чтобы музыкальные заставки без слов не вытесняли сюжетные диалоги
+            let has_dialogue_in_scene = fragments.is_empty() || fragments.iter().any(|f| {
+                f.end > start && f.start < end && !crate::whisper::is_whisper_hallucination(&f.text)
+            });
+            let effective_intensity = if has_dialogue_in_scene {
+                scene.intensity
+            } else {
+                scene.intensity * 0.84
+            };
+            if effective_intensity >= config.min_intensity_threshold {
+                candidate_intervals.push((start, end, effective_intensity));
             }
         }
     }

@@ -114,18 +114,51 @@ pub async fn analyze_video(
 
         let mut candidate_scenes = Vec::new();
 
-        // А. Сопоставление смен сцен со звуковыми пиками
+        // А. Многофакторная оценка динамики сцен (частота монтажных склеек + звуковая энергия + драматургическая позиция)
         for (idx, &scene_t) in scene_cuts.iter().enumerate() {
-            if scene_t >= duration - 2.0 {
+            if scene_t < 3.0 || scene_t >= duration - 3.0 {
                 continue;
             }
-            // Проверяем, попадает ли смена сцены в звуковую активность (или рядом с ней в пределах 3 сек)
-            let is_near_audio = audio_ranges.iter().any(|(a_start, a_end)| {
-                scene_t >= (a_start - 2.0) && scene_t <= (a_end + 2.0)
+
+            // 1. Плотность монтажных склеек в 15-секундном окне вокруг точки (индикатор экшена и динамики)
+            let local_cuts = scene_cuts
+                .iter()
+                .filter(|&&t| (t - scene_t).abs() <= 7.5)
+                .count();
+            let cut_density_bonus = ((local_cuts as f64 - 1.0) / 10.0).clamp(0.0, 0.16);
+
+            // 2. Сопоставление со звуковой активностью
+            let matching_audio = audio_ranges.iter().find(|(a_start, a_end)| {
+                scene_t >= (*a_start - 1.5) && scene_t <= (*a_end + 1.5)
             });
 
-            let intensity = if is_near_audio { 0.88 } else { 0.65 };
-            let actions = if is_near_audio {
+            let is_near_audio = matching_audio.is_some();
+            let audio_bonus = if let Some((a_start, a_end)) = matching_audio {
+                let seg_len = (a_end - a_start).max(1.0);
+                // Бонус за попадание в активную фазу звукового сегмента
+                let rel_pos = ((scene_t - a_start) / seg_len).clamp(0.0, 1.0);
+                let focus = 1.0 - (rel_pos - 0.35).abs();
+                0.12 + (focus * 0.06).clamp(0.0, 0.06)
+            } else {
+                0.0
+            };
+
+            // 3. Защита от перекоса в сторону заставки/опенинга (первые 95с и последние 90с в длинных видео > 10 мин)
+            let pos_ratio = (scene_t / duration).clamp(0.0, 1.0);
+            let narrative_factor = if duration > 600.0 && (scene_t < 95.0 || scene_t > duration - 90.0) {
+                0.85
+            } else if pos_ratio >= 0.35 && pos_ratio <= 0.88 {
+                1.04
+            } else {
+                1.0
+            };
+
+            let raw_intensity = (0.60 + cut_density_bonus + audio_bonus) * narrative_factor;
+            let intensity = raw_intensity.clamp(0.55, 0.94);
+
+            let actions = if is_near_audio && local_cuts >= 4 {
+                vec!["экшен/кульминация".to_string(), "эмоциональная речь".to_string()]
+            } else if is_near_audio {
                 vec!["динамика".to_string(), "реплика/эмоция".to_string()]
             } else {
                 vec!["смена плана".to_string(), "движение".to_string()]
@@ -133,7 +166,7 @@ pub async fn analyze_video(
 
             candidate_scenes.push(SceneCandidate {
                 timestamp_sec: scene_t,
-                description: format!("Сцена #{} (динамичный момент {:.1}с)", idx + 1, scene_t),
+                description: format!("Сцена #{} (динамика {:.1}с, склеек: {})", idx + 1, scene_t, local_cuts),
                 intensity,
                 actions,
             });
@@ -147,23 +180,24 @@ pub async fn analyze_video(
                     candidate_scenes.push(SceneCandidate {
                         timestamp_sec: mid,
                         description: format!("Звуковой пик #{} (активная речь {:.1}с)", idx + 1, mid),
-                        intensity: 0.82,
+                        intensity: 0.78,
                         actions: vec!["диалог".to_string(), "активность".to_string()],
                     });
                 }
             }
         }
 
-        // В. Сортируем по весу и устраняем скученность (Non-Maximum Suppression с окном 15с)
+        // В. Сортируем по весу и устраняем скученность (адаптивный шаг для равномерного охвата всего видео)
         candidate_scenes.sort_by(|a, b| b.intensity.partial_cmp(&a.intensity).unwrap_or(std::cmp::Ordering::Equal));
 
+        let min_scene_dist = (duration / 22.0).clamp(15.0, 55.0);
         let mut filtered_scenes = Vec::new();
         for sc in candidate_scenes {
-            let too_close = filtered_scenes.iter().any(|f: &SceneCandidate| (f.timestamp_sec - sc.timestamp_sec).abs() < 15.0);
+            let too_close = filtered_scenes.iter().any(|f: &SceneCandidate| (f.timestamp_sec - sc.timestamp_sec).abs() < min_scene_dist);
             if !too_close {
                 filtered_scenes.push(sc);
             }
-            if filtered_scenes.len() >= 12 {
+            if filtered_scenes.len() >= 15 {
                 break;
             }
         }

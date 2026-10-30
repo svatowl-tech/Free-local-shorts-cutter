@@ -47,10 +47,10 @@ pub fn emit_log(app: &AppHandle, stage: &str, level: &str, message: &str) {
 }
 
 /// Утилита для безопасной очистки и разбиения stdout/stderr потоков на строки
-/// Фильтрует сырые технические строки прогресса FFmpeg (size=/frame=/time=), чтобы не перегружать IPC
+/// Фильтрует сырые технические строки прогресса FFmpeg и внутренние дампы метаданных llama-cli, чтобы не перегружать IPC и буфер консоли
 pub fn emit_stream_lines(app: &AppHandle, stage: &str, level: &str, bytes: &[u8]) {
     let text = String::from_utf8_lossy(bytes);
-    for line in text.lines() {
+    for line in text.split(['\n', '\r']) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
@@ -59,8 +59,78 @@ pub fn emit_stream_lines(app: &AppHandle, stage: &str, level: &str, bytes: &[u8]
         if (trimmed.starts_with("frame=") || trimmed.starts_with("size=")) && trimmed.contains("time=") && trimmed.contains("speed=") {
             continue;
         }
+        if is_noisy_stream_line(stage, trimmed) {
+            continue;
+        }
         emit_log(app, stage, level, trimmed);
     }
+}
+
+fn is_noisy_stream_line(stage: &str, line: &str) -> bool {
+    if stage == "LLM" {
+        const LLAMA_NOISE_PREFIXES: &[&str] = &[
+            "Log start",
+            "Log end",
+            "main: build =",
+            "main: built with",
+            "main: seed  =",
+            "llama_model_loader:",
+            "llm_load_print_meta:",
+            "llm_load_vocab:",
+            "llm_load_tensors:",
+            "llama_new_context_with_model:",
+            "llama_kv_cache_init:",
+            "system_info:",
+            "sampling:",
+            "sampling order:",
+            "CFG ->",
+            "generate: n_ctx",
+            "llama_print_timings:",
+        ];
+        if LLAMA_NOISE_PREFIXES.iter().any(|p| line.starts_with(p)) {
+            return true;
+        }
+        if line.chars().all(|c| c == '.' || c.is_whitespace()) {
+            return true;
+        }
+        if line.contains("GGGGGGGG") {
+            return true;
+        }
+    }
+
+    if stage == "Render" || stage == "FFmpeg" {
+        const FFMPEG_NOISE_PREFIXES: &[&str] = &[
+            "ffmpeg version",
+            "built with gcc",
+            "configuration: --",
+            "libavutil",
+            "libavcodec",
+            "libavformat",
+            "libavdevice",
+            "libavfilter",
+            "libswscale",
+            "libswresample",
+            "libpostproc",
+            "[Parsed_subtitles_",
+            "[libx264 @",
+            "[aac @",
+            "Metadata:",
+            "major_brand",
+            "minor_version",
+            "compatible_brands",
+            "creation_time",
+            "handler_name",
+            "vendor_id",
+            "encoder         :",
+            "Side data:",
+            "cpb: bitrate",
+        ];
+        if FFMPEG_NOISE_PREFIXES.iter().any(|p| line.starts_with(p)) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Формирует расширенный PATH с папками ресурсов для корректной загрузки DLL (CUDA, whisper.dll, ggml.dll)
