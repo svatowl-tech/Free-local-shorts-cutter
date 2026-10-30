@@ -239,12 +239,7 @@ jobs:
           sudo mdutil -a -i off || true
 
       - name: Сборка дистрибутивов через Tauri
-        run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            npx @tauri-apps/cli build --target ${{ matrix.target }} --bundles app
-          else
-            npx @tauri-apps/cli build --target ${{ matrix.target }}
-          fi
+        run: npx @tauri-apps/cli build --target ${{ matrix.target }} ${{ runner.os == 'macOS' && '--bundles app' || '' }}
         env:
           TARGET: ${{ matrix.target }}
 
