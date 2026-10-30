@@ -347,11 +347,26 @@ const createPipelineStore = () => {
       }));
       addLog('Операция отменена пользователем.', 'Pipeline', 'warn');
     },
-    openFolder: async (folderPath: string) => {
+    openFolder: async (folderPath: string): Promise<string> => {
+      const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+      const fallbackDir =
+        folderPath.substring(0, folderPath.lastIndexOf('/')) ||
+        folderPath.substring(0, folderPath.lastIndexOf('\\')) ||
+        folderPath ||
+        'output_cuts';
+
+      if (!isTauri) {
+        addLog(`Открыта папка готовых роликов: ${fallbackDir}`, 'UI', 'info');
+        return fallbackDir;
+      }
+
       try {
-        await ipcOpenFolder(folderPath);
+        const openedPath = await ipcOpenFolder(folderPath);
+        return openedPath || fallbackDir;
       } catch (err) {
-        console.error('Ошибка открытия папки:', err);
+        console.error('Ошибка открытия папки через IPC:', err);
+        addLog(`Не удалось автоматически открыть проводник для: ${fallbackDir} (${err})`, 'UI', 'warn');
+        return fallbackDir;
       }
     },
     reset: () => {
@@ -859,6 +874,7 @@ export async function cancelPipeline(): Promise<void> {
   return await pipelineStore.cancelPipeline();
 }
 
-export async function openFolder(folderPath: string): Promise<void> {
+export async function openFolder(folderPath: string): Promise<string> {
   return await pipelineStore.openFolder(folderPath);
 }
+

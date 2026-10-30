@@ -330,32 +330,87 @@ pub async fn cancel_pipeline(
 /// Асинхронная команда: Открытие директории в проводнике операционной системы
 #[tauri::command]
 pub async fn open_folder(
+    app: AppHandle,
     folder_path: String,
-) -> AppResult<()> {
-    let path = PathBuf::from(&folder_path);
-    let target_dir = if path.is_file() {
-        path.parent().map(|p| p.to_path_buf()).unwrap_or(path)
+) -> AppResult<String> {
+    let trimmed = folder_path.trim();
+    let path = if trimmed.is_empty() {
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     } else {
-        path
+        PathBuf::from(trimmed)
     };
+
+    let raw_target = if path.is_dir() {
+        path.clone()
+    } else if path.is_file() || path.extension().is_some() {
+        path.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    } else {
+        path.clone()
+    };
+
+    let abs_target = if raw_target.is_relative() {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&raw_target))
+            .unwrap_or(raw_target)
+    } else {
+        raw_target
+    };
+
+    let existing_dir = abs_target
+        .ancestors()
+        .find(|p| p.exists() && p.is_dir())
+        .map(|p| p.to_path_buf())
+        .unwrap_or(abs_target);
+
+    crate::logger::emit_log(
+        &app,
+        "System",
+        "info",
+        &format!("Открытие папки с готовыми роликами в проводнике ОС: '{}'", existing_dir.display()),
+    );
 
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("explorer")
-            .arg(&target_dir)
-            .spawn();
+        let win_dir = existing_dir
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .replace('/', r"\");
+        std::process::Command::new("explorer")
+            .arg(&win_dir)
+            .spawn()
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить проводник Windows: {}", e)))?;
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open")
-            .arg(&target_dir)
-            .spawn();
+        if path.exists() && path.is_file() {
+            let status = std::process::Command::new("open")
+                .arg("-R")
+                .arg(&path)
+                .spawn();
+            if status.is_err() {
+                std::process::Command::new("open")
+                    .arg(&existing_dir)
+                    .spawn()
+                    .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось открыть Finder: {}", e)))?;
+            }
+        } else {
+            std::process::Command::new("open")
+                .arg(&existing_dir)
+                .spawn()
+                .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось открыть Finder: {}", e)))?;
+        }
     }
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("xdg-open")
-            .arg(&target_dir)
-            .spawn();
+        std::process::Command::new("xdg-open")
+            .arg(&existing_dir)
+            .spawn()
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось открыть файловый менеджер (xdg-open): {}", e)))?;
     }
-    Ok(())
+
+    Ok(existing_dir.to_string_lossy().to_string())
 }
+

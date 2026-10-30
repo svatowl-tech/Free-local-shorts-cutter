@@ -236,12 +236,9 @@ export async function cancelPipeline(): Promise<void> {
   }
 }
 
-export async function openFolder(folderPath: string): Promise<void> {
-  try {
-    await invoke('open_folder', { folderPath });
-  } catch (err) {
-    console.error('open_folder invoke error:', err);
-  }
+export async function openFolder(folderPath: string): Promise<string> {
+  return await invoke<string>('open_folder', { folderPath });
 }
+
 
 

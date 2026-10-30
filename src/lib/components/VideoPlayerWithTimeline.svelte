@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { pipelineStore } from '../stores/pipeline';
-  import { fragmentsStore, addFragment, addFragmentRange, removeFragment, updateFragment, clearFragments } from '../stores/fragments';
+  import { fragmentsStore, addFragmentRange, removeFragment, updateFragment, clearFragments } from '../stores/fragments';
   import type { Fragment } from '../stores/fragments';
   import Timeline from './Timeline.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
@@ -14,18 +14,18 @@
     Smartphone, 
     Film, 
     Sparkles, 
-    Clock, 
     Download, 
     Check,
     Volume2,
     VolumeX,
     AlertTriangle,
     FolderOpen,
-    Minus,
-    Plus
+    ZoomIn,
+    Repeat
   } from '@lucide/svelte';
 
   let videoEl: HTMLVideoElement;
+  let timelineComponent: Timeline;
   let videoSrc = '';
   let duration = 0;
   let currentTime = 0;
@@ -43,8 +43,12 @@
   // Текущая точка "In" для быстрой разметки с клавиатуры / кнопок
   let inPoint: number | null = null;
 
-  // Воспроизведение конкретного фрагмента с автоостановкой
-  let activePlayingFragment: Fragment | null = null;
+  // ID воспроизводимого в режиме предпросмотра фрагмента (реактивно синхронизирован со стором)
+  let activePlayingFragmentId: string | null = null;
+  let loopPreview = false;
+
+  $: activePlayingFragment = $fragmentsStore.find((f) => f.id === activePlayingFragmentId) ?? null;
+  $: activePlayingIndex = $fragmentsStore.findIndex((f) => f.id === activePlayingFragmentId);
 
   // Экспортное состояние
   let isExporting = false;
@@ -77,7 +81,7 @@
     }
   }
 
-  function handleVideoError(e: Event) {
+  function handleVideoError() {
     videoLoadError = true;
     const mediaError = videoEl?.error;
     let msg = 'Видео не может быть отображено встроенным движком WebView2';
@@ -118,29 +122,43 @@
     }
   });
 
-  function adjustFragmentStart(fragId: string, delta: number) {
+  function adjustFragmentStart(fragId: string, delta: number, e?: MouseEvent) {
+    e?.stopPropagation();
     const frag = $fragmentsStore.find(f => f.id === fragId);
     if (!frag) return;
-    const newStart = Math.max(0, Math.min(frag.start + delta, frag.end - 0.5));
+    const newStart = Math.round(Math.max(0, Math.min(frag.start + delta, frag.end - 0.5)) * 20) / 20;
     updateFragment(fragId, { start: newStart });
+    if (videoEl) {
+      videoEl.currentTime = newStart;
+    }
   }
 
-  function adjustFragmentEnd(fragId: string, delta: number) {
+  function adjustFragmentEnd(fragId: string, delta: number, e?: MouseEvent) {
+    e?.stopPropagation();
     const frag = $fragmentsStore.find(f => f.id === fragId);
     if (!frag) return;
-    const newEnd = Math.min(duration || 999999, Math.max(frag.end + delta, frag.start + 0.5));
+    const newEnd = Math.round(Math.min(duration || 999999, Math.max(frag.end + delta, frag.start + 0.5)) * 20) / 20;
     updateFragment(fragId, { end: newEnd });
+    if (videoEl) {
+      videoEl.currentTime = newEnd;
+    }
   }
 
   function handleTimeUpdate() {
     if (!videoEl) return;
     currentTime = videoEl.currentTime;
 
-    // Если воспроизводим конкретный фрагмент — останавливаем в конце
+    // Если воспроизводим конкретный фрагмент — останавливаем или зацикливаем в конце
     if (activePlayingFragment && currentTime >= activePlayingFragment.end) {
-      videoEl.pause();
-      isPlaying = false;
-      activePlayingFragment = null;
+      if (loopPreview) {
+        videoEl.currentTime = activePlayingFragment.start;
+        videoEl.play().catch(() => {});
+      } else {
+        videoEl.pause();
+        videoEl.currentTime = activePlayingFragment.end;
+        isPlaying = false;
+        activePlayingFragmentId = null;
+      }
     }
   }
 
@@ -158,12 +176,15 @@
   function togglePlay() {
     if (!videoEl) return;
     if (videoEl.paused) {
-      videoEl.play();
+      // Если стояли в самом конце выбранного фрагмента — начинаем его с начала
+      if (activePlayingFragment && Math.abs(videoEl.currentTime - activePlayingFragment.end) < 0.15) {
+        videoEl.currentTime = activePlayingFragment.start;
+      }
+      videoEl.play().catch(() => {});
       isPlaying = true;
     } else {
       videoEl.pause();
       isPlaying = false;
-      activePlayingFragment = null;
     }
   }
 
@@ -175,7 +196,7 @@
 
   function changeSpeed() {
     if (!videoEl) return;
-    const speeds = [1, 1.25, 1.5, 2];
+    const speeds = [0.5, 1, 1.25, 1.5, 2];
     const nextIdx = (speeds.indexOf(playbackSpeed) + 1) % speeds.length;
     playbackSpeed = speeds[nextIdx];
     videoEl.playbackRate = playbackSpeed;
@@ -189,15 +210,50 @@
   function handleSeek(event: CustomEvent<{ time: number }>) {
     if (videoEl) {
       videoEl.currentTime = event.detail.time;
+      // Если пользователь кликнул за пределами активного превью-фрагмента, снимаем ограничение автоостановки
+      if (
+        activePlayingFragment &&
+        (event.detail.time < activePlayingFragment.start - 0.2 || event.detail.time > activePlayingFragment.end + 0.2)
+      ) {
+        activePlayingFragmentId = null;
+      }
     }
   }
 
-  function playFragment(frag: Fragment) {
+  function togglePreviewFragment(frag: Fragment, e?: MouseEvent) {
+    e?.stopPropagation();
     if (!videoEl) return;
-    activePlayingFragment = frag;
-    videoEl.currentTime = frag.start;
-    videoEl.play();
+
+    // Если этот же фрагмент уже играет в режиме превью — ставим на паузу
+    if (activePlayingFragmentId === frag.id && isPlaying) {
+      videoEl.pause();
+      isPlaying = false;
+      return;
+    }
+
+    activePlayingFragmentId = frag.id;
+    // Если курсор уже внутри фрагмента (и не в самом конце), продолжаем с текущей точки либо с начала
+    if (
+      activePlayingFragmentId === frag.id &&
+      videoEl.currentTime > frag.start &&
+      videoEl.currentTime < frag.end - 0.3 &&
+      videoEl.paused
+    ) {
+      videoEl.play().catch(() => {});
+    } else {
+      videoEl.currentTime = frag.start;
+      videoEl.play().catch(() => {});
+    }
     isPlaying = true;
+  }
+
+  function stopFragmentPreview(e?: MouseEvent) {
+    e?.stopPropagation();
+    activePlayingFragmentId = null;
+    if (videoEl && !videoEl.paused) {
+      videoEl.pause();
+      isPlaying = false;
+    }
   }
 
   // Маркировка In / Out точек
@@ -279,13 +335,27 @@
           </span>
         </h2>
         <p class="text-xs text-[rgba(226,226,224,0.6)] font-mono">
-          Выделяйте мышкой любые области на шкале времени для одновременного экспорта
+          Масштабируйте таймлайн для точной подгонки границ и нажимайте на любой ролик для предпросмотра
         </p>
       </div>
     </div>
 
-    <!-- Переключатель визуальной рамки 9:16 -->
-    <div class="flex items-center gap-2">
+    <!-- Переключатели: Повтор превью и Рамка 9:16 -->
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        on:click={() => loopPreview = !loopPreview}
+        class="px-3 py-1.5 rounded-[3px] text-xs font-mono border transition-all flex items-center gap-1.5 {
+          loopPreview 
+            ? 'bg-[#23c55e]/20 text-[#23c55e] border-[#23c55e]/60' 
+            : 'bg-[#1a1a20] text-[rgba(226,226,224,0.6)] border-[rgba(226,226,224,0.15)] hover:text-white'
+        }"
+        title="Зацикливать воспроизведение выбранного клипа при предпросмотре"
+      >
+        <Repeat class="w-3.5 h-3.5" />
+        <span>Повтор превью</span>
+      </button>
+
       <button
         type="button"
         on:click={() => showCropGuide = !showCropGuide}
@@ -323,6 +393,35 @@
       >
         Ваш браузер не поддерживает видео.
       </video>
+
+      <!-- Живой индикатор предпросмотра выбранного ролика -->
+      {#if activePlayingFragment}
+        {@const remaining = Math.max(0, activePlayingFragment.end - currentTime)}
+        <div class="absolute top-3 left-3 z-25 bg-[#0e0e14]/90 backdrop-blur-md border border-[#23c55e]/60 rounded-[4px] px-3 py-1.5 flex items-center gap-2.5 shadow-lg">
+          <span class="w-2 h-2 rounded-full {isPlaying ? 'bg-[#23c55e] animate-ping' : 'bg-amber-400'}"></span>
+          <div class="font-mono text-xs text-[#e2e2e4] flex items-center gap-2">
+            <span class="text-[#23c55e] font-bold">
+              Превью Клипа #{activePlayingIndex + 1}
+            </span>
+            <span class="text-[rgba(226,226,224,0.6)]">
+              ({formatTime(activePlayingFragment.start)} → {formatTime(activePlayingFragment.end)})
+            </span>
+            {#if isPlaying && currentTime >= activePlayingFragment.start && currentTime <= activePlayingFragment.end}
+              <span class="text-[10px] bg-[#23c55e]/20 text-[#23c55e] px-1.5 py-0.5 rounded">
+                -{remaining.toFixed(1)}с
+              </span>
+            {/if}
+          </div>
+          <button
+            type="button"
+            on:click={stopFragmentPreview}
+            class="text-[10px] font-mono text-[rgba(226,226,224,0.6)] hover:text-white bg-white/10 hover:bg-red-500/40 px-1.5 py-0.5 rounded transition-colors"
+            title="Выйти из режима предпросмотра фрагмента"
+          >
+            ✕
+          </button>
+        </div>
+      {/if}
 
       <!-- Диагностический оверлей при ошибке кодеков или доступа в WebView2 -->
       {#if videoLoadError}
@@ -410,19 +509,29 @@
   <!-- Панель управления воспроизведением видео -->
   <div class="bg-[#0e0e12] border border-[rgba(226,226,224,0.1)] rounded-[4px] p-3 flex flex-wrap items-center justify-between gap-3">
     <!-- Левая группа: Play, перемотка, время -->
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-2">
       <button
         type="button"
         on:click={togglePlay}
         disabled={!videoSrc}
         class="w-8 h-8 rounded-[3px] bg-[#5865f2] hover:bg-[#4752c4] disabled:opacity-40 text-white flex items-center justify-center transition-colors shadow"
-        title="Воспроизведение / Пауза (Пробел)"
+        title="Воспроизведение / Пауза"
       >
         {#if isPlaying}
           <Pause class="w-4 h-4" />
         {:else}
           <Play class="w-4 h-4 ml-0.5" />
         {/if}
+      </button>
+
+      <button
+        type="button"
+        on:click={() => skipTime(-1)}
+        disabled={!videoSrc}
+        class="px-2 py-1 rounded-[3px] bg-[#1a1a20] hover:bg-[#25252e] disabled:opacity-40 text-[11px] font-mono text-[#e2e2e4] border border-[rgba(226,226,224,0.1)] transition-colors"
+        title="Назад на 1 секунду"
+      >
+        -1с
       </button>
 
       <button
@@ -445,8 +554,18 @@
         <RotateCw class="w-3.5 h-3.5" />
       </button>
 
+      <button
+        type="button"
+        on:click={() => skipTime(1)}
+        disabled={!videoSrc}
+        class="px-2 py-1 rounded-[3px] bg-[#1a1a20] hover:bg-[#25252e] disabled:opacity-40 text-[11px] font-mono text-[#e2e2e4] border border-[rgba(226,226,224,0.1)] transition-colors"
+        title="Вперед на 1 секунду"
+      >
+        +1с
+      </button>
+
       <!-- Индикатор текущего времени -->
-      <div class="font-mono text-xs text-[#e2e2e4] ml-2 bg-[#141418] px-2.5 py-1 rounded border border-[rgba(226,226,224,0.1)]">
+      <div class="font-mono text-xs text-[#e2e2e4] ml-1 bg-[#141418] px-2.5 py-1 rounded border border-[rgba(226,226,224,0.1)]">
         <span class="text-[#5865f2] font-bold">{formatTime(currentTime)}</span>
         <span class="text-[rgba(226,226,224,0.4)]"> / </span>
         <span class="text-[rgba(226,226,224,0.7)]">{formatTime(duration || 180)}</span>
@@ -535,7 +654,10 @@
       {#if $fragmentsStore.length > 0}
         <button
           type="button"
-          on:click={() => clearFragments()}
+          on:click={() => {
+            activePlayingFragmentId = null;
+            clearFragments();
+          }}
           class="p-1.5 rounded-[3px] bg-red-950/30 hover:bg-red-900/50 text-red-400 border border-red-800/40 transition-colors ml-1"
           title="Очистить все выделенные клипы"
         >
@@ -545,11 +667,15 @@
     </div>
   </div>
 
-  <!-- Интерактивная шкала времени с поддержкой протяжки мышкой -->
-  <Timeline 
+  <!-- Интерактивная шкала времени с масштабированием и превью по клику -->
+  <Timeline
+    bind:this={timelineComponent}
     videoDuration={duration || ($pipelineStore.video?.duration || 180)}
     {currentTime}
+    {activePlayingFragmentId}
+    isVideoPlaying={isPlaying}
     on:seek={handleSeek}
+    on:previewFragment={(e) => togglePreviewFragment(e.detail.fragment)}
   />
 
   <!-- Блок списка выделенных областей Reels -->
@@ -576,19 +702,24 @@
       <div class="py-6 px-4 text-center border border-dashed border-[rgba(226,226,224,0.1)] rounded-[3px] bg-[#141418]/50">
         <p class="text-xs text-[rgba(226,226,224,0.7)] font-mono max-w-lg mx-auto leading-relaxed">
           🖱️ <strong>Как выделить область:</strong> зажмите левую кнопку мыши на таймлайне выше и протяните отрезок. 
-          Выделите 1-ю область, затем 2-ю область и вообще любое количество областей!
+          Используйте колесо мыши или ползунок масштаба для точной подгонки границ и нажимайте на клип для предпросмотра!
         </p>
       </div>
     {:else}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[260px] overflow-y-auto pr-1">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[300px] overflow-y-auto pr-1">
         {#each $fragmentsStore as frag, idx (frag.id)}
           {@const dur = (frag.end - frag.start).toFixed(1)}
-          {@const isPlayingThis = activePlayingFragment?.id === frag.id}
-          <div class="p-3 bg-[#15151b] border {isPlayingThis ? 'border-[#23c55e] shadow-[0_0_10px_rgba(35,197,94,0.3)]' : 'border-[rgba(226,226,224,0.1)]'} rounded-[3px] flex flex-col justify-between gap-2.5 transition-all">
+          {@const isPlayingThis = activePlayingFragmentId === frag.id && isPlaying}
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+          <div
+            on:click={(e) => togglePreviewFragment(frag, e)}
+            class="p-3 bg-[#15151b] hover:bg-[#191922] border {isPlayingThis ? 'border-[#23c55e] shadow-[0_0_12px_rgba(35,197,94,0.3)]' : 'border-[rgba(226,226,224,0.1)] hover:border-[#5865f2]/60'} rounded-[3px] flex flex-col justify-between gap-2.5 transition-all cursor-pointer"
+            title="Нажмите на карточку для воспроизведения предпросмотра этого ролика"
+          >
             <!-- Шапка карточки фрагмента -->
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-1.5">
-                <span class="px-1.5 py-0.5 rounded bg-[#5865f2] text-white font-mono text-[10px] font-bold">
+                <span class="px-1.5 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black' : 'bg-[#5865f2] text-white'} font-mono text-[10px] font-bold">
                   Клип #{idx + 1}
                 </span>
                 <span class="font-mono text-xs font-semibold text-[#e2e2e4]">
@@ -600,63 +731,105 @@
               </span>
             </div>
 
-            <!-- Микро-подгонка начала и конца фрагмента по секундам -->
-            <div class="grid grid-cols-2 gap-2 text-[10px] font-mono text-[rgba(226,226,224,0.7)] bg-[#0e0e12] p-1.5 rounded-[2px]">
+            <!-- Точная подгонка начала и конца фрагмента (по 0.1с и 1с) -->
+            <div class="flex flex-col gap-1.5 text-[10px] font-mono text-[rgba(226,226,224,0.75)] bg-[#0e0e12] p-2 rounded-[2px]">
               <div class="flex items-center justify-between">
-                <span>Старт:</span>
+                <span class="text-[rgba(226,226,224,0.5)]">Старт:</span>
                 <div class="flex items-center gap-1">
-                  <button 
+                  <button
                     type="button"
                     class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
                     title="Сдвинуть начало на 1с раньше"
-                    on:click={() => adjustFragmentStart(frag.id, -1)}
+                    on:click={(e) => adjustFragmentStart(frag.id, -1, e)}
                   >-1с</button>
-                  <button 
+                  <button
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-[#23c55e] hover:text-white transition-colors"
+                    title="Точно сдвинуть начало на 0.1с раньше"
+                    on:click={(e) => adjustFragmentStart(frag.id, -0.1, e)}
+                  >-0.1с</button>
+                  <button
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-[#23c55e] hover:text-white transition-colors"
+                    title="Точно сдвинуть начало на 0.1с позже"
+                    on:click={(e) => adjustFragmentStart(frag.id, 0.1, e)}
+                  >+0.1с</button>
+                  <button
                     type="button"
                     class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
                     title="Сдвинуть начало на 1с позже"
-                    on:click={() => adjustFragmentStart(frag.id, 1)}
+                    on:click={(e) => adjustFragmentStart(frag.id, 1, e)}
                   >+1с</button>
                 </div>
               </div>
               <div class="flex items-center justify-between">
-                <span>Конец:</span>
+                <span class="text-[rgba(226,226,224,0.5)]">Конец:</span>
                 <div class="flex items-center gap-1">
-                  <button 
+                  <button
                     type="button"
                     class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
                     title="Сдвинуть конец на 1с раньше"
-                    on:click={() => adjustFragmentEnd(frag.id, -1)}
+                    on:click={(e) => adjustFragmentEnd(frag.id, -1, e)}
                   >-1с</button>
-                  <button 
+                  <button
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-[#23c55e] hover:text-white transition-colors"
+                    title="Точно сдвинуть конец на 0.1с раньше"
+                    on:click={(e) => adjustFragmentEnd(frag.id, -0.1, e)}
+                  >-0.1с</button>
+                  <button
+                    type="button"
+                    class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-[#23c55e] hover:text-white transition-colors"
+                    title="Точно сдвинуть конец на 0.1с позже"
+                    on:click={(e) => adjustFragmentEnd(frag.id, 0.1, e)}
+                  >+0.1с</button>
+                  <button
                     type="button"
                     class="px-1.5 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2] text-white transition-colors"
                     title="Сдвинуть конец на 1с позже"
-                    on:click={() => adjustFragmentEnd(frag.id, 1)}
+                    on:click={(e) => adjustFragmentEnd(frag.id, 1, e)}
                   >+1с</button>
                 </div>
               </div>
             </div>
 
-            <!-- Действия: предпросмотр и удаление -->
+            <!-- Действия: предпросмотр, зум к клипу и удаление -->
             <div class="flex items-center justify-between text-[10px] font-mono text-[rgba(226,226,224,0.5)] pt-1 border-t border-[rgba(226,226,224,0.06)]">
-              <span class="text-purple-400/80">9:16 + Субтитры</span>
+              <button
+                type="button"
+                on:click={(e) => timelineComponent?.zoomToFragment(frag, e)}
+                class="px-2 py-0.5 rounded bg-[#1f1f28] hover:bg-[#5865f2]/30 text-[#e2e2e4] hover:text-white transition-colors flex items-center gap-1"
+                title="Приблизить этот клип на таймлайне для точной настройки границ"
+              >
+                <ZoomIn class="w-2.5 h-2.5 text-[#5865f2]" />
+                <span>На таймлайн</span>
+              </button>
+
               <div class="flex items-center gap-1.5">
-                <!-- Кнопка воспроизведения только этого фрагмента -->
+                <!-- Кнопка воспроизведения / паузы только этого фрагмента -->
                 <button
                   type="button"
-                  on:click={() => playFragment(frag)}
-                  class="px-2 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black font-bold' : 'bg-[#1f1f28] hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white'} transition-colors flex items-center gap-1"
-                  title="Перейти к началу и воспроизвести клип"
+                  on:click={(e) => togglePreviewFragment(frag, e)}
+                  class="px-2.5 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black font-bold' : 'bg-[#5865f2]/20 hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white border border-[#5865f2]/40'} transition-colors flex items-center gap-1"
+                  title="Воспроизвести или остановить предпросмотр клипа"
                 >
-                  <Play class="w-2.5 h-2.5" />
-                  <span>{isPlayingThis ? 'Играет...' : 'Превью'}</span>
+                  {#if isPlayingThis}
+                    <Pause class="w-2.5 h-2.5" />
+                    <span>Пауза</span>
+                  {:else}
+                    <Play class="w-2.5 h-2.5" />
+                    <span>Превью</span>
+                  {/if}
                 </button>
 
                 <!-- Кнопка удаления фрагмента -->
                 <button
                   type="button"
-                  on:click={() => removeFragment(frag.id)}
+                  on:click={(e) => {
+                    e.stopPropagation();
+                    if (activePlayingFragmentId === frag.id) activePlayingFragmentId = null;
+                    removeFragment(frag.id);
+                  }}
                   class="p-1 rounded hover:bg-red-500/20 text-[rgba(226,226,224,0.4)] hover:text-red-400 transition-colors"
                   title="Удалить этот клип"
                 >
@@ -696,3 +869,4 @@
     </div>
   </div>
 </div>
+
