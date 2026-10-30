@@ -234,14 +234,7 @@ if (platform === 'darwin') {
     archTag = 'x64';
   }
 
-  // A. DMG
-  const dmgFiles = findBundles('dmg', '.dmg');
-  for (const dmg of dmgFiles) {
-    const dest = path.join(distReleasesDir, `${appName}_${version}_macos_${archTag}.dmg`);
-    copyFileSafe(dmg, dest);
-  }
-
-  // B. Portable .app в .zip
+  // Находим собранные .app бандлы
   const allApps = [];
   for (const relDir of possibleReleaseDirs) {
     const macosBundleDir = path.join(relDir, 'bundle', 'macos');
@@ -255,8 +248,62 @@ if (platform === 'darwin') {
       allApps.push(...apps);
     }
   }
-
   const uniqueApps = Array.from(new Set(allApps));
+
+  // A. DMG (копируем готовый или создаем напрямую через hdiutil без нестабильного bundle_dmg.sh / osascript)
+  const dmgDest = path.join(distReleasesDir, `${appName}_${version}_macos_${archTag}.dmg`);
+  const dmgFiles = findBundles('dmg', '.dmg');
+  if (dmgFiles.length > 0) {
+    for (const dmg of dmgFiles) {
+      copyFileSafe(dmg, dmgDest);
+    }
+  } else if (uniqueApps.length > 0) {
+    const appPath = uniqueApps[0];
+    console.log(`Создание macOS DMG инсталлятора через hdiutil из ${appPath}...`);
+    const dmgStagingDir = path.join(distReleasesDir, `dmg_staging_${archTag}`);
+    fs.rmSync(dmgStagingDir, { recursive: true, force: true });
+    fs.mkdirSync(dmgStagingDir, { recursive: true });
+
+    try {
+      const stagedAppPath = path.join(dmgStagingDir, path.basename(appPath));
+      execSync(`cp -R "${appPath}" "${stagedAppPath}"`);
+      try {
+        fs.symlinkSync('/Applications', path.join(dmgStagingDir, 'Applications'));
+      } catch (symErr) {
+        console.warn('[ПРЕДУПРЕЖДЕНИЕ] Не удалось создать симлинк Applications:', symErr.message);
+      }
+
+      try {
+        execSync(`hdiutil create -size 1500m -fs HFS+ -volname "Video Cutter Pro" -srcfolder "${dmgStagingDir}" -ov -format UDZO "${dmgDest}"`, {
+          stdio: 'inherit'
+        });
+      } catch {
+        execSync(`hdiutil create -volname "Video Cutter Pro" -srcfolder "${dmgStagingDir}" -ov -format UDZO "${dmgDest}"`, {
+          stdio: 'inherit'
+        });
+      }
+
+      if (fs.existsSync(dmgDest)) {
+        const sizeMb = (fs.statSync(dmgDest).size / (1024 * 1024)).toFixed(2);
+        console.log(`[УСПЕХ] Создан macOS DMG: ${path.basename(dmgDest)} (${sizeMb} MB)`);
+      }
+    } catch (dmgErr) {
+      console.warn(`[ПРЕДУПРЕЖДЕНИЕ] Ошибка создания DMG из staging папки (${dmgErr.message}), пробуем напрямую из .app...`);
+      try {
+        execSync(`hdiutil create -size 1500m -fs HFS+ -volname "Video Cutter Pro" -srcfolder "${appPath}" -ov -format UDZO "${dmgDest}"`, {
+          stdio: 'inherit'
+        });
+        const sizeMb = (fs.statSync(dmgDest).size / (1024 * 1024)).toFixed(2);
+        console.log(`[УСПЕХ] Создан macOS DMG (fallback): ${path.basename(dmgDest)} (${sizeMb} MB)`);
+      } catch (fallbackErr) {
+        console.error(`[ОШИБКА] Не удалось создать DMG через hdiutil:`, fallbackErr.message);
+      }
+    } finally {
+      fs.rmSync(dmgStagingDir, { recursive: true, force: true });
+    }
+  }
+
+  // B. Portable .app в .zip
   for (const appPath of uniqueApps) {
     const zipDest = path.join(distReleasesDir, `${appName}_${version}_macos_${archTag}_portable.zip`);
     console.log(`Создание macOS Portable ZIP из ${appPath}...`);
