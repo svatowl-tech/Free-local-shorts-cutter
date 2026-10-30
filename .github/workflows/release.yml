@@ -169,12 +169,12 @@ jobs:
             target: x86_64-unknown-linux-gnu
 
           # macOS Apple Silicon (DMG + Portable Zip)
-          - os: macos-14
+          - os: macos-latest
             platform: macOS Apple Silicon (ARM64)
             target: aarch64-apple-darwin
 
           # macOS Intel (DMG + Portable Zip)
-          - os: macos-14
+          - os: macos-latest
             platform: macOS Intel (x86_64)
             target: x86_64-apple-darwin
 
