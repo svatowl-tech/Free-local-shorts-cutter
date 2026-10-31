@@ -53,6 +53,7 @@ export interface PipelineConfig {
   output_dir?: string;
   min_intensity_threshold: number;
   max_clip_duration_sec: number;
+  max_clips_count?: number;
   vertical_format: boolean;
   subtitle_style?: SubtitleStyle;
   mode: 'auto' | 'manual' | 'confirm';

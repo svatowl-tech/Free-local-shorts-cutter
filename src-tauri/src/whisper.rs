@@ -56,6 +56,15 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "тишина",
         "music",
         "applause",
+        "выстрелы",
+        "выстрел",
+        "вздостный телефон",
+        "крик",
+        "крики",
+        "взрыв",
+        "взрывы",
+        "стон",
+        "стоны",
     ];
     let clean_exact = lower.trim_matches(['.', '!', '?', '-', '—', ' ']);
     if exact_tags.contains(&clean_exact) {
@@ -111,6 +120,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "музыкальная заставка",
         "музыкальная пауза",
         "позитивается",
+        "вздостный телефон",
         "продолжение следует",
         "подпишись на канал",
         "ставьте лайки",
@@ -125,6 +135,14 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     // Любая короткая ремарка (1–3 слова), содержащая слово «музыка» (например «ИНТРИГУЮЩАЯ МУЗЫКА»)
     let word_count = clean_exact.split_whitespace().count();
     if word_count <= 3 && (clean_exact.contains("музыка") || clean_exact.contains("music")) {
+        return true;
+    }
+
+    // Повторяющиеся капс-слова музыкального описания (например «ГРУСТНАЯ МЕЛОДИЧЕСКАЯ ДИНАМИЧЕСКАЯ...»)
+    if lower.matches("динамическая").count() >= 2
+        || lower.matches("мелодическая").count() >= 2
+        || lower.matches("музыка").count() >= 2
+    {
         return true;
     }
 
@@ -430,6 +448,11 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
 
     let mut stage1: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(raw_count);
     for mut frag in raw_fragments {
+        let dur = frag.end - frag.start;
+        if dur <= 0.10 {
+            continue;
+        }
+
         let trimmed = frag.text.trim();
         if is_whisper_hallucination(trimmed) {
             continue;

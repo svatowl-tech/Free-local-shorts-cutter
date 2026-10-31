@@ -16,6 +16,7 @@ pub struct PipelineConfig {
     pub output_dir: Option<String>,
     pub min_intensity_threshold: f64,
     pub max_clip_duration_sec: f64,
+    pub max_clips_count: Option<usize>,
     pub vertical_format: bool,
     pub subtitle_style: Option<SubtitleStyle>,
     pub mode: Option<String>,
@@ -194,14 +195,15 @@ pub async fn run_pipeline(
     // чтобы каждый ролик начинался ровно с начала первой фразы и заканчивался ровно после завершения последней фразы!
     let min_dur = (target_dur - 5.0).max(5.0).min(video_duration);
     let max_dur = (target_dur + 5.0).max(min_dur + 4.0).min(video_duration);
+    let max_clips = config.max_clips_count.unwrap_or(10).clamp(1, 50);
 
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
         "info",
         &format!(
-            "Адаптивный подбор границ клипов по цельным фразам: целевая {:.0}с (гибкий диапазон {:.0}с – {:.0}с, без обрыва фраз)",
-            target_dur, min_dur, max_dur
+            "Адаптивный подбор границ клипов по цельным фразам: целевая {:.0}с (гибкий диапазон {:.0}с – {:.0}с, лимит: до {} клипов)",
+            target_dur, min_dur, max_dur, max_clips
         ),
     );
 
@@ -232,7 +234,7 @@ pub async fn run_pipeline(
                 outro_limit,
                 video_duration,
             ) {
-                if cand.2 >= config.min_intensity_threshold * 0.88 {
+                if cand.2 >= config.min_intensity_threshold {
                     candidate_intervals.push(cand);
                 }
             }
@@ -276,7 +278,7 @@ pub async fn run_pipeline(
                     video_duration,
                 ) {
                     cand.2 = (cand.2 + 0.03).min(0.97);
-                    if cand.2 >= config.min_intensity_threshold * 0.88 {
+                    if cand.2 >= config.min_intensity_threshold {
                         candidate_intervals.push(cand);
                     }
                 }
@@ -313,7 +315,7 @@ pub async fn run_pipeline(
                 .map(|(i, _)| (i, text_scores.get(i).copied().unwrap_or(0.5)))
                 .collect();
             frag_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (idx, _) in frag_with_scores.into_iter().take(25) {
+            for (idx, _) in frag_with_scores.into_iter().take(max_clips * 2) {
                 if let Some(cand) = build_complete_phrase_window(
                     &fragments,
                     &text_scores,
@@ -330,7 +332,7 @@ pub async fn run_pipeline(
                 }
             }
         } else if !scenes.is_empty() {
-            for scn in scenes.iter().take(10) {
+            for scn in scenes.iter().take(max_clips) {
                 let start = (scn.timestamp_sec - 1.0).max(0.0).min((video_duration - target_dur).max(0.0));
                 let end = (start + target_dur).min(video_duration);
                 if end - start >= 3.0 {
@@ -374,7 +376,7 @@ pub async fn run_pipeline(
         if !too_close_or_overlaps {
             selected_intervals.push(candidate);
         }
-        if selected_intervals.len() >= 10 {
+        if selected_intervals.len() >= max_clips {
             break;
         }
     }
@@ -391,7 +393,7 @@ pub async fn run_pipeline(
         &app_handle,
         "Pipeline",
         "info",
-        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} логически завершенных клипов (10–20с) для таймлайна", suggested_fragments.len()),
+        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} качественных клипов (10–20с, лимит: до {}) для таймлайна", suggested_fragments.len(), max_clips),
     );
     for (i, (start, end, score, first_txt, last_txt)) in selected_intervals.iter().enumerate() {
         crate::logger::emit_log(
@@ -773,8 +775,29 @@ fn build_complete_phrase_window(
         - transition_penalty)
         .clamp(0.35, 0.97);
 
-    let first_preview: String = fragments[start_idx].text.trim().chars().take(36).collect();
-    let last_preview: String = fragments[end_idx].text.trim().chars().take(36).collect();
+    let format_preview_text = |txt: &str, is_last: bool| -> String {
+        let t = txt.trim().replace(['\r', '\n'], " ");
+        let chars: Vec<char> = t.chars().collect();
+        if chars.len() <= 38 {
+            t
+        } else if !is_last {
+            let prefix: String = chars[..35].iter().collect();
+            format!("{}...", prefix.trim_end())
+        } else {
+            let words: Vec<&str> = t.split_whitespace().collect();
+            if words.len() >= 4 {
+                let tail = words[words.len() - 3..].join(" ");
+                let prefix: String = chars[..18].iter().collect();
+                format!("{}... {}", prefix.trim_end(), tail)
+            } else {
+                let prefix: String = chars[..35].iter().collect();
+                format!("{}...", prefix.trim_end())
+            }
+        }
+    };
+
+    let first_preview = format_preview_text(&fragments[start_idx].text, false);
+    let last_preview = format_preview_text(&fragments[end_idx].text, true);
 
     Some((clip_start, clip_end, window_score, first_preview, last_preview))
 }

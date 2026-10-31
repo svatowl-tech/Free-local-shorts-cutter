@@ -881,26 +881,42 @@ fn segment_and_smooth_camera_track(
         });
     }
 
-    // Поглощаем одиночные 0.5-секундные вспышки взрывов и объединяем соседние сегменты с близкой позицией (< 5.5% разницы)
+    // Поглощаем микро-скачки и объединяем соседние ракурсы с близкой позицией (< 8.5% ширины, так как лицо и так в кадре 9:16)
     if raw_segments.len() >= 2 {
         let mut cleaned: Vec<CameraSegment> = Vec::with_capacity(raw_segments.len());
         for seg in raw_segments {
             let seg_dur = seg.end_t - seg.start_t;
             if let Some(prev) = cleaned.last_mut() {
-                let close_to_prev = (seg.start_ratio - prev.end_ratio).abs() < 0.055
-                    && (seg.end_ratio - prev.end_ratio).abs() < 0.055;
-                if close_to_prev || seg_dur < 0.60 {
+                let close_to_prev = (seg.start_ratio - prev.end_ratio).abs() < 0.088
+                    && (seg.end_ratio - prev.end_ratio).abs() < 0.088;
+                // Исключаем дерганые перебивки короче 1.2с (вспышки, удары) и ракурсы, не отличающиеся заметно по положению
+                if close_to_prev || seg_dur < 1.20 {
+                    let w_prev = (prev.end_t - prev.start_t).max(0.1);
+                    let w_curr = seg_dur;
+                    if seg_dur >= 0.50 {
+                        let blended = (prev.end_ratio * w_prev + seg.end_ratio * w_curr) / (w_prev + w_curr);
+                        prev.end_ratio = blended.clamp(0.16, 0.84);
+                    }
                     prev.end_t = seg.end_t;
                     continue;
                 }
             }
             cleaned.push(seg);
         }
+
+        // Если самый первый микро-сегмент в клипе короче 1.2с — поглощаем его в последующий основной ракурс,
+        // чтобы ролик не начинался со мгновенного рывка камеры на 0.5с
+        if cleaned.len() >= 2 && (cleaned[0].end_t - cleaned[0].start_t) < 1.20 {
+            cleaned[1].start_t = 0.0;
+            cleaned.remove(0);
+        }
+
         raw_segments = cleaned;
     }
 
-    if raw_segments.len() > 8 {
-        raw_segments.truncate(8);
+    // Ограничиваем максимум 6 ракурсами на один 10–20с клип для комфортного кинематографичного просмотра
+    if raw_segments.len() > 6 {
+        raw_segments.truncate(6);
         if let Some(last) = raw_segments.last_mut() {
             last.end_t = duration_sec;
         }

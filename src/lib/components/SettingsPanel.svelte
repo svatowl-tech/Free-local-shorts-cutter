@@ -24,6 +24,11 @@
     pipelineStore.updateConfig({ max_clip_duration_sec: value });
   }
 
+  function handleMaxClipsChange(e: Event) {
+    const value = parseInt((e.target as HTMLInputElement).value, 10);
+    pipelineStore.updateConfig({ max_clips_count: value });
+  }
+
   function handleVerticalChange(e: Event) {
     const value = (e.target as HTMLInputElement).checked;
     pipelineStore.updateConfig({ vertical_format: value });
@@ -135,6 +140,29 @@
         <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
           <span>10–20 с (Цельные фразы)</span>
           <span>50–60 сек</span>
+        </div>
+      </div>
+
+      <!-- Control 3: Max Clips Count -->
+      <div class="flex flex-col gap-2">
+        <div class="flex justify-between items-baseline">
+          <span class="label-mono text-[#e2e2e4]">Количество клипов</span>
+          <span class="font-mono text-[#5865f2] text-xs font-semibold">
+            до {$pipelineStore.config.max_clips_count ?? 10} шт.
+          </span>
+        </div>
+        <input 
+          type="range" 
+          min="1" 
+          max="30" 
+          step="1" 
+          value={$pipelineStore.config.max_clips_count ?? 10}
+          on:input={handleMaxClipsChange}
+          disabled={$pipelineStore.status === 'running'}
+        />
+        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
+          <span>1–3 (Только главные)</span>
+          <span>30 (Все подходящие)</span>
         </div>
       </div>
 

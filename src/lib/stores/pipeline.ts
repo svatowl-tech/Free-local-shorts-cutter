@@ -59,11 +59,12 @@ const STORAGE_CONFIG_KEY = 'vcp_pipeline_config_v2';
 const DEFAULT_CONFIG: PipelineConfig = {
   min_intensity_threshold: 0.6,
   max_clip_duration_sec: 15,
+  max_clips_count: 10,
   vertical_format: true,
   asr_model_path: 'models/ggml-base.bin',
   vision_model_path: 'models/qwen-vl-2b.gguf',
   text_engine: 'llama',
-  text_model_name: 'qwen-1.5b-chat.gguf',
+  text_model_name: 'qwen2.5-3b-instruct-q4_k_m.gguf',
   ollama_url: 'http://localhost:11434',
   output_dir: 'output_cuts/',
   subtitle_style: {
@@ -86,6 +87,7 @@ function loadInitialConfig(): PipelineConfig {
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
+      max_clips_count: typeof parsed.max_clips_count === 'number' ? parsed.max_clips_count : DEFAULT_CONFIG.max_clips_count,
       subtitle_style: {
         ...DEFAULT_CONFIG.subtitle_style,
         ...(parsed.subtitle_style || {})
