@@ -356,6 +356,7 @@ pub async fn detect_scene_changes(
         .args([
             "-nostdin",
             "-y",
+            "-threads", "0",
             "-skip_frame", "nokey",
             "-i", &video_path.to_string_lossy(),
             "-an",

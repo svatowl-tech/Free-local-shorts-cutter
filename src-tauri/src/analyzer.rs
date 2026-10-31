@@ -50,23 +50,46 @@ pub async fn analyze_video(
     
     let shell = app_handle.shell();
     
-    // Ищем модель llama-vision
-    let model = match model_path {
-        Some(p) => crate::models::resolve_model_path(&app_handle, &p.to_string_lossy()),
-        None => None,
-    }
-    .or_else(|| crate::models::resolve_model_path(&app_handle, "qwen-vl-2b.gguf"))
-    .or_else(|| crate::models::resolve_model_path(&app_handle, "qwen2-vl-2b-instruct-q4_k_m.gguf"));
+    // Ищем полнофункциональную связку Vision-модели и сопутствующего проектора mmproj
+    let vision_pair = crate::models::resolve_vision_model_and_projector(
+        &app_handle,
+        model_path.as_deref().and_then(|p| p.to_str()),
+    );
 
-    let has_vision_model = model.as_ref().map(|m| m.exists()).unwrap_or(false);
-    let has_vision_sidecar = shell.sidecar("llama-vision").is_ok();
+    let has_vision_sidecar = shell.sidecar("llama-vision").is_ok()
+        || shell.sidecar("llama-cli").is_ok();
 
-    // Если модели нет или sidecar не установлен — сразу запускаем двухфакторный алгоритм (FFmpeg Scene Detect + Audio Energy)
-    if !has_vision_model || !has_vision_sidecar {
+    // Если модели нет, нет проектора mmproj или sidecar не установлен — сразу запускаем двухфакторный алгоритм (FFmpeg Scene Detect + Audio Energy)
+    if vision_pair.is_none() || !has_vision_sidecar {
+        if vision_pair.is_none() {
+            crate::logger::emit_log(
+                &app_handle,
+                "Analyzer",
+                "info",
+                "Vision-модель или сопутствующий проектор mmproj не найдены в папке models. Запуск двухфакторного анализа (FFmpeg Scene Detect + Audio Energy)...",
+            );
+        } else {
+            crate::logger::emit_log(
+                &app_handle,
+                "Analyzer",
+                "info",
+                "Бинарник llama-vision не обнаружен в sidecar ресурсах. Запуск двухфакторного анализа сцен...",
+            );
+        }
         return run_two_factor_scene_analysis(video_path, app_handle, cancel_rx).await;
     }
 
-    let resolved_model = model.unwrap();
+    let (resolved_model, resolved_mmproj) = vision_pair.unwrap();
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        &format!(
+            "Обнаружена Vision-модель: '{}' с проектором '{}'. Запуск визуального анализа кадров...",
+            resolved_model.file_name().unwrap_or_default().to_string_lossy(),
+            resolved_mmproj.file_name().unwrap_or_default().to_string_lossy()
+        ),
+    );
 
     // Создаем временную директорию для хранения кадров
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros();
@@ -83,9 +106,7 @@ pub async fn analyze_video(
         total_frames: 24,
     });
 
-    // 1. Адаптивное извлечение кадров через FFmpeg:
-    // Внимание: в FFmpeg 7.x/8.x (Lavf63+) устаревший флаг `-vsync 0` удалён и вызывает мгновенный выход с кодом 1.
-    // Используем совместимый фильтр `fps=1/20,scale=640:-2` без `-vsync`.
+    // 1. Адаптивное сверхбыстрое извлечение кадров через FFmpeg (-skip_frame nokey + multithreading):
     let ffmpeg_cmd = shell.sidecar("ffmpeg")
         .map_err(|e| {
             let _ = std::fs::remove_dir_all(&temp_dir);
@@ -95,8 +116,10 @@ pub async fn analyze_video(
         .args([
             "-nostdin",
             "-y",
+            "-threads", "0",
+            "-skip_frame", "nokey",
             "-i", &video_path.to_string_lossy(),
-            "-vf", "fps=1/20,scale=640:-2",
+            "-vf", "scale=480:-2,fps=1/25",
             "-vframes", "24",
             &frames_pattern.to_string_lossy()
         ]);
@@ -149,7 +172,7 @@ pub async fn analyze_video(
                 if let Some(file_name) = path.file_stem().and_then(|s| s.to_str()) {
                     if let Some(num_str) = file_name.strip_prefix("frame_") {
                         if let Ok(num) = num_str.parse::<u32>() {
-                            let timestamp_sec = (num as f64) * 20.0;
+                            let timestamp_sec = (num as f64) * 25.0;
                             frames_with_ts.push((timestamp_sec, path, num));
                         }
                     }
@@ -173,13 +196,19 @@ pub async fn analyze_video(
     }
 
     let mut candidates = Vec::new();
-    let prompt = "Оцени эмоциональную напряженность сцены от 0 до 1 и определи действия: {\"description\": \"...\", \"intensity\": 0.7, \"actions\": [\"dialogue\"]}";
+    let prompt = "Опиши этот кадр из видео. Оцени эмоциональную и динамическую напряженность сцены от 0.0 до 1.0. Верни ответ ТОЛЬКО в формате JSON: {\"description\": \"краткое описание сцены\", \"intensity\": 0.8, \"actions\": [\"действие1\"]}";
 
     // 3. Анализ кадров (максимум до 10 самых показательных)
     let sample_step = (total_frames / 10).max(1) as usize;
     let sampled_frames: Vec<_> = frames_with_ts.into_iter().step_by(sample_step).collect();
     let sampled_count = sampled_frames.len() as u32;
     let mut consecutive_vision_failures = 0usize;
+
+    let sidecar_name = if shell.sidecar("llama-vision").is_ok() {
+        "llama-vision"
+    } else {
+        "llama-cli"
+    };
 
     for (i, (timestamp_sec, frame_path, _)) in sampled_frames.into_iter().enumerate() {
         let current_frame = (i + 1) as u32;
@@ -192,37 +221,49 @@ pub async fn analyze_video(
             total_frames: sampled_count,
         });
 
-        let llama_cmd = match shell.sidecar("llama-vision") {
+        let llama_cmd = match shell.sidecar(sidecar_name) {
             Ok(cmd) => cmd
                 .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
                 .args([
                     "-m", &resolved_model.to_string_lossy(),
+                    "--mmproj", &resolved_mmproj.to_string_lossy(),
                     "--image", &frame_path.to_string_lossy(),
-                    "--prompt", prompt,
-                    "--json",
+                    "-p", prompt,
+                    "-ngl", "99",
+                    "--temp", "0.1",
+                    "-c", "2048",
+                    "-n", "128",
                 ]),
             Err(_) => break,
         };
 
         if let Ok((mut rx, child)) = llama_cmd.spawn() {
+            let app_handle_clone = app_handle.clone();
             let analyze_future = async {
                 let mut stdout_accum = String::new();
+                let mut stderr_accum = String::new();
                 while let Some(event) = rx.recv().await {
                     match event {
                         CommandEvent::Stdout(bytes) => {
+                            crate::logger::emit_stream_lines(&app_handle_clone, "Analyzer", "debug", &bytes);
                             stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
+                        }
+                        CommandEvent::Stderr(bytes) => {
+                            crate::logger::emit_stream_lines(&app_handle_clone, "Analyzer", "debug", &bytes);
+                            stderr_accum.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         CommandEvent::Terminated(payload) => {
                             if payload.code == Some(0) {
                                 return Ok(stdout_accum);
                             } else {
-                                return Err(AppError::Pipeline("llama-vision error".to_string()));
+                                let err_msg = format!("llama-vision завершился с кодом {:?}: {}", payload.code, stderr_accum.lines().last().unwrap_or(""));
+                                return Err(AppError::Pipeline(err_msg));
                             }
                         }
                         _ => {}
                     }
                 }
-                Err(AppError::Pipeline("error".to_string()))
+                Err(AppError::Pipeline("Процесс анализа кадра прервался".to_string()))
             };
 
             let output_json = tokio::select! {
@@ -245,8 +286,31 @@ pub async fn analyze_video(
                                 candidates.push(SceneCandidate {
                                     timestamp_sec,
                                     description: parsed.description,
-                                    intensity: parsed.intensity,
+                                    intensity: parsed.intensity.clamp(0.0, 1.0),
                                     actions: parsed.actions,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if !frame_parsed {
+                    // Резервный поиск числа intensity в выводе модели
+                    if let Some(pos) = out.find("intensity") {
+                        let after = &out[pos + 9..];
+                        let num_str: String = after
+                            .chars()
+                            .skip_while(|c| !c.is_ascii_digit() && *c != '.')
+                            .take_while(|c| c.is_ascii_digit() || *c == '.')
+                            .collect();
+                        if let Ok(val) = num_str.parse::<f64>() {
+                            if val > 0.0 {
+                                frame_parsed = true;
+                                candidates.push(SceneCandidate {
+                                    timestamp_sec,
+                                    description: out.lines().next().unwrap_or("Динамичный визуальный кадр").trim().to_string(),
+                                    intensity: val.clamp(0.0, 1.0),
+                                    actions: vec!["visual_highlight".to_string()],
                                 });
                             }
                         }
@@ -256,8 +320,13 @@ pub async fn analyze_video(
 
             if !frame_parsed {
                 consecutive_vision_failures += 1;
-                // Если бинарник llama-vision не поддерживает формат модели (или нет mmproj) — не ждём 10 кадров, сразу переходим на FFmpeg Scene Detect
                 if consecutive_vision_failures >= 2 && candidates.is_empty() {
+                    crate::logger::emit_log(
+                        &app_handle,
+                        "Analyzer",
+                        "warn",
+                        "llama-vision не возвращает данные кадров. Переход на двухфакторный анализ сцен...",
+                    );
                     break;
                 }
             } else {
@@ -271,14 +340,23 @@ pub async fn analyze_video(
     // 4. Очистка временных файлов
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
-    // Если Vision-модель не вернула кандидатов — автоматически запускаем надежный двухфакторный алгоритм (FFmpeg Scene Detect + Audio Energy)
-    if candidates.is_empty() {
+    if !candidates.is_empty() {
         crate::logger::emit_log(
             &app_handle,
             "Analyzer",
             "info",
-            "Переключение на высокоточный двухфакторный анализ сцен (FFmpeg Scene Detect + Audio Energy)...",
+            &format!("Vision AI успешно проанализировал ключевые кадры. Найдено {} визуально насыщенных сцен.", candidates.len()),
         );
+        return Ok(candidates);
+    }
+
+    // Если Vision-модель не вернула кандидатов — автоматически запускаем надежный двухфакторный алгоритм (FFmpeg Scene Detect + Audio Energy)
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        "Переключение на высокоточный двухфакторный анализ сцен (FFmpeg Scene Detect + Audio Energy)...",
+    );
         return run_two_factor_scene_analysis(video_path, app_handle, cancel_rx).await;
     }
 

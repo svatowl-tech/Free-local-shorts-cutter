@@ -223,7 +223,7 @@
                     </span>
                   {/if}
                   <span class="label-mono text-[#5865f2] font-semibold bg-[#5865f2]/10 px-1.5 py-0.5 rounded-[2px]">
-                    {formatSizeMb(model.size_mb)}
+                    {formatSizeMb(model.size_mb + (model.mmproj_size_mb || 0))}
                   </span>
                   {#if model.exists}
                     <span class="label-mono text-[#23c55e] font-semibold bg-[#23c55e]/10 px-1.5 py-0.5 rounded-[2px] flex items-center gap-1">
@@ -242,6 +242,11 @@
                     <Folder class="h-3 w-3" />
                     <span>Файл: {model.filename}</span>
                   </span>
+                  {#if model.mmproj_filename}
+                    <span class="flex items-center gap-1 text-[#f59e0b]/80">
+                      <span>+ Проектор: {model.mmproj_filename}</span>
+                    </span>
+                  {/if}
                 </div>
               </div>
 
@@ -252,7 +257,11 @@
                     <div class="flex justify-between items-center text-[10px] font-mono">
                       <span class="text-[#5865f2] font-bold flex items-center gap-1">
                         <Loader2 class="h-3 w-3 animate-spin" />
-                        Загрузка...
+                        {#if model.mmproj_filename}
+                          {downloadState.progress < 65 ? 'Веса (1/2)...' : 'Проектор mmproj (2/2)...'}
+                        {:else}
+                          Загрузка...
+                        {/if}
                       </span>
                       <span class="text-[rgba(226,226,224,0.7)]">{downloadState.progress}%</span>
                     </div>

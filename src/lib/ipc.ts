@@ -173,6 +173,9 @@ export interface ModelInfo {
   params: string;
   exists: boolean;
   local_path: string;
+  mmproj_filename?: string;
+  mmproj_url?: string;
+  mmproj_size_mb?: number;
 }
 
 export interface ModelDownloadProgressPayload {

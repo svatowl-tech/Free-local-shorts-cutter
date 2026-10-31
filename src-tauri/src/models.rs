@@ -21,6 +21,70 @@ pub struct ModelInfo {
     pub params: String,   // e.g. "74M", "0.5B", "1.5B", "3B"
     pub exists: bool,
     pub local_path: String,
+    #[serde(default)]
+    pub mmproj_filename: Option<String>,
+    #[serde(default)]
+    pub mmproj_url: Option<String>,
+    #[serde(default)]
+    pub mmproj_size_mb: Option<f64>,
+}
+
+impl ModelInfo {
+    pub fn standard(
+        id: &str,
+        name: &str,
+        filename: &str,
+        url: &str,
+        size_mb: f64,
+        description: &str,
+        category: &str,
+        params: &str,
+    ) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            filename: filename.to_string(),
+            url: url.to_string(),
+            size_mb,
+            description: description.to_string(),
+            category: category.to_string(),
+            params: params.to_string(),
+            exists: false,
+            local_path: String::new(),
+            mmproj_filename: None,
+            mmproj_url: None,
+            mmproj_size_mb: None,
+        }
+    }
+
+    pub fn vision(
+        id: &str,
+        name: &str,
+        filename: &str,
+        url: &str,
+        size_mb: f64,
+        description: &str,
+        params: &str,
+        mmproj_filename: &str,
+        mmproj_url: &str,
+        mmproj_size_mb: f64,
+    ) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            filename: filename.to_string(),
+            url: url.to_string(),
+            size_mb,
+            description: description.to_string(),
+            category: "vision".to_string(),
+            params: params.to_string(),
+            exists: false,
+            local_path: String::new(),
+            mmproj_filename: Some(mmproj_filename.to_string()),
+            mmproj_url: Some(mmproj_url.to_string()),
+            mmproj_size_mb: Some(mmproj_size_mb),
+        }
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -124,6 +188,10 @@ fn expand_model_aliases(filename: &str) -> Vec<String> {
         search_filenames.push("qwen-vl-2b.gguf".to_string());
         search_filenames.push("Qwen2-VL-2B-Instruct-Q4_K_M.gguf".to_string());
         search_filenames.push("qwen2-vl-2b-instruct-q4_k_m.gguf".to_string());
+        search_filenames.push("qwen2-vl-2b.gguf".to_string());
+    } else if lower.contains("moondream") {
+        search_filenames.push("moondream2-text-model.gguf".to_string());
+        search_filenames.push("moondream2.gguf".to_string());
     } else if lower.contains("qwen-0.5b") || lower.contains("qwen2.5-0.5b") {
         search_filenames.push("qwen2.5-0.5b-instruct-q4_k_m.gguf".to_string());
         search_filenames.push("qwen-0.5b-chat.gguf".to_string());
@@ -193,6 +261,77 @@ pub fn resolve_model_path(app_handle: &AppHandle, model_name_or_path: &str) -> O
     None
 }
 
+/// Поиск парного проектора mmproj для Vision-модели (Qwen2-VL, Moondream2, LLaVA)
+pub fn resolve_mmproj_for_model(app_handle: &AppHandle, model_path: &Path) -> Option<PathBuf> {
+    let parent = model_path.parent();
+    let model_stem = model_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let lower_stem = model_stem.to_lowercase();
+
+    let mut mmproj_names = Vec::new();
+    if lower_stem.contains("qwen") {
+        mmproj_names.push("mmproj-Qwen2-VL-2B-Instruct-f16.gguf".to_string());
+        mmproj_names.push("mmproj-qwen2-vl-2b-instruct-q4_k_m.gguf".to_string());
+        mmproj_names.push("mmproj-qwen2-vl-2b.gguf".to_string());
+        mmproj_names.push("qwen-vl-mmproj.gguf".to_string());
+    } else if lower_stem.contains("moondream") {
+        mmproj_names.push("moondream2-mmproj-f16.gguf".to_string());
+        mmproj_names.push("mmproj-moondream2.gguf".to_string());
+    }
+    mmproj_names.push("mmproj-model-f16.gguf".to_string());
+    mmproj_names.push("mmproj.gguf".to_string());
+
+    // 1. Проверяем в той же папке, где лежит сама модель
+    if let Some(p) = parent {
+        for name in &mmproj_names {
+            let candidate = p.join(name);
+            if is_valid_model_file(&candidate) {
+                log::info!("Найден парный mmproj проектор: {}", candidate.display());
+                return Some(candidate);
+            }
+        }
+    }
+
+    // 2. Проверяем во всех стандартных папках моделей
+    for name in &mmproj_names {
+        if let Some(found) = resolve_model_path(app_handle, name) {
+            log::info!("Найден mmproj проектор в системных путях: {}", found.display());
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+/// Находит полнофункциональную связку Vision-модели и её проектора mmproj: (model_path, mmproj_path)
+pub fn resolve_vision_model_and_projector(
+    app_handle: &AppHandle,
+    preferred: Option<&str>,
+) -> Option<(PathBuf, PathBuf)> {
+    if let Some(pref) = preferred {
+        let trimmed = pref.trim();
+        if !trimmed.is_empty() {
+            if let Some(m_path) = resolve_model_path(app_handle, trimmed) {
+                if let Some(proj) = resolve_mmproj_for_model(app_handle, &m_path) {
+                    return Some((m_path, proj));
+                }
+            }
+        }
+    }
+
+    for m in get_all_models_config()
+        .into_iter()
+        .filter(|m| m.category == "vision")
+    {
+        if let Some(m_path) = resolve_model_path(app_handle, &m.filename) {
+            if let Some(proj) = resolve_mmproj_for_model(app_handle, &m_path) {
+                return Some((m_path, proj));
+            }
+        }
+    }
+
+    None
+}
+
 /// Ищет сначала указанную Whisper-модель, а если её нет — лучшую из установленных Whisper-моделей (от старших к младшим)
 pub fn resolve_any_whisper_model(app_handle: &AppHandle, preferred: Option<&str>) -> Option<PathBuf> {
     if let Some(pref) = preferred {
@@ -243,166 +382,154 @@ pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) ->
 pub fn get_all_models_config() -> Vec<ModelInfo> {
     vec![
         // ==================== WHISPER ASR (РАСПОЗНАВАНИЕ РЕЧИ И СУБТИТРЫ) ====================
-        ModelInfo {
-            id: "whisper-tiny".to_string(),
-            name: "Whisper Tiny (Ультрабыстрая)".to_string(),
-            filename: "ggml-tiny.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin".to_string(),
-            size_mb: 75.0,
-            description: "Сверхбыстрая модель для слабых ПК и мгновенной черновой транскрипции (75 МБ)".to_string(),
-            category: "whisper".to_string(),
-            params: "39M".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "whisper-base".to_string(),
-            name: "Whisper Base (Рекомендуется)".to_string(),
-            filename: "ggml-base.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin".to_string(),
-            size_mb: 142.0,
-            description: "Оптимальный баланс скорости и точности для русской и английской речи (142 МБ)".to_string(),
-            category: "whisper".to_string(),
-            params: "74M".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "whisper-small-q5".to_string(),
-            name: "Whisper Small Q5 (Легкая Pro)".to_string(),
-            filename: "ggml-small-q5_1.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin".to_string(),
-            size_mb: 181.0,
-            description: "Квантованная Small-модель: высокая точность распознавания при малом весе (181 МБ)".to_string(),
-            category: "whisper".to_string(),
-            params: "244M Q5".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "whisper-small".to_string(),
-            name: "Whisper Small (Высокая точность)".to_string(),
-            filename: "ggml-small.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin".to_string(),
-            size_mb: 466.0,
-            description: "Отличное качество для аниме, стримов, сложной дикции и фонового шума (466 МБ)".to_string(),
-            category: "whisper".to_string(),
-            params: "244M".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "whisper-medium-q5".to_string(),
-            name: "Whisper Medium Q5 (Макс. точность RU)".to_string(),
-            filename: "ggml-medium-q5_0.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin".to_string(),
-            size_mb: 514.0,
-            description: "Квантованная Medium-модель: студийная точность русского языка без перегрузки ОЗУ (514 МБ)".to_string(),
-            category: "whisper".to_string(),
-            params: "769M Q5".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "whisper-large-v3-turbo-q5".to_string(),
-            name: "Whisper Large-v3 Turbo Q5".to_string(),
-            filename: "ggml-large-v3-turbo-q5_0.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin".to_string(),
-            size_mb: 547.0,
-            description: "Ускоренная флагманская модель OpenAI Large-v3 Turbo в компактном формате Q5 (547 МБ)".to_string(),
-            category: "whisper".to_string(),
-            params: "809M Q5".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
+        ModelInfo::standard(
+            "whisper-tiny",
+            "Whisper Tiny (Ультрабыстрая)",
+            "ggml-tiny.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
+            75.0,
+            "Сверхбыстрая модель для слабых ПК и мгновенной черновой транскрипции (75 МБ)",
+            "whisper",
+            "39M",
+        ),
+        ModelInfo::standard(
+            "whisper-base",
+            "Whisper Base (Рекомендуется)",
+            "ggml-base.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
+            142.0,
+            "Оптимальный баланс скорости и точности для русской и английской речи (142 МБ)",
+            "whisper",
+            "74M",
+        ),
+        ModelInfo::standard(
+            "whisper-small-q5",
+            "Whisper Small Q5 (Легкая Pro)",
+            "ggml-small-q5_1.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
+            181.0,
+            "Квантованная Small-модель: высокая точность распознавания при малом весе (181 МБ)",
+            "whisper",
+            "244M Q5",
+        ),
+        ModelInfo::standard(
+            "whisper-small",
+            "Whisper Small (Высокая точность)",
+            "ggml-small.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
+            466.0,
+            "Отличное качество для аниме, стримов, сложной дикции и фонового шума (466 МБ)",
+            "whisper",
+            "244M",
+        ),
+        ModelInfo::standard(
+            "whisper-medium-q5",
+            "Whisper Medium Q5 (Макс. точность RU)",
+            "ggml-medium-q5_0.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin",
+            514.0,
+            "Квантованная Medium-модель: студийная точность русского языка без перегрузки ОЗУ (514 МБ)",
+            "whisper",
+            "769M Q5",
+        ),
+        ModelInfo::standard(
+            "whisper-large-v3-turbo-q5",
+            "Whisper Large-v3 Turbo Q5",
+            "ggml-large-v3-turbo-q5_0.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+            547.0,
+            "Ускоренная флагманская модель OpenAI Large-v3 Turbo в компактном формате Q5 (547 МБ)",
+            "whisper",
+            "809M Q5",
+        ),
 
         // ==================== LLM (АНАЛИЗ ДИАЛОГОВ И ОТБОР ХАЙЛАЙТОВ — ДО 3B) ====================
-        ModelInfo {
-            id: "qwen-0.5b-chat".to_string(),
-            name: "Qwen 2.5 0.5B Instruct (Ультралегкая)".to_string(),
-            filename: "qwen2.5-0.5b-instruct-q4_k_m.gguf".to_string(),
-            url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf".to_string(),
-            size_mb: 469.0,
-            description: "Мгновенный анализ реплик на любых ПК и ноутбуках даже без дискретной видеокарты (469 МБ)".to_string(),
-            category: "llm".to_string(),
-            params: "0.5B".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "llama-3.2-1b".to_string(),
-            name: "Llama 3.2 1B Instruct (Быстрая)".to_string(),
-            filename: "Llama-3.2-1B-Instruct-Q4_K_M.gguf".to_string(),
-            url: "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf".to_string(),
-            size_mb: 770.0,
-            description: "Легкая открытая модель Meta Llama 3.2 для быстрой оценки динамики диалогов (770 МБ)".to_string(),
-            category: "llm".to_string(),
-            params: "1B".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "qwen-1.5b-chat".to_string(),
-            name: "Qwen 2.5 1.5B Instruct (Рекомендуется)".to_string(),
-            filename: "qwen-1.5b-chat.gguf".to_string(),
-            url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf".to_string(),
-            size_mb: 1065.0,
-            description: "Оптимальный выбор: отличное понимание русского контекста, юмора и эмоций (1.06 ГБ)".to_string(),
-            category: "llm".to_string(),
-            params: "1.5B".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "gemma-2-2b".to_string(),
-            name: "Google Gemma 2 2B Instruct".to_string(),
-            filename: "gemma-2-2b-it-Q4_K_M.gguf".to_string(),
-            url: "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf".to_string(),
-            size_mb: 1629.0,
-            description: "Модель от Google (2B): точное выделение смысловых панчлайнов и ярких реплик (1.63 ГБ)".to_string(),
-            category: "llm".to_string(),
-            params: "2B".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "llama-3.2-3b".to_string(),
-            name: "Llama 3.2 3B Instruct (Продвинутая)".to_string(),
-            filename: "Llama-3.2-3B-Instruct-Q4_K_M.gguf".to_string(),
-            url: "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf".to_string(),
-            size_mb: 1926.0,
-            description: "Продвинутая 3B модель с глубоким анализом драматургии и сюжетных поворотов (1.93 ГБ)".to_string(),
-            category: "llm".to_string(),
-            params: "3B".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
-        ModelInfo {
-            id: "qwen-3b-chat".to_string(),
-            name: "Qwen 2.5 3B Instruct (Максимум 3B)".to_string(),
-            filename: "qwen2.5-3b-instruct-q4_k_m.gguf".to_string(),
-            url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf".to_string(),
-            size_mb: 2007.0,
-            description: "Максимальное качество анализа русскоязычных диалогов и сленга в пределах 3B (2.0 ГБ)".to_string(),
-            category: "llm".to_string(),
-            params: "3B".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
+        ModelInfo::standard(
+            "qwen-0.5b-chat",
+            "Qwen 2.5 0.5B Instruct (Ультралегкая)",
+            "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            469.0,
+            "Мгновенный анализ реплик на любых ПК и ноутбуках даже без дискретной видеокарты (469 МБ)",
+            "llm",
+            "0.5B",
+        ),
+        ModelInfo::standard(
+            "llama-3.2-1b",
+            "Llama 3.2 1B Instruct (Быстрая)",
+            "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+            "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+            770.0,
+            "Легкая открытая модель Meta Llama 3.2 для быстрой оценки динамики диалогов (770 МБ)",
+            "llm",
+            "1B",
+        ),
+        ModelInfo::standard(
+            "qwen-1.5b-chat",
+            "Qwen 2.5 1.5B Instruct (Рекомендуется)",
+            "qwen-1.5b-chat.gguf",
+            "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+            1065.0,
+            "Оптимальный выбор: отличное понимание русского контекста, юмора и эмоций (1.06 ГБ)",
+            "llm",
+            "1.5B",
+        ),
+        ModelInfo::standard(
+            "gemma-2-2b",
+            "Google Gemma 2 2B Instruct",
+            "gemma-2-2b-it-Q4_K_M.gguf",
+            "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
+            1629.0,
+            "Модель от Google (2B): точное выделение смысловых панчлайнов и ярких реплик (1.63 ГБ)",
+            "llm",
+            "2B",
+        ),
+        ModelInfo::standard(
+            "llama-3.2-3b",
+            "Llama 3.2 3B Instruct (Продвинутая)",
+            "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+            "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+            1926.0,
+            "Продвинутая 3B модель с глубоким анализом драматургии и сюжетных поворотов (1.93 ГБ)",
+            "llm",
+            "3B",
+        ),
+        ModelInfo::standard(
+            "qwen-3b-chat",
+            "Qwen 2.5 3B Instruct (Максимум 3B)",
+            "qwen2.5-3b-instruct-q4_k_m.gguf",
+            "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
+            2007.0,
+            "Максимальное качество анализа русскоязычных диалогов и сленга в пределах 3B (2.0 ГБ)",
+            "llm",
+            "3B",
+        ),
 
-        // ==================== VISION AI (ВИЗУАЛЬНЫЙ АНАЛИЗ КАДРОВ — ДО 2B) ====================
-        ModelInfo {
-            id: "qwen-vl-2b".to_string(),
-            name: "Qwen2-VL 2B Vision (Анализ кадров)".to_string(),
-            filename: "qwen-vl-2b.gguf".to_string(),
-            url: "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf".to_string(),
-            size_mb: 940.0,
-            description: "Компактный локальный визуальный анализатор динамики сцен и ключевых кадров (940 МБ)".to_string(),
-            category: "vision".to_string(),
-            params: "2B Vision".to_string(),
-            exists: false,
-            local_path: "".to_string(),
-        },
+        // ==================== VISION AI (ВИЗУАЛЬНЫЙ АНАЛИЗ КАДРОВ — МОДЕЛЬ + ПРОЕКТОР MMPROJ) ====================
+        ModelInfo::vision(
+            "qwen-vl-2b",
+            "Qwen2-VL 2B Vision (Флагман + mmproj)",
+            "Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
+            "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
+            1520.0,
+            "Флагманский визуальный ИИ для видео и аниме: глубокий анализ кадров, персонажей, эмоций и динамики. Включает проектор mmproj (2.36 ГБ комплект).",
+            "2B VL + mmproj",
+            "mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
+            "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
+            847.0,
+        ),
+        ModelInfo::vision(
+            "moondream2",
+            "Moondream 2 Vision (Быстрая и легкая)",
+            "moondream2-text-model.gguf",
+            "https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-text-model.gguf",
+            780.0,
+            "Сверхлегкая визуальная нейросеть для слабых ПК: быстрое сканирование ключевых кадров без нагрузки на ОЗУ и GPU (1.63 ГБ комплект с mmproj).",
+            "1.8B + mmproj",
+            "moondream2-mmproj-f16.gguf",
+            "https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-mmproj-f16.gguf",
+            850.0,
+        ),
     ]
 }
 
@@ -412,11 +539,22 @@ pub async fn get_models_status(app_handle: AppHandle) -> AppResult<Vec<ModelInfo
 
     for model in &mut configured_models {
         if let Some(resolved_path) = resolve_model_path(&app_handle, &model.filename) {
-            model.exists = true;
-            model.local_path = resolved_path.to_string_lossy().to_string();
+            let mmproj_ready = if let Some(ref proj_name) = model.mmproj_filename {
+                resolve_model_path(&app_handle, proj_name).is_some()
+            } else {
+                true
+            };
+
+            if mmproj_ready {
+                model.exists = true;
+                model.local_path = resolved_path.to_string_lossy().to_string();
+            } else {
+                model.exists = false;
+                model.local_path = String::new();
+            }
         } else {
             model.exists = false;
-            model.local_path = "".to_string();
+            model.local_path = String::new();
         }
     }
 
@@ -443,7 +581,13 @@ pub async fn delete_model(
         active.remove(&model_id);
     }
 
-    let aliases = expand_model_aliases(&model.filename);
+    let mut aliases = expand_model_aliases(&model.filename);
+    if let Some(ref proj) = model.mmproj_filename {
+        aliases.extend(expand_model_aliases(proj));
+        aliases.push(proj.clone());
+    }
+    aliases.dedup();
+
     let candidate_dirs = get_candidate_model_dirs(&app_handle);
     let mut deleted_count = 0usize;
     let mut last_err: Option<std::io::Error> = None;
@@ -535,13 +679,17 @@ pub async fn download_model(
     let app_clone = app_handle.clone();
     let model_filename = model.filename.clone();
     let model_url = model.url.clone();
+    let mmproj_filename = model.mmproj_filename.clone();
+    let mmproj_url = model.mmproj_url.clone();
 
     tokio::spawn(async move {
-        let res = perform_download(
+        let res = perform_download_bundle(
             &app_clone,
             &model_id_clone,
             &model_filename,
             &model_url,
+            mmproj_filename.as_deref(),
+            mmproj_url.as_deref(),
             &active_downloads_clone,
         )
         .await;
@@ -599,12 +747,80 @@ pub async fn download_model(
     Ok(format!("Скачивание модели {} запущено в фоновом режиме", model.name))
 }
 
-async fn perform_download(
+async fn perform_download_bundle(
+    app_handle: &AppHandle,
+    model_id: &str,
+    filename: &str,
+    url: &str,
+    mmproj_filename: Option<&str>,
+    mmproj_url: Option<&str>,
+    active_downloads: &Arc<Mutex<std::collections::HashSet<String>>>,
+) -> Result<String, AppError> {
+    if let (Some(proj_name), Some(proj_url)) = (mmproj_filename, mmproj_url) {
+        crate::logger::emit_log(
+            app_handle,
+            "Models",
+            "info",
+            &format!("[Шаг 1/2] Загрузка весов модели: '{}'", filename),
+        );
+        let path1 = perform_single_file_download(
+            app_handle,
+            model_id,
+            filename,
+            url,
+            active_downloads,
+            0.0,
+            65.0,
+        )
+        .await?;
+
+        crate::logger::emit_log(
+            app_handle,
+            "Models",
+            "info",
+            &format!("[Шаг 2/2] Загрузка парного проектора mmproj: '{}'", proj_name),
+        );
+        let _ = perform_single_file_download(
+            app_handle,
+            model_id,
+            proj_name,
+            proj_url,
+            active_downloads,
+            65.0,
+            100.0,
+        )
+        .await?;
+
+        crate::logger::emit_log(
+            app_handle,
+            "Models",
+            "info",
+            &format!("Vision-комплект '{}' (веса + проектор mmproj) успешно сохранен и готов к работе!", model_id),
+        );
+
+        Ok(path1)
+    } else {
+        perform_single_file_download(
+            app_handle,
+            model_id,
+            filename,
+            url,
+            active_downloads,
+            0.0,
+            100.0,
+        )
+        .await
+    }
+}
+
+async fn perform_single_file_download(
     app_handle: &AppHandle,
     model_id: &str,
     filename: &str,
     url: &str,
     active_downloads: &Arc<Mutex<std::collections::HashSet<String>>>,
+    start_percent: f64,
+    end_percent: f64,
 ) -> Result<String, AppError> {
     let models_dir = get_models_dir(app_handle);
     tokio::fs::create_dir_all(&models_dir).await.map_err(AppError::Io)?;
@@ -612,8 +828,8 @@ async fn perform_download(
     let part_path = models_dir.join(format!("{}.download", filename));
 
     log::info!(
-        "Начало загрузки модели: {} ({}) в {}",
-        model_id,
+        "Начало загрузки файла: {} ({}) в {}",
+        filename,
         url,
         dest_path.display()
     );
@@ -645,6 +861,7 @@ async fn perform_download(
     let mut downloaded_bytes = 0u64;
     let mut stream = response.bytes_stream();
     let mut last_emit_percent = -1.0;
+    let span = (end_percent - start_percent).max(1.0);
 
     let download_res: Result<(), AppError> = async {
         while let Some(chunk_result) = stream.next().await {
@@ -664,14 +881,15 @@ async fn perform_download(
             downloaded_bytes += chunk.len() as u64;
 
             if total_bytes > 0 {
-                let percent = (downloaded_bytes as f64 / total_bytes as f64) * 100.0;
-                if percent - last_emit_percent >= 0.5 || percent >= 100.0 {
-                    last_emit_percent = percent;
+                let part_fraction = (downloaded_bytes as f64 / total_bytes as f64).clamp(0.0, 1.0);
+                let overall_percent = (start_percent + part_fraction * span).min(end_percent);
+                if overall_percent - last_emit_percent >= 0.5 || overall_percent >= end_percent {
+                    last_emit_percent = overall_percent;
                     let _ = app_handle.emit(
                         "model-download-progress",
                         DownloadProgressPayload {
                             model_id: model_id.to_string(),
-                            percent,
+                            percent: overall_percent,
                             downloaded_bytes,
                             total_bytes,
                             status: "downloading".to_string(),

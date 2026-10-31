@@ -173,18 +173,36 @@ export const CATALOG_MODELS: ModelInfo[] = [
     exists: false,
     local_path: ''
   },
-  // Vision AI (<= 2B)
+  // Vision AI (<= 2B + mmproj projector)
   {
     id: 'qwen-vl-2b',
-    name: 'Qwen2-VL 2B Vision (Анализ кадров)',
-    filename: 'qwen-vl-2b.gguf',
+    name: 'Qwen2-VL 2B Vision (Флагман + mmproj)',
+    filename: 'Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
     url: 'https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
-    size_mb: 940,
-    description: 'Компактный локальный визуальный анализатор динамики сцен и ключевых кадров (940 МБ)',
+    size_mb: 1520,
+    description: 'Флагманский визуальный ИИ для видео и аниме: глубокий анализ кадров, персонажей, эмоций и динамики. Включает проектор mmproj (2.36 ГБ комплект).',
     category: 'vision',
-    params: '2B Vision',
+    params: '2B VL + mmproj',
     exists: false,
-    local_path: ''
+    local_path: '',
+    mmproj_filename: 'mmproj-Qwen2-VL-2B-Instruct-f16.gguf',
+    mmproj_url: 'https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-f16.gguf',
+    mmproj_size_mb: 847
+  },
+  {
+    id: 'moondream2',
+    name: 'Moondream 2 Vision (Быстрая и легкая)',
+    filename: 'moondream2-text-model.gguf',
+    url: 'https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-text-model.gguf',
+    size_mb: 780,
+    description: 'Сверхлегкая визуальная нейросеть для слабых ПК: быстрое сканирование ключевых кадров без нагрузки на ОЗУ и GPU (1.63 ГБ комплект с mmproj).',
+    category: 'vision',
+    params: '1.8B + mmproj',
+    exists: false,
+    local_path: '',
+    mmproj_filename: 'moondream2-mmproj-f16.gguf',
+    mmproj_url: 'https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-mmproj-f16.gguf',
+    mmproj_size_mb: 850
   }
 ];
 

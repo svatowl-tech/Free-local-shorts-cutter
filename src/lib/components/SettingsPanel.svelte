@@ -84,6 +84,7 @@
 
   $: whisperModels = $modelsStore.models.filter(m => m.category === 'whisper');
   $: llmModels = $modelsStore.models.filter(m => m.category === 'llm');
+  $: visionModels = $modelsStore.models.filter(m => m.category === 'vision');
 </script>
 
 <div class="panel p-6 sm:p-8 flex flex-col justify-between h-full">
@@ -305,15 +306,21 @@
 
           <!-- Vision model -->
           <div class="flex flex-col gap-1">
-            <label for="vision_model" class="label-mono">Модель анализа кадров (Vision AI)</label>
-            <input 
+            <label for="vision_model" class="label-mono">Модель анализа кадров (Vision AI + mmproj)</label>
+            <select
               id="vision_model"
-              type="text" 
-              value={$pipelineStore.config.vision_model_path}
-              on:input={handleVisionModelChange}
+              value={$pipelineStore.config.vision_model_path || ''}
+              on:change={handleVisionModelChange}
               disabled={$pipelineStore.status === 'running'}
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
-            />
+            >
+              <option value="">Авто / Двухфакторный анализ (FFmpeg сцены + аудио)</option>
+              {#each visionModels as vm}
+                <option value={`models/${vm.filename}`}>
+                  {vm.exists ? '✓ ' : ''}{vm.name} ({vm.params}){vm.exists ? ' [Скачана]' : ' [Не скачана]'}
+                </option>
+              {/each}
+            </select>
           </div>
 
           <!-- Output dir -->
