@@ -183,108 +183,124 @@ pub async fn run_pipeline(
         cancel_rx.resubscribe()
     ).await.unwrap_or_default();
 
-    // 5. Умное построение списка лучших фрагментов (Хайлайтов) с защитой от скученности и склеек
+    // 5. Умное построение списка лучших фрагментов (Хайлайтов) с динамической длительностью (10–20с) по границам полных фраз
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 85.0, 
-        stage: "Формирование лучших моментов (хайлайтов)...".to_string() 
+        stage: "Формирование цельных диалогов и хайлайтов (10–20 сек)...".to_string() 
     });
 
-    let clip_duration = config.max_clip_duration_sec.min(video_duration).max(5.0);
-    let mut candidate_intervals: Vec<(f64, f64, f64)> = Vec::new(); // (start, end, window_score)
+    let target_dur = config.max_clip_duration_sec.min(video_duration).max(6.0);
+    // Вместо жесткой привязки к 15.0 секундам задаем гибкий коридор длительности (например, от 10 до 20 секунд при цели 15с),
+    // чтобы каждый ролик начинался ровно с начала первой фразы и заканчивался ровно после завершения последней фразы!
+    let min_dur = (target_dur - 5.0).max(5.0).min(video_duration);
+    let max_dur = (target_dur + 5.0).max(min_dur + 4.0).min(video_duration);
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Pipeline",
+        "info",
+        &format!(
+            "Адаптивный подбор границ клипов по цельным фразам: целевая {:.0}с (гибкий диапазон {:.0}с – {:.0}с, без обрыва фраз)",
+            target_dur, min_dur, max_dur
+        ),
+    );
+
+    // (start_sec, end_sec, score, first_phrase_preview, last_phrase_preview)
+    let mut candidate_intervals: Vec<(f64, f64, f64, String, String)> = Vec::new();
 
     // Пропускаем первые секунды интро и финальные титры на длинных видео (> 3 мин)
     let intro_skip = if video_duration > 180.0 { 4.0 } else { 0.0 };
-    let outro_limit = if video_duration > 300.0 { (video_duration - 25.0).max(clip_duration) } else { video_duration };
+    let outro_limit = if video_duration > 300.0 { (video_duration - 25.0).max(min_dur) } else { video_duration };
 
-    // А. Оцениваем полноценные окна длиной clip_duration вокруг ярких реплик
-    for (i, frag) in fragments.iter().enumerate() {
-        if frag.start < intro_skip || frag.start >= outro_limit {
-            continue;
-        }
-        if crate::whisper::is_whisper_hallucination(&frag.text) {
-            continue;
-        }
-
-        let base_score = text_scores.get(i).copied().unwrap_or(0.4);
-        let win_start = (frag.start - 1.0).max(intro_skip).min((outro_limit - clip_duration).max(0.0));
-        let win_end = (win_start + clip_duration).min(video_duration);
-        if win_end - win_start < 4.0 {
-            continue;
-        }
-
-        // Считаем агрегированную ценность всех реплик внутри окна [win_start, win_end]
-        let mut peak_score = base_score;
-        let mut sum_score = 0.0;
-        let mut cue_count = 0usize;
-        let mut active_speech_sec = 0.0;
-
-        for (j, other) in fragments.iter().enumerate() {
-            if other.end > win_start && other.start < win_end && !crate::whisper::is_whisper_hallucination(&other.text) {
-                let sc = text_scores.get(j).copied().unwrap_or(0.4);
-                if sc > peak_score {
-                    peak_score = sc;
-                }
-                sum_score += sc;
-                cue_count += 1;
-                let ov_start = other.start.max(win_start);
-                let ov_end = other.end.min(win_end);
-                active_speech_sec += (ov_end - ov_start).max(0.0);
+    // А. Строим кандидатов по границам полных предложений вокруг реплик
+    if !fragments.is_empty() {
+        for anchor_idx in 0..fragments.len() {
+            if crate::whisper::is_whisper_hallucination(&fragments[anchor_idx].text) {
+                continue;
             }
-        }
-
-        let avg_score = if cue_count > 0 { sum_score / (cue_count as f64) } else { base_score };
-        let speech_density = (active_speech_sec / clip_duration).clamp(0.0, 1.0);
-
-        // Динамический бонус, если внутри окна есть визуальная смена сцены или звуковой пик
-        let max_scene_in_win = scenes
-            .iter()
-            .filter(|s| s.timestamp_sec >= win_start && s.timestamp_sec <= win_end)
-            .map(|s| s.intensity)
-            .fold(0.0_f64, f64::max);
-        let scene_bonus = if max_scene_in_win > 0.0 {
-            (max_scene_in_win * 0.11).clamp(0.04, 0.10)
-        } else {
-            0.0
-        };
-
-        let window_score = (peak_score * 0.58 + avg_score * 0.24 + speech_density * 0.18 + scene_bonus).min(0.99);
-
-        if window_score >= config.min_intensity_threshold * 0.92 {
-            candidate_intervals.push((win_start, win_end, window_score));
+            if let Some(cand) = build_complete_phrase_window(
+                &fragments,
+                &text_scores,
+                &scenes,
+                anchor_idx,
+                min_dur,
+                target_dur,
+                max_dur,
+                intro_skip,
+                outro_limit,
+                video_duration,
+            ) {
+                if cand.2 >= config.min_intensity_threshold * 0.88 {
+                    candidate_intervals.push(cand);
+                }
+            }
         }
     }
 
-    // Б. Из сцен визуального/аудио анализа
+    // Б. Из сцен визуального/аудио анализа:
+    // Если в видео есть распознанные субтитры, привязываем визуальные пики к ближайшему цельному диалоговому окну (10–20с),
+    // чтобы исключить нарезку клипов посреди безмолвного музыкального опенинга или на полуслове!
     for scene in &scenes {
         if scene.timestamp_sec < intro_skip || scene.timestamp_sec >= outro_limit {
             continue;
         }
-        let start = (scene.timestamp_sec - 2.0).max(intro_skip).min((outro_limit - clip_duration).max(0.0));
-        let end = (start + clip_duration).min(video_duration);
-        if end - start >= 4.0 {
-            // Если в видео есть субтитры, проверяем наличие живой речи внутри визуальной сцены,
-            // чтобы музыкальные заставки без слов не вытесняли сюжетные диалоги
-            let has_dialogue_in_scene = fragments.is_empty() || fragments.iter().any(|f| {
-                f.end > start && f.start < end && !crate::whisper::is_whisper_hallucination(&f.text)
-            });
-            let effective_intensity = if has_dialogue_in_scene {
-                scene.intensity
-            } else {
-                scene.intensity * 0.84
-            };
-            if effective_intensity >= config.min_intensity_threshold {
-                candidate_intervals.push((start, end, effective_intensity));
+        if !fragments.is_empty() {
+            // Ищем ближайшую реплику рядом с визуальным пиком (в радиусе 6 секунд)
+            if let Some((nearest_idx, _)) = fragments
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| {
+                    !crate::whisper::is_whisper_hallucination(&f.text)
+                        && (f.start - scene.timestamp_sec).abs() <= 6.0
+                })
+                .min_by(|(_, a), (_, b)| {
+                    (a.start - scene.timestamp_sec)
+                        .abs()
+                        .partial_cmp(&(b.start - scene.timestamp_sec).abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+            {
+                if let Some(mut cand) = build_complete_phrase_window(
+                    &fragments,
+                    &text_scores,
+                    &scenes,
+                    nearest_idx,
+                    min_dur,
+                    target_dur,
+                    max_dur,
+                    intro_skip,
+                    outro_limit,
+                    video_duration,
+                ) {
+                    cand.2 = (cand.2 + 0.03).min(0.97);
+                    if cand.2 >= config.min_intensity_threshold * 0.88 {
+                        candidate_intervals.push(cand);
+                    }
+                }
+            }
+        } else {
+            // Только если в видео вообще нет речи (например чисто инструментальный клип)
+            let start = (scene.timestamp_sec - 2.0).max(intro_skip).min((outro_limit - target_dur).max(0.0));
+            let end = (start + target_dur).min(video_duration);
+            if end - start >= 4.0 && scene.intensity >= config.min_intensity_threshold {
+                candidate_intervals.push((
+                    start,
+                    end,
+                    scene.intensity.clamp(0.50, 0.94),
+                    "Визуальная динамика".to_string(),
+                    scene.description.clone(),
+                ));
             }
         }
     }
 
-    // Если нет ни одного фрагмента выше порога — выбираем топ лучших моментов по относительной ценности
+    // Если нет ни одного фрагмента выше порога — выбираем топ лучших цельных моментов по относительной ценности
     if candidate_intervals.is_empty() {
         crate::logger::emit_log(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("Ни один фрагмент не превысил порог {}. Автоматический выбор лучших моментов по относительной ценности...", config.min_intensity_threshold),
+            &format!("Ни один фрагмент не превысил порог {}. Автоматический выбор лучших цельных сцен по относительной ценности...", config.min_intensity_threshold),
         );
         if !fragments.is_empty() {
             let mut frag_with_scores: Vec<(usize, f64)> = fragments
@@ -294,20 +310,34 @@ pub async fn run_pipeline(
                 .map(|(i, _)| (i, text_scores.get(i).copied().unwrap_or(0.5)))
                 .collect();
             frag_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (idx, sc) in frag_with_scores.into_iter().take(15) {
-                let frag = &fragments[idx];
-                let start = (frag.start - 1.0).max(0.0).min((video_duration - clip_duration).max(0.0));
-                let end = (start + clip_duration).min(video_duration);
-                if end - start >= 3.0 {
-                    candidate_intervals.push((start, end, sc));
+            for (idx, _) in frag_with_scores.into_iter().take(25) {
+                if let Some(cand) = build_complete_phrase_window(
+                    &fragments,
+                    &text_scores,
+                    &scenes,
+                    idx,
+                    min_dur,
+                    target_dur,
+                    max_dur,
+                    intro_skip,
+                    outro_limit,
+                    video_duration,
+                ) {
+                    candidate_intervals.push(cand);
                 }
             }
         } else if !scenes.is_empty() {
             for scn in scenes.iter().take(10) {
-                let start = (scn.timestamp_sec - 1.0).max(0.0).min((video_duration - clip_duration).max(0.0));
-                let end = (start + clip_duration).min(video_duration);
+                let start = (scn.timestamp_sec - 1.0).max(0.0).min((video_duration - target_dur).max(0.0));
+                let end = (start + target_dur).min(video_duration);
                 if end - start >= 3.0 {
-                    candidate_intervals.push((start, end, scn.intensity));
+                    candidate_intervals.push((
+                        start,
+                        end,
+                        scn.intensity.clamp(0.55, 0.92),
+                        "Визуальная сцена".to_string(),
+                        scn.description.clone(),
+                    ));
                 }
             }
         } else {
@@ -315,21 +345,25 @@ pub async fn run_pipeline(
             let step = video_duration / (num_clips as f64);
             for i in 0..num_clips {
                 let start = (i as f64 * step).min(video_duration - 5.0).max(0.0);
-                let end = (start + clip_duration).min(video_duration);
+                let end = (start + target_dur).min(video_duration);
                 if end - start >= 3.0 {
-                    candidate_intervals.push((start, end, 0.75 - (i as f64 * 0.05)));
+                    candidate_intervals.push((
+                        start,
+                        end,
+                        0.75 - (i as f64 * 0.05),
+                        "Фрагмент".to_string(),
+                        "Авто".to_string(),
+                    ));
                 }
             }
         }
     }
 
-    // Устраняем перекрытия и скученность (Non-Maximum Suppression с минимальной дистанцией между клипами):
-    // Для длинных видео гарантируем минимальный отступ min_gap между концом одного клипа и началом другого,
-    // чтобы не нарезать 7 клипов подряд из первых 2 минут серии!
+    // Устраняем перекрытия и скученность (Non-Maximum Suppression с минимальной дистанцией между клипами)
     let min_gap = (video_duration / 45.0).clamp(4.0, 25.0);
     candidate_intervals.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut selected_intervals: Vec<(f64, f64, f64)> = Vec::new();
+    let mut selected_intervals: Vec<(f64, f64, f64, String, String)> = Vec::new();
     for candidate in candidate_intervals {
         let too_close_or_overlaps = selected_intervals.iter().any(|sel| {
             candidate.0 < (sel.1 + min_gap) && candidate.1 > (sel.0 - min_gap)
@@ -347,21 +381,30 @@ pub async fn run_pipeline(
 
     let suggested_fragments: Vec<crate::commands::FragmentDto> = selected_intervals
         .iter()
-        .map(|(s, e, _)| crate::commands::FragmentDto { start: *s, end: *e })
+        .map(|(s, e, _, _, _)| crate::commands::FragmentDto { start: *s, end: *e })
         .collect();
 
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
         "info",
-        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} равномерно распределенных моментов для таймлайна", suggested_fragments.len()),
+        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} логически завершенных клипов (10–20с) для таймлайна", suggested_fragments.len()),
     );
-    for (i, (start, end, score)) in selected_intervals.iter().enumerate() {
+    for (i, (start, end, score, first_txt, last_txt)) in selected_intervals.iter().enumerate() {
         crate::logger::emit_log(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("  → Клип #{}: [{:.1}с - {:.1}с] (длительность {:.1}с, рейтинг {:.2})", i + 1, start, end, end - start, score),
+            &format!(
+                "  → Клип #{}: [{:.1}с - {:.1}с] (длительность {:.1}с, рейтинг {:.2}) | Начало: «{}» ... Конец: «{}»",
+                i + 1,
+                start,
+                end,
+                end - start,
+                score,
+                first_txt,
+                last_txt
+            ),
         );
     }
 
@@ -416,7 +459,7 @@ pub async fn run_pipeline(
     );
 
     let total_clips = selected_intervals.len();
-    for (i, (start_sec, end_sec, _)) in selected_intervals.iter().enumerate() {
+    for (i, (start_sec, end_sec, _, _, _)) in selected_intervals.iter().enumerate() {
         let duration = end_sec - start_sec;
 
         let start_min = (start_sec / 60.0) as u32;
@@ -473,4 +516,201 @@ pub async fn run_pipeline(
     });
 
     Ok((generated_clips, suggested_fragments))
+}
+
+/// Строит логически завершенное окно клипа в гибком диапазоне `[min_dur, max_dur]` (например, 10–20 секунд),
+/// привязывая начало клипа строго к началу предложения, а конец — к полному завершению последней фразы без обрывов на полуслове.
+#[allow(clippy::too_many_arguments)]
+fn build_complete_phrase_window(
+    fragments: &[crate::text_analyzer::SubtitleFragment],
+    text_scores: &[f64],
+    scenes: &[crate::analyzer::SceneCandidate],
+    anchor_idx: usize,
+    min_dur: f64,
+    target_dur: f64,
+    max_dur: f64,
+    intro_skip: f64,
+    outro_limit: f64,
+    video_duration: f64,
+) -> Option<(f64, f64, f64, String, String)> {
+    if anchor_idx >= fragments.len() {
+        return None;
+    }
+
+    // 1. Сдвигаем точку старта назад до истинного НАЧАЛА предложения (если якорь попал в середину фразы)
+    let mut start_idx = anchor_idx;
+    while start_idx > 0
+        && !crate::text_analyzer::is_sentence_start(fragments, start_idx)
+        && (anchor_idx - start_idx) < 5
+    {
+        let gap = (fragments[start_idx].start - fragments[start_idx - 1].end).max(0.0);
+        if gap > 1.5 {
+            break;
+        }
+        start_idx -= 1;
+    }
+
+    if fragments[start_idx].start < intro_skip || fragments[start_idx].start >= outro_limit {
+        return None;
+    }
+
+    // Вспомогательное замыкание поиска лучшей конечной реплики `end_idx` от заданного `s_idx`
+    let find_best_end = |s_idx: usize| -> Option<(usize, f64, f64, bool)> {
+        let mut pre_roll = (fragments[s_idx].start - 0.18).max(intro_skip);
+        if s_idx > 0 {
+            // Не залезаем на хвост предыдущей реплики!
+            pre_roll = pre_roll.max(fragments[s_idx - 1].end + 0.04).min(fragments[s_idx].start);
+        }
+
+        let mut best_choice: Option<(usize, f64, f64, bool, f64)> = None; // (end_idx, c_start, c_end, is_clean_end, boundary_quality)
+
+        for end_idx in s_idx..fragments.len() {
+            if crate::whisper::is_whisper_hallucination(&fragments[end_idx].text) {
+                continue;
+            }
+
+            // Если между предыдущей и текущей репликой огромная музыкальная пауза (> 5с), а мы уже набрали min_dur — останавливаемся
+            if end_idx > s_idx {
+                let gap = (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0);
+                let prev_dur = fragments[end_idx - 1].end - pre_roll;
+                if gap > 5.0 && prev_dur >= min_dur {
+                    break;
+                }
+            }
+
+            let mut post_roll = (fragments[end_idx].end + 0.24).min(video_duration);
+            if end_idx + 1 < fragments.len() {
+                // Не захватываем первый слог следующей реплики!
+                post_roll = post_roll
+                    .min(fragments[end_idx + 1].start - 0.04)
+                    .max(fragments[end_idx].end);
+            }
+
+            let dur = post_roll - pre_roll;
+            // Допускаем небольшое расширение (+1.5с сверх max_dur), ТОЛЬКО если это нужно для завершения длинного предложения
+            if dur > max_dur + 1.5 {
+                break;
+            }
+
+            if dur >= min_dur {
+                let is_sent_end = crate::text_analyzer::is_sentence_end(fragments, end_idx);
+                let has_punct = crate::text_analyzer::has_terminal_punctuation(&fragments[end_idx].text);
+                let pause_after = if end_idx + 1 < fragments.len() {
+                    (fragments[end_idx + 1].start - fragments[end_idx].end).max(0.0)
+                } else {
+                    1.0
+                };
+
+                // Если длительность вышла за `max_dur` (в буфер +1.5с), принимаем её ТОЛЬКО если она закрывает предложение!
+                if dur > max_dur && !is_sent_end {
+                    continue;
+                }
+
+                // Оценка качества границы окончания:
+                // Главный приоритет (+2.0) — полное логическое окончание предложения (is_sent_end)
+                let mut b_quality = if is_sent_end { 2.0 } else { 0.2 };
+                if has_punct {
+                    b_quality += 0.45;
+                }
+                b_quality += (pause_after * 0.25).min(0.35);
+                // Плавное предпочтение длительности ближе к золотой середине target_dur (15с), но в пределах 10..20с
+                let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.35;
+                b_quality -= dist_penalty;
+
+                if best_choice.as_ref().map_or(true, |prev| b_quality > prev.4) {
+                    best_choice = Some((end_idx, pre_roll, post_roll, is_sent_end, b_quality));
+                }
+            }
+        }
+
+        best_choice.map(|(e_idx, cs, ce, clean, _)| (e_idx, cs, ce, clean))
+    };
+
+    let mut chosen = find_best_end(start_idx);
+
+    // Если от `start_idx` вперед диалог закончился раньше 10 секунд (или не нашлось ни одного полного конца фразы),
+    // пробуем захватить предыдущее полное предложение перед `start_idx`, чтобы получился полноценный диалог 10–20с!
+    if chosen.as_ref().map_or(true, |c| !c.3) && start_idx > 0 {
+        let mut prev_start = start_idx - 1;
+        while prev_start > 0
+            && !crate::text_analyzer::is_sentence_start(fragments, prev_start)
+            && (start_idx - prev_start) < 5
+        {
+            prev_start -= 1;
+        }
+        if fragments[prev_start].start >= intro_skip {
+            if let Some(alt) = find_best_end(prev_start) {
+                if alt.3 || chosen.is_none() {
+                    start_idx = prev_start;
+                    chosen = Some(alt);
+                }
+            }
+        }
+    }
+
+    let (end_idx, clip_start, clip_end, is_clean_end) = chosen?;
+    let clip_dur = clip_end - clip_start;
+    if clip_dur < min_dur * 0.9 || clip_dur > max_dur + 1.6 {
+        return None;
+    }
+
+    // 2. Оцениваем содержательность, плотность живой речи и драматургию внутри окна [start_idx..=end_idx]
+    let mut peak_score: f64 = 0.0;
+    let mut sum_score: f64 = 0.0;
+    let mut cue_count = 0usize;
+    let mut active_speech_sec = 0.0;
+
+    for j in start_idx..=end_idx {
+        let f = &fragments[j];
+        if crate::whisper::is_whisper_hallucination(&f.text) {
+            continue;
+        }
+        let sc = text_scores.get(j).copied().unwrap_or(0.42);
+        if sc > peak_score {
+            peak_score = sc;
+        }
+        sum_score += sc;
+        cue_count += 1;
+        active_speech_sec += (f.end - f.start).max(0.0);
+    }
+
+    // Защита от музыкальных заставок/опенингов: в 10–20 секундном ролике должно быть минимум 2 реплики и >= 3.2с живой речи
+    if cue_count < 2 || active_speech_sec < 3.2 {
+        return None;
+    }
+
+    let avg_score = sum_score / (cue_count as f64);
+    let speech_density = (active_speech_sec / clip_dur).clamp(0.0, 1.0);
+
+    // Бонус за идеальную целостность начала и конца фразы
+    let is_clean_start = crate::text_analyzer::is_sentence_start(fragments, start_idx);
+    let completeness_bonus = match (is_clean_start, is_clean_end) {
+        (true, true) => 0.06,
+        (true, false) | (false, true) => 0.02,
+        (false, false) => -0.06,
+    };
+
+    // Бонус за совпадение с визуальной динамикой / аудио-пиком
+    let max_scene_in_win = scenes
+        .iter()
+        .filter(|s| s.timestamp_sec >= clip_start && s.timestamp_sec <= clip_end)
+        .map(|s| s.intensity)
+        .fold(0.0_f64, f64::max);
+    let scene_bonus = if max_scene_in_win > 0.0 {
+        (max_scene_in_win * 0.05).clamp(0.01, 0.05)
+    } else {
+        0.0
+    };
+
+    let window_score = (peak_score * 0.48
+        + avg_score * 0.30
+        + speech_density.min(0.85) * 0.11
+        + completeness_bonus
+        + scene_bonus)
+        .clamp(0.35, 0.97);
+
+    let first_preview: String = fragments[start_idx].text.trim().chars().take(36).collect();
+    let last_preview: String = fragments[end_idx].text.trim().chars().take(36).collect();
+
+    Some((clip_start, clip_end, window_score, first_preview, last_preview))
 }

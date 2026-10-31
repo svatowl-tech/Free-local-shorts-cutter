@@ -109,6 +109,97 @@ struct OllamaResponse {
     response: String,
 }
 
+/// Определяет, заканчивается ли текст реплики знаком завершения предложения (., !, ?, …, »)
+pub fn has_terminal_punctuation(text: &str) -> bool {
+    let trimmed = text
+        .trim()
+        .trim_end_matches(['"', '\'', '»', ')', ']']);
+    trimmed.ends_with('.')
+        || trimmed.ends_with('!')
+        || trimmed.ends_with('?')
+        || trimmed.ends_with('…')
+}
+
+/// Определяет, начинается ли текст со строчной (маленькой) буквы или союза-продолжения после запятой
+fn starts_with_lowercase_continuation(text: &str) -> bool {
+    let trimmed = text
+        .trim()
+        .trim_start_matches(['"', '\'', '«', '(', '[']);
+    if let Some(first_ch) = trimmed.chars().next() {
+        if first_ch.is_lowercase() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Проверяет, является ли реплика `idx` логическим НАЧАЛОМ нового предложения / законченной мысли
+pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
+    if idx == 0 || idx >= fragments.len() {
+        return true;
+    }
+    let prev = &fragments[idx - 1];
+    let curr = &fragments[idx];
+    let gap = (curr.start - prev.end).max(0.0);
+
+    // Если между репликами заметная пауза (>= 0.65с) — это гарантированно начало новой фразы
+    if gap >= 0.65 {
+        return true;
+    }
+
+    // Если текущая строка начинается с диалогового тире («- » или «— ») — это новая реплика собеседника
+    let curr_trimmed = curr.text.trim();
+    if curr_trimmed.starts_with('-') || curr_trimmed.starts_with('—') {
+        return true;
+    }
+
+    // Если текущая строка начинается с маленькой буквы и пауза маленькая (< 1.0с) — это середина предложения!
+    if starts_with_lowercase_continuation(curr_trimmed) && gap < 1.0 {
+        return false;
+    }
+
+    // Если предыдущая строка закончилась точкой, !, ? или многоточием — текущая начинает новое предложение
+    if has_terminal_punctuation(&prev.text) {
+        return true;
+    }
+
+    // Иначе предыдущая строка оборвалась на запятой или на полуслове без паузы — значит это продолжение фразы
+    false
+}
+
+/// Проверяет, является ли реплика `idx` логическим КОНЦОМ предложения / законченной мысли
+pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
+    if idx + 1 >= fragments.len() {
+        return true;
+    }
+    let curr = &fragments[idx];
+    let next = &fragments[idx + 1];
+    let gap_next = (next.start - curr.end).max(0.0);
+
+    // Если после реплики следует пауза >= 0.75с — фраза логически завершена
+    if gap_next >= 0.75 {
+        return true;
+    }
+
+    // Если следующая реплика — реплика другого персонажа (начинается с тире) и текущая не оборвана на предлоге
+    let next_trimmed = next.text.trim();
+    if (next_trimmed.starts_with('-') || next_trimmed.starts_with('—')) && has_terminal_punctuation(&curr.text) {
+        return true;
+    }
+
+    // Если следующая реплика начинается со строчной буквы без паузы — предложение ещё продолжается!
+    if starts_with_lowercase_continuation(next_trimmed) && gap_next < 0.85 {
+        return false;
+    }
+
+    // Если текущая реплика заканчивается на ., !, ?, … — предложение завершено
+    if has_terminal_punctuation(&curr.text) {
+        return true;
+    }
+
+    false
+}
+
 /// Нормализует вектор оценок от LLM так, чтобы его длина строго совпадала с длиной пакета `chunk`
 fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64> {
     let fallback = compute_text_scores_advanced(chunk);
@@ -119,7 +210,9 @@ fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64
             if crate::whisper::is_whisper_hallucination(&chunk[i].text) {
                 out.push(0.05);
             } else {
-                out.push(val.clamp(0.05, 0.99));
+                // Смешиваем оценку LLM (70%) с локальной оценкой границ фраз (30%), чтобы избежать плоских 0.99
+                let blended = (val.clamp(0.10, 0.96) * 0.70 + fallback[i] * 0.30).clamp(0.12, 0.96);
+                out.push(blended);
             }
         } else {
             out.push(fallback[i]);
@@ -139,13 +232,13 @@ pub async fn analyze_text_with_llm(
         return Ok(Vec::new());
     }
 
-    // Если выбран Builtin — используем быстрый умный локальный семантический анализатор
+    // Если выбран Builtin — используем быстрый умный локальный семантический анализатор с контролем целостности фраз
     if config.engine == TextEngine::Builtin {
         crate::logger::emit_log(
             app_handle,
             "LLM",
             "info",
-            &format!("Применяется высокоскоростной встроенный автономный NLP-движок анализа реплик (всего сегментов: {})", fragments.len()),
+            &format!("Применяется высокоскоростной встроенный NLP-движок анализа целостных фраз (всего реплик: {})", fragments.len()),
         );
         return Ok(compute_text_scores_advanced(fragments));
     }
@@ -162,7 +255,7 @@ pub async fn analyze_text_with_llm(
                 app_handle,
                 "LLM",
                 "info",
-                &format!("Запуск локального llama-cli с моделью: '{}' (контекст: 2048, UTF-8 файл промпта)", model_path.display()),
+                &format!("Запуск локального llama-cli с моделью: '{}' (контекст: 2048, контроль целостности фраз)", model_path.display()),
             );
             let mut all_scores = Vec::with_capacity(fragments.len());
             let batch_size = 35;
@@ -192,10 +285,10 @@ pub async fn analyze_text_with_llm(
                     cancel_rx.resubscribe(),
                 ).await;
 
-                // Если запуск с GPU offload (-ngl 99) упал ИЛИ вернул поврежденный вывод (например, 'GGGG...' из-за переполнения FP16 NaN в CUDA на RTX 20xx),
-                // немедленно переключаемся на стабильный режим CPU (-ngl 0) и повторяем текущий пакет!
+                // Если запуск с GPU offload (-ngl 99) упал ИЛИ вернул поврежденный вывод (например, 'GGGG...' или мусор токенизатора),
+                // немедленно переключаемся в ЧИСТЫЙ режим CPU (CUDA_VISIBLE_DEVICES="" и -ngl 0) и повторяем пакет!
                 let gpu_output_corrupted = match &batch_res {
-                    Ok(out) => parse_json_array(out).is_none(),
+                    Ok(out) => parse_json_array(out, chunk.len()).is_none(),
                     Err(_) => true,
                 };
 
@@ -204,7 +297,7 @@ pub async fn analyze_text_with_llm(
                         app_handle,
                         "LLM",
                         "warn",
-                        "Обнаружен сбой генерации на GPU (артефакты CUDA FP16 / невалидный вывод). Автоматическое переключение llama-cli в стабильный режим CPU (-ngl 0) и повтор пакета...",
+                        "Обнаружен сбой генерации на GPU (артефакты CUDA FP16 / невалидный вывод). Отключение CUDA для llama-cli (переход на чистый CPU) и повтор пакета...",
                     );
                     use_gpu = false;
                     batch_res = run_llama_cli(
@@ -218,14 +311,14 @@ pub async fn analyze_text_with_llm(
 
                 match batch_res {
                     Ok(result) => {
-                        let parsed = parse_json_array(&result);
+                        let parsed = parse_json_array(&result, chunk.len());
                         if let Some(ref batch_scores) = parsed {
                             consecutive_parse_failures = 0;
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
                                 "info",
-                                &format!("✓ Пакет {}/{}: получено {} оценок от llama-cli", batch_idx + 1, total_batches, batch_scores.len()),
+                                &format!("✓ Пакет {}/{}: получено {} валидных оценок от llama-cli", batch_idx + 1, total_batches, batch_scores.len()),
                             );
                             all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
                         } else {
@@ -234,16 +327,18 @@ pub async fn analyze_text_with_llm(
                                 app_handle,
                                 "LLM",
                                 "warn",
-                                "Не удалось распарсить JSON массив от llama-cli. Применяется встроенный NLP расчет для пакета.",
+                                "Невалидный ответ от GGUF-модели (поврежденный токенизатор или формат). Применяется встроенный семантический NLP-анализатор полных фраз.",
                             );
                             all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
 
-                            if consecutive_parse_failures >= 2 && batch_idx + 1 < total_batches {
+                            // Если даже в режиме чистого CPU модель выдает невалидный вывод (или 2 сбоя подряд) —
+                            // мгновенно срабатывает предохранитель, чтобы не тратить 6 минут на битые пакеты!
+                            if (!use_gpu || consecutive_parse_failures >= 2) && batch_idx + 1 < total_batches {
                                 crate::logger::emit_log(
                                     app_handle,
                                     "LLM",
                                     "warn",
-                                    "Предохранитель LLM: повторный невалидный вывод модели. Автоматическое переключение оставшихся пакетов на скоростной встроенный NLP-движок без потери времени.",
+                                    "Предохранитель LLM: выбранная GGUF-модель выдает некорректные токены. Мгновенное переключение всех оставшихся пакетов на встроенный NLP-движок анализа полных фраз (экономия ~6 минут).",
                                 );
                                 let remaining = &fragments[(batch_idx + 1) * batch_size..];
                                 all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
@@ -257,12 +352,10 @@ pub async fn analyze_text_with_llm(
                             "LLM",
                             "warn",
                             &format!(
-                                "llama-cli недоступен или завершился со сбоем ({}). Автоматическое переключение оставшихся пакетов на встроенный скоростной NLP-движок без потери времени.",
+                                "llama-cli завершился со сбоем ({}). Автоматическое переключение оставшихся пакетов на встроенный скоростной NLP-движок.",
                                 e
                             ),
                         );
-                        // Circuit breaker: рассчитываем текущий и все оставшиеся фрагменты через встроенный NLP мгновенно,
-                        // чтобы не спавнить десятки падающих процессов подряд!
                         let remaining = &fragments[batch_idx * batch_size..];
                         all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
                         break;
@@ -314,7 +407,7 @@ pub async fn analyze_text_with_llm(
             let prompt = build_prompt(chunk);
             match run_ollama(&client, config, &prompt, app_handle).await {
                 Ok(result) => {
-                    let parsed = parse_json_array(&result);
+                    let parsed = parse_json_array(&result, chunk.len());
                     if let Some(ref batch_scores) = parsed {
                         crate::logger::emit_log(
                             app_handle,
@@ -357,14 +450,19 @@ fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
         let clean_txt = frag.text.replace(['\n', '\r', '"'], " ");
-        lines.push(format!("{}. \"{}\"", i + 1, clean_txt.trim()));
+        let start_tag = if is_sentence_start(fragments, i) { "[НАЧАЛО ФРАЗЫ]" } else { "[ПРОДОЛЖЕНИЕ]" };
+        let end_tag = if is_sentence_end(fragments, i) { "[КОНЕЦ ФРАЗЫ]" } else { "[НЕ ЗАВЕРШЕНА]" };
+        lines.push(format!("{}. {} {} \"{}\"", i + 1, start_tag, end_tag, clean_txt.trim()));
     }
     let input_list = lines.join("\n");
     format!(
-        "Instruction: Ты профессиональный видеомонтажер и аналитик вирусных роликов (Shorts, Reels, TikTok).\n\
-Оцени каждую из {} реплик по шкале от 0.0 до 1.0 на предмет виральности, эмоций, драмы, юмора, панчлайна или кульминации.\n\
-ПРАВИЛО: Выведи ТОЛЬКО валидный JSON-массив из {} чисел с плавающей точкой в том же порядке. Без текста и без пояснений.\n\
-Пример ответа: [0.85, 0.30, 0.65]\n\n\
+        "Instruction: Ты профессиональный режиссер монтажа вертикальных роликов (Shorts, Reels, TikTok) длительностью от 10 до 20 секунд.\n\
+Оцени каждую из {} реплик по шкале от 0.0 до 1.0 для выбора лучших цельных диалогов.\n\
+ВАЖНЫЕ ПРАВИЛА ЦЕЛОСТНОСТИ ФРАЗ:\n\
+1. Высокую оценку (0.75 - 0.95) давай ярким, эмоциональным, драматичным или смешным репликам, которые начинают или завершают законченную мысль ([НАЧАЛО ФРАЗЫ] ... [КОНЕЦ ФРАЗЫ]).\n\
+2. Если строка является обрывком на полуслове ([ПРОДОЛЖЕНИЕ] и [НЕ ЗАВЕРШЕНА]), оценивай её ниже (0.25 - 0.55), чтобы ролик всегда начинался с начала фразы и заканчивался на полной точке/восклицании.\n\
+3. Выведи ТОЛЬКО валидный JSON-массив из {} чисел от 0.0 до 1.0 в том же порядке. Никакого текста и комментариев.\n\
+Пример ответа: [0.85, 0.40, 0.72]\n\n\
 Реплики ({} шт.):\n{}\n\n\
 Ответ (JSON-массив из {} чисел):\n[",
         fragments.len(),
@@ -441,11 +539,7 @@ async fn run_llama_cli(
             AppError::Pipeline(err)
         })?;
 
-    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ ДЛЯ WINDOWS:
-    // Передача кириллического промпта через аргумент командной строки `-p` на Windows приводит к конвертации
-    // в однобайтовую кодировку CP1251 внутри MSVC CRT `argv`, из-за чего `llama_tokenize` (`unicode_cpt_from_utf8`)
-    // выбрасывает исключение `invalid utf-8` и аварийно завершает процесс с кодом -1073740791 (0xC0000409) сразу после `system_info`!
-    // Запись промпта в чистый UTF-8 файл и передача через `-f <path>` полностью решает проблему кодировки!
+    // Записываем промпт во временный UTF-8 файл (предотвращает искажение кириллицы в Windows argv)
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let prompt_file = std::env::temp_dir().join(format!("vc_llama_prompt_{}_{}.txt", std::process::id(), ts));
     tokio::fs::write(&prompt_file, prompt.as_bytes()).await.map_err(AppError::Io)?;
@@ -456,28 +550,30 @@ async fn run_llama_cli(
         .unwrap_or(4)
         .to_string();
 
-    // Передаем:
-    // -f <prompt_file>: чтение UTF-8 промпта напрямую из файла (без искажения кириллицы в Windows argv)
-    // -c 2048: ограничиваем контекст до 2048 вместо 32768 по умолчанию (экономит ~1.7 ГБ памяти и ускоряет старт в 15 раз!)
-    // -ngl 99/0: выгружаем слои модели на GPU или CPU
-    // -t <threads>: оптимальное число потоков CPU
-    // -n 384: лимит генерируемых токенов для JSON-массива
-    // --temp 0.1: детерминированный JSON-вывод
-    // --repeat-penalty 1.15: защита от зацикливания одного токена
-    // --no-display-prompt: выводим в stdout только сгенерированный ответ
-    let cmd = sidecar_command
-        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
-        .args([
-            "-m", model_path,
-            "-f", &prompt_file.to_string_lossy(),
-            "-c", "2048",
-            "-ngl", ngl_val,
-            "-t", &threads,
-            "-n", "384",
-            "--temp", "0.1",
-            "--repeat-penalty", "1.15",
-            "--no-display-prompt",
-        ]);
+    let mut cmd = sidecar_command
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle));
+
+    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
+    // В CUDA-сборке llama-cli простой флаг `-ngl 0` всё равно инициализирует `ggml_cuda_init` и выполняет матричные
+    // операции на GPU, что на некоторых видеокартах/квантах вызывает мусорную генерацию токенов.
+    // При `use_gpu == false` принудительно скрываем CUDA-устройства через `CUDA_VISIBLE_DEVICES=""` для 100% чистого CPU-расчета!
+    if !use_gpu {
+        cmd = cmd
+            .env("CUDA_VISIBLE_DEVICES", "")
+            .env("GGML_CUDA_NO_PINNED", "1");
+    }
+
+    let cmd = cmd.args([
+        "-m", model_path,
+        "-f", &prompt_file.to_string_lossy(),
+        "-c", "2048",
+        "-ngl", ngl_val,
+        "-t", &threads,
+        "-n", "384",
+        "--temp", "0.1",
+        "--repeat-penalty", "1.15",
+        "--no-display-prompt",
+    ]);
 
     let (mut rx, child) = match cmd.spawn() {
         Ok(pair) => pair,
@@ -495,7 +591,6 @@ async fn run_llama_cli(
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
-                    crate::logger::emit_stream_lines(&app_handle_clone, "LLM", "debug", &bytes);
                     stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 CommandEvent::Stderr(bytes) => {
@@ -507,7 +602,7 @@ async fn run_llama_cli(
                             &app_handle_clone,
                             "LLM",
                             "info",
-                            &format!("llama-cli завершился успешно (код {:?})", payload.code),
+                            &format!("llama-cli завершился (код {:?})", payload.code),
                         );
                         return Ok(stdout_accum);
                     } else {
@@ -529,12 +624,12 @@ async fn run_llama_cli(
     };
 
     let res = tokio::select! {
-        r = tokio::time::timeout(Duration::from_secs(60), run_future) => {
+        r = tokio::time::timeout(Duration::from_secs(45), run_future) => {
             match r {
                 Ok(inner) => inner,
                 Err(_) => {
                     let _ = child.kill();
-                    Err(AppError::Pipeline("Превышен таймаут ожидания ответа от llama-cli (60с)".to_string()))
+                    Err(AppError::Pipeline("Превышен таймаут ожидания ответа от llama-cli (45с)".to_string()))
                 }
             }
         },
@@ -548,7 +643,49 @@ async fn run_llama_cli(
     res
 }
 
-fn parse_json_array(text: &str) -> Option<Vec<f64>> {
+/// Проверяет, содержит ли ответ LLM признаки сбоя токенизатора / FP16 переполнения («GGGG...», иероглифы, битые байты)
+fn is_corrupted_llm_output(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if trimmed.contains("GGGGGGGG") || trimmed.contains('\u{FFFD}') {
+        return true;
+    }
+
+    // Подсчитываем иероглифы CJK / арабские / индийские символы и обычные буквы
+    let mut exotic_count = 0usize;
+    let mut alpha_count = 0usize;
+    let mut digit_count = 0usize;
+
+    for c in trimmed.chars() {
+        if ('\u{4E00}'..='\u{9FFF}').contains(&c)
+            || ('\u{0600}'..='\u{06FF}').contains(&c)
+            || ('\u{0900}'..='\u{097F}').contains(&c)
+        {
+            exotic_count += 1;
+        } else if c.is_alphabetic() {
+            alpha_count += 1;
+        } else if c.is_ascii_digit() {
+            digit_count += 1;
+        }
+    }
+
+    // В ответе должен быть JSON-массив чисел `[0.85, 0.40, ...]`. Если там иероглифы или сотни букв — это мусор!
+    if exotic_count >= 2 || digit_count == 0 || alpha_count > digit_count + 25 {
+        return true;
+    }
+
+    false
+}
+
+/// Строгий парсер JSON-массива оценок от LLM.
+/// Отклоняет случайные числа из словесного мусора и требует не менее 50% валидных чисел в диапазоне [0.0, 1.0].
+fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
+    if is_corrupted_llm_output(text) {
+        return None;
+    }
+
     let cleaned = text
         .trim()
         .trim_start_matches("```json")
@@ -556,13 +693,34 @@ fn parse_json_array(text: &str) -> Option<Vec<f64>> {
         .trim_end_matches("```")
         .trim();
 
+    let min_required = (expected_len / 2).max(1);
+
+    let validate_vec = |nums: Vec<f64>| -> Option<Vec<f64>> {
+        if nums.len() < min_required {
+            return None;
+        }
+        // Все оценки должны быть осмысленными числами в пределах [0.0, 1.0] (допускаем 0.0..=1.05)
+        let valid_range_count = nums.iter().filter(|&&x| x >= 0.0 && x <= 1.05).count();
+        if valid_range_count < min_required {
+            return None;
+        }
+        // Проверяем, что модель не выдала один и тот же токен (например [0.5, 0.5, 0.5, ...])
+        if nums.len() >= 4 {
+            let first = nums[0];
+            if nums.iter().all(|&x| (x - first).abs() < 1e-4) {
+                return None;
+            }
+        }
+        Some(nums.into_iter().map(|x| x.clamp(0.05, 0.96)).collect())
+    };
+
     // 1. Полноценный JSON-массив в квадратных скобках
     if let (Some(start), Some(end)) = (cleaned.find('['), cleaned.rfind(']')) {
-        if start <= end {
+        if start < end {
             let json_str = &cleaned[start..=end];
             if let Ok(nums) = serde_json::from_str::<Vec<f64>>(json_str) {
-                if !nums.is_empty() {
-                    return Some(nums);
+                if let Some(valid) = validate_vec(nums) {
+                    return Some(valid);
                 }
             }
         }
@@ -573,109 +731,166 @@ fn parse_json_array(text: &str) -> Option<Vec<f64>> {
         if let Some(end) = cleaned.find(']') {
             let with_opening = format!("[{}", &cleaned[..=end]);
             if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_opening) {
-                if !nums.is_empty() {
-                    return Some(nums);
+                if let Some(valid) = validate_vec(nums) {
+                    return Some(valid);
                 }
             }
         }
     }
 
-    // 3. Если ответ начинается с массива, но закрывающая скобка отсутствует из-за обрезки токенов
-    if cleaned.starts_with('[') && !cleaned.ends_with(']') {
-        let with_closing = format!("{}]", cleaned.trim_end().trim_end_matches(','));
-        if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_closing) {
-            if !nums.is_empty() {
-                return Some(nums);
-            }
+    // 3. Если ответ начинается с массива, но закрывающая скобка обрезана лимитом токенов
+    let candidate_body = cleaned.trim_start_matches('[').trim_end_matches(']');
+    // Разрешаем парсинг списка через запятую ТОЛЬКО если строка состоит исключительно из чисел, точек, запятых и пробелов
+    let is_pure_number_list = candidate_body
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '.' || c == ',' || c == '-' || c.is_whitespace());
+
+    if is_pure_number_list {
+        let nums: Vec<f64> = candidate_body
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse::<f64>().ok())
+            .collect();
+        if let Some(valid) = validate_vec(nums) {
+            return Some(valid);
         }
     }
 
-    // 4. Fallback: извлечение отдельных чисел через стандартные разделители
-    let inner = cleaned
-        .trim_start_matches('[')
-        .trim_end_matches(']');
-    let numbers: Vec<f64> = inner
-        .split(|c: char| c == ',' || c == ';' || c == '\n' || c == ' ')
-        .map(|s| s.trim().trim_matches(|c: char| !c.is_numeric() && c != '.'))
-        .filter(|s| !s.is_empty())
-        .filter_map(|s| s.parse::<f64>().ok())
-        .map(|n| n.max(0.0).min(1.0))
-        .collect();
-
-    if !numbers.is_empty() {
-        Some(numbers)
-    } else {
-        None
-    }
+    None
 }
 
-/// Продвинутый локальный семантический анализатор диалогов и эмоциональных всплесков
+/// Продвинутый локальный семантический анализатор диалогов, эмоциональных всплесков и целостности фраз
 pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> {
-    // Ключевые слова хайлайтов для аниме, стримов, диалогов, подкастов и динамики
-    let intense_keywords = [
-        "ха-ха", "ахах", "haha", "omg", "лол", "lol", "lmao",
-        "вау", "ого", "чё", "что?!", "жесть", "круто", "капец",
-        "не может быть", "вперёд", "ура", "стоп", "быстрее",
-        "бей", "беги", "смотри", "боже", "шок", "красава", "лул",
-        "ужас", "победа", "атака", "удар", "сила", "смерть", "крик",
-        "войн", "приказ", "огонь", "враг", "преступлен", "капитуляц",
-        "уничтож", "спасем", "кров", "биться", "штурм", "взрыв", "молодец"
+    if fragments.is_empty() {
+        return Vec::new();
+    }
+
+    // Словник высокой драматургической, эмоциональной и сюжетной ценности (аниме, стримы, интервью, кино)
+    let high_impact_keywords = [
+        "ха-ха", "ахах", "haha", "лол", "вау", "ого", "что?!", "жесть", "круто", "капец",
+        "не может быть", "невозможно", "вперёд", "стоп", "быстрее", "постой", "подожди",
+        "бей", "беги", "смотри", "боже", "шок", "ужас", "победа", "атака", "удар",
+        "сила", "смерть", "крик", "войн", "приказ", "огонь", "враг", "преступлен",
+        "уничтож", "спас", "кров", "биться", "штурм", "взрыв", "молодец", "секрет",
+        "тайна", "правда", "лжешь", "врёшь", "прости", "обещаю", "поклялся", "никогда",
+        "навсегда", "люблю", "ненавижу", "убью", "защищ", "опасно", "ловушк", "план",
+        "конец", "начало", "победил", "проиграл", "герой", "монстр", "магия", "способност",
+        "уровень", "память", "разум", "сердц", "душа", "судьб", "выбор", "шанс", "черт", "чёрт"
     ];
 
-    fragments.iter().map(|f| {
-        if crate::whisper::is_whisper_hallucination(&f.text) {
-            return 0.05;
-        }
+    let hook_starters = [
+        "слушай", "знаешь", "смотри", "погоди", "неужели", "значит", "почему", "зачем",
+        "как же", "так вот", "на самом деле", "однако", "кстати", "представь", "эй",
+        "послушай", "внимание", "осторожно", "клянусь", "честно"
+    ];
 
-        let txt = f.text.trim().to_lowercase();
-        let word_count = txt.split_whitespace().count();
+    // Шаг 1. Базовая оценка каждой отдельной реплики
+    let mut raw_scores: Vec<f64> = fragments
+        .iter()
+        .enumerate()
+        .map(|(idx, f)| {
+            if crate::whisper::is_whisper_hallucination(&f.text) {
+                return 0.05;
+            }
 
-        // Очень короткие однословные реплики («Нет.», «Да.», «Чай.») не должны становиться центром хайлайта сами по себе
-        if word_count <= 1 && !txt.contains('!') {
-            return 0.25;
-        }
+            let txt = f.text.trim().to_lowercase();
+            let word_count = txt.split_whitespace().count();
 
-        let mut score: f64 = 0.42;
+            if word_count == 0 {
+                return 0.05;
+            }
 
-        // 1. Восклицания и эмоциональные знаки
-        if txt.contains('!') {
-            score += 0.18;
-        }
-        if txt.contains("!!") || txt.contains("?!") || txt.contains("!?") {
-            score += 0.14;
-        }
-        if txt.contains('?') {
-            score += 0.08;
-        }
+            // Сверхкороткие междометия без восклицания не должны сами по себе становиться ядром клипа
+            if word_count <= 1 && !txt.contains('!') && !txt.contains('?') {
+                return 0.22;
+            }
 
-        // 2. Поиск маркеров эмоций/смеха/драмы/хайлайтов (с накоплением до 2 совпадений)
-        let mut kw_hits = 0;
-        for kw in &intense_keywords {
-            if txt.contains(kw) {
-                kw_hits += 1;
-                if kw_hits >= 2 {
-                    break;
+            let mut score: f64 = 0.38;
+
+            // 1. Эмоциональная пунктуация
+            if txt.contains('!') {
+                score += 0.14;
+            }
+            if txt.contains("!!") || txt.contains("?!") || txt.contains("!?") {
+                score += 0.11;
+            }
+            if txt.contains('?') {
+                score += 0.08;
+            }
+            if txt.contains('…') || txt.contains("...") {
+                score += 0.04;
+            }
+
+            // 2. Ключевые слова конфликта, юмора, откровений и экшена
+            let mut kw_hits = 0usize;
+            for kw in &high_impact_keywords {
+                if txt.contains(kw) {
+                    kw_hits += 1;
+                    if kw_hits >= 3 {
+                        break;
+                    }
                 }
             }
+            score += (kw_hits as f64) * 0.11;
+
+            // 3. Хук-маркеры в начале фразы (привлекают внимание в первые 2 секунды ролика)
+            if is_sentence_start(fragments, idx) {
+                score += 0.06;
+                if hook_starters.iter().any(|h| txt.starts_with(h) || txt.contains(h)) {
+                    score += 0.07;
+                }
+            } else {
+                // Если реплика начинается с середины незаконченного предложения — снижаем её вес как точки старта
+                score -= 0.08;
+            }
+
+            // Бонус за логическую завершенность мысли
+            if is_sentence_end(fragments, idx) {
+                score += 0.04;
+            }
+
+            // 4. Темп и плотность живой речи
+            let duration = (f.end - f.start).max(0.4);
+            let speech_rate = (word_count as f64) / duration;
+            if speech_rate >= 2.2 && speech_rate <= 5.5 {
+                score += ((speech_rate - 2.0) * 0.035).clamp(0.02, 0.10);
+            }
+
+            // 5. Насыщенность реплики по числу слов
+            if word_count >= 5 {
+                score += ((word_count as f64 - 4.0) * 0.012).min(0.09);
+            }
+
+            score.clamp(0.15, 0.94)
+        })
+        .collect();
+
+    // Шаг 2. Группировка реплик в полные предложения и передача импульса к НАЧАЛУ предложения.
+    // Это гарантирует, что алгоритм выбора клипов всегда выберет начало цельной фразы, а не её обрывок!
+    let mut i = 0;
+    while i < fragments.len() {
+        let sent_start = i;
+        let mut sent_end = i;
+        while sent_end + 1 < fragments.len() && !is_sentence_end(fragments, sent_end) && (sent_end - sent_start) < 6 {
+            sent_end += 1;
         }
-        score += (kw_hits as f64) * 0.14;
 
-        // 3. Плотность речи (скорость произношения слов)
-        let duration = (f.end - f.start).max(0.4);
-        let speech_rate = (word_count as f64) / duration;
+        if sent_end > sent_start {
+            // Находим пиковую эмоцию внутри всего предложения [sent_start..=sent_end]
+            let max_in_sentence = raw_scores[sent_start..=sent_end]
+                .iter()
+                .copied()
+                .fold(0.0_f64, f64::max);
 
-        if speech_rate > 2.5 {
-            score += ((speech_rate - 2.5) * 0.06).min(0.14);
+            // Усиливаем первую реплику предложения (точку входа в мысль), чтобы окно клипа открывалось именно с неё
+            raw_scores[sent_start] = (raw_scores[sent_start] * 0.45 + max_in_sentence * 0.55 + 0.05).clamp(0.18, 0.96);
         }
 
-        // 4. Насыщенность и длина фразы (плавная градация без одинаковых значений)
-        let char_count = txt.chars().count();
-        if char_count > 15 {
-            score += ((char_count as f64 - 15.0) / 120.0).min(0.12);
-        }
+        i = sent_end + 1;
+    }
 
-        score.clamp(0.15, 0.96)
-    }).collect()
+    raw_scores
 }
 
 pub fn compute_text_scores_fallback(fragments: &[SubtitleFragment]) -> Vec<f64> {

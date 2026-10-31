@@ -29,22 +29,47 @@ pub fn get_project_srt_path(video_path: &Path) -> PathBuf {
 
 /// Известные галлюцинации Whisper на музыке, титрах, опенингах и тишине
 pub fn is_whisper_hallucination(text: &str) -> bool {
-    let lower = text.trim().to_lowercase();
-    if lower.is_empty() {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let lower = trimmed.to_lowercase();
+
+    // Отсекаем технические теги музыки и фонового шума вида [музыка], (музыка), ♪ и т.д.
+    if (lower.starts_with('[') && lower.ends_with(']'))
+        || (lower.starts_with('(') && lower.ends_with(')'))
+        || lower.contains('♪')
+        || lower.contains('♫')
+    {
         return true;
     }
 
     let patterns = [
+        "[музыка]",
+        "(музыка)",
+        "[music]",
+        "(music)",
+        "[аплодисменты]",
+        "[смех]",
         "редактор субтитров",
         "корректор а.",
         "корректор в.",
         "корректор н.",
         "корректор е.",
         "корректор ",
+        "синецкая",
+        "семкин",
+        "сёмкин",
+        "егорова",
+        "сухиашвили",
+        "диматоржок",
+        "dimatorzok",
         "субтитры сделал",
         "субтитры создавал",
         "субтитры подготовил",
         "субтитры подогнал",
+        "субтитры добав",
         "amara.org",
         "амара.орг",
         "спокойная музыка",
@@ -67,6 +92,64 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     }
 
     false
+}
+
+/// Очищает растянутые циклические гласные и слоги Whisper (например «Ооооооо...tragenа» или 20x «Ха-ха-ха...»)
+pub fn clean_stretched_text(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // 1. Сжимаем любые 5+ одинаковых символов подряд до 3 (например «Оооооооооо» -> «Ооо»)
+    let mut compressed = String::with_capacity(trimmed.len());
+    let mut prev_lower: Option<char> = None;
+    let mut run_len = 0usize;
+    let mut had_long_stretch = false;
+
+    for ch in trimmed.chars() {
+        let ch_low = ch.to_lowercase().next().unwrap_or(ch);
+        if Some(ch_low) == prev_lower && ch.is_alphabetic() {
+            run_len += 1;
+            if run_len >= 12 {
+                had_long_stretch = true;
+            }
+            if run_len <= 3 {
+                compressed.push(ch);
+            }
+        } else {
+            prev_lower = Some(ch_low);
+            run_len = 1;
+            compressed.push(ch);
+        }
+    }
+
+    // Если была экстремальная растяжка крика (12+ одинаковых букв подряд) и в конец приклеился латинский мусор вроде «tragenа»
+    if had_long_stretch {
+        let has_cyrillic = compressed.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+        let has_latin = compressed.chars().any(|c| c.is_ascii_alphabetic());
+        if has_cyrillic && has_latin {
+            let clean_prefix: String = compressed
+                .chars()
+                .take_while(|c| !c.is_ascii_alphabetic())
+                .collect();
+            let clean_prefix = clean_prefix.trim();
+            if !clean_prefix.is_empty() {
+                return format!("{}!", clean_prefix.trim_end_matches(['.', ',', '-', ' ']));
+            }
+        }
+    }
+
+    // 2. Сжимаем бесконечные «Ха-ха-ха-ха-ха-ха...» до аккуратного «Ха-ха-ха!»
+    let lower_comp = compressed.to_lowercase();
+    if lower_comp.matches("-ха").count() > 3 {
+        return "Ха-ха-ха!".to_string();
+    }
+    if lower_comp.matches("-хе").count() > 3 {
+        return "Хе-хе-хе!".to_string();
+    }
+
+    compressed
 }
 
 /// Проверяет, содержит ли существующий SRT-файл зацикленные галлюцинации от старых сборок
@@ -97,8 +180,8 @@ fn has_hallucination_loops(srt_content: &str) -> bool {
         }
     }
 
-    // Если более 5 галлюцинаций титров или более 4 одинаковых строк подряд — файл был сгенерирован без защиты -mc 0
-    hallucination_count > 5 || max_consecutive_dups >= 4
+    // Если более 60% строк — галлюцинации или более 6 одинаковых строк подряд — требуется повторная транскрибация
+    hallucination_count * 2 > fragments.len() || max_consecutive_dups >= 6
 }
 
 /// Очищает SRT-файл от мусорных галлюцинаций Whisper и зацикленных повторов
@@ -111,13 +194,19 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     let mut prev_norm = String::new();
     let mut repeat_count = 0usize;
 
-    for frag in raw_fragments {
+    for mut frag in raw_fragments {
         let trimmed = frag.text.trim();
         if is_whisper_hallucination(trimmed) {
             continue;
         }
 
-        let norm = trimmed.to_lowercase();
+        let cleaned_text = clean_stretched_text(trimmed);
+        if cleaned_text.is_empty() || is_whisper_hallucination(&cleaned_text) {
+            continue;
+        }
+        frag.text = cleaned_text;
+
+        let norm = frag.text.trim().to_lowercase();
         if norm == prev_norm {
             repeat_count += 1;
             // Допускаем максимум 1 повтор короткой реплики (например «Нет. / Нет.»), но отсекаем циклы
@@ -139,7 +228,7 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
             "Whisper",
             "info",
             &format!(
-                "Очистка субтитров от галлюцинаций: удалено {} мусорных/зацикленных строк, оставлено {} чистых реплик.",
+                "Очистка субтитров от галлюцинаций и тегов [музыка]: удалено {} мусорных строк, оставлено {} чистых реплик.",
                 removed,
                 clean_fragments.len()
             ),
@@ -182,8 +271,10 @@ pub async fn get_or_create_subtitles(
 ) -> AppResult<Option<PathBuf>> {
     let project_srt = get_project_srt_path(&video_path);
 
-    // 1. Проверяем, есть ли уже готовые чистые субтитры для этого видео в папке проекта
+    // 1. Проверяем, есть ли уже готовые субтитры для этого видео в папке проекта
     if project_srt.exists() {
+        // Всегда прогоняем быструю санитизацию кэшированного SRT (удаляет [музыка], титры редакторов и растяжки букв)
+        let _ = sanitize_srt_file(&project_srt, &app_handle).await;
         if let Ok(content) = tokio::fs::read_to_string(&project_srt).await {
             if !content.trim().is_empty() && !has_hallucination_loops(&content) {
                 let count = crate::text_analyzer::parse_srt(&content).len();
@@ -193,7 +284,7 @@ pub async fn get_or_create_subtitles(
                         "Whisper",
                         "info",
                         &format!(
-                            "✓ Найдены готовые субтитры в папке проекта ({} реплик): '{}'. Повторная транскрибация не требуется!",
+                            "✓ Найдены готовые чистые субтитры в папке проекта ({} реплик): '{}'. Повторная транскрибация не требуется!",
                             count,
                             project_srt.display()
                         ),

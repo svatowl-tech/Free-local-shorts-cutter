@@ -115,26 +115,26 @@
         </div>
       </div>
 
-      <!-- Control 2: Max Clip Duration -->
+      <!-- Control 2: Dynamic Complete-Phrase Clip Duration -->
       <div class="flex flex-col gap-2">
         <div class="flex justify-between items-baseline">
-          <span class="label-mono text-[#e2e2e4]">Макс. длительность</span>
+          <span class="label-mono text-[#e2e2e4]">Длительность (по фразам)</span>
           <span class="font-mono text-[#5865f2] text-xs font-semibold">
-            {$pipelineStore.config.max_clip_duration_sec} сек
+            {Math.max(5, $pipelineStore.config.max_clip_duration_sec - 5)}–{$pipelineStore.config.max_clip_duration_sec + 5} сек (цель {$pipelineStore.config.max_clip_duration_sec}с)
           </span>
         </div>
         <input 
           type="range" 
-          min="5" 
-          max="60" 
+          min="10" 
+          max="55" 
           step="1" 
           value={$pipelineStore.config.max_clip_duration_sec}
           on:input={handleDurationChange}
           disabled={$pipelineStore.status === 'running'}
         />
         <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-          <span>5 с (Шортсы)</span>
-          <span>60 сек</span>
+          <span>10–20 с (Цельные фразы)</span>
+          <span>50–60 сек</span>
         </div>
       </div>
 

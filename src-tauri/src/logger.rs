@@ -74,6 +74,9 @@ fn is_noisy_stream_line(stage: &str, line: &str) -> bool {
             "main: build =",
             "main: built with",
             "main: seed  =",
+            "ggml_cuda_init:",
+            "Device 0:",
+            "Device 1:",
             "llama_model_loader:",
             "llm_load_print_meta:",
             "llm_load_vocab:",
@@ -93,7 +96,19 @@ fn is_noisy_stream_line(stage: &str, line: &str) -> bool {
         if line.chars().all(|c| c == '.' || c.is_whitespace()) {
             return true;
         }
-        if line.contains("GGGGGGGG") {
+        if line.contains("GGGGGGGG") || line.contains('\u{FFFD}') {
+            return true;
+        }
+        // Отсекаем поврежденный мультиязычный мусор токенизатора (CJK / арабская вязь при генерации числового JSON)
+        let exotic_chars = line
+            .chars()
+            .filter(|&c| {
+                ('\u{4E00}'..='\u{9FFF}').contains(&c)
+                    || ('\u{0600}'..='\u{06FF}').contains(&c)
+                    || ('\u{0900}'..='\u{097F}').contains(&c)
+            })
+            .count();
+        if exotic_chars >= 2 {
             return true;
         }
     }
