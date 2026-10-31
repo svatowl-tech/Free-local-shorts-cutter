@@ -216,11 +216,16 @@ pub fn resolve_any_whisper_model(app_handle: &AppHandle, preferred: Option<&str>
     None
 }
 
-/// Ищет сначала указанную текстовую GGUF-модель, а если её нет — лучшую из установленных LLM-моделей (от 3B к 0.5B)
+/// Ищет сначала указанную текстовую GGUF-модель, а если передан старый дефолт `models/qwen-1.5b-chat.gguf` —
+/// проверяет сначала более мощные установленные модели (от 3B к 0.5B), чтобы автоматически задействовать `qwen2.5-3b-instruct`!
 pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) -> Option<PathBuf> {
     if let Some(pref) = preferred {
-        if let Some(found) = resolve_model_path(app_handle, pref) {
-            return Some(found);
+        let is_legacy_default =
+            pref == "models/qwen-1.5b-chat.gguf" || pref == "qwen-1.5b-chat.gguf";
+        if !is_legacy_default {
+            if let Some(found) = resolve_model_path(app_handle, pref) {
+                return Some(found);
+            }
         }
     }
     for m in get_all_models_config()

@@ -406,13 +406,42 @@ pub async fn analyze_text_with_llm(
             "info",
             &format!("Поиск локальной GGUF-модели для llama-cli (выбрана: '{}')...", config.model_name),
         );
-        let exact_match = crate::models::resolve_model_path(app_handle, &config.model_name);
-        let resolved_model = exact_match
+        let is_legacy_default = config.model_name == "models/qwen-1.5b-chat.gguf"
+            || config.model_name == "qwen-1.5b-chat.gguf";
+        let exact_match = if is_legacy_default {
+            crate::models::resolve_any_llm_model(app_handle, Some(&config.model_name))
+        } else {
+            crate::models::resolve_model_path(app_handle, &config.model_name)
+        };
+        let mut resolved_model = exact_match
             .clone()
             .or_else(|| crate::models::resolve_any_llm_model(app_handle, Some(&config.model_name)));
 
-        if let Some(model_path) = resolved_model {
-            let model_path_str = model_path.to_string_lossy().to_string();
+        if let Some(ref primary_path) = resolved_model {
+            let primary_str = primary_path.to_string_lossy().to_string();
+            if is_model_marked_broken(&primary_str) {
+                // Проверяем, нет ли другой рабочей GGUF-модели на диске (например, qwen2.5-3b-instruct в Roaming вместо битой qwen-1.5b в Local)
+                if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
+                    let alt_str = alt_path.to_string_lossy().to_string();
+                    if !is_model_marked_broken(&alt_str) && alt_str != primary_str {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "info",
+                            &format!(
+                                "Переключение с проблемной модели '{}' на исправную локальную GGUF-модель '{}'",
+                                primary_path.display(),
+                                alt_path.display()
+                            ),
+                        );
+                        resolved_model = Some(alt_path);
+                    }
+                }
+            }
+        }
+
+        if let Some(mut model_path) = resolved_model {
+            let mut model_path_str = model_path.to_string_lossy().to_string();
 
             if exact_match.is_none() {
                 crate::logger::emit_log(
@@ -484,21 +513,59 @@ pub async fn analyze_text_with_llm(
                 };
 
                 if gpu_output_corrupted && use_gpu && !gpu_succeeded_once {
-                    crate::logger::emit_log(
-                        app_handle,
-                        "LLM",
-                        "warn",
-                        "Обнаружен сбой генерации на GPU в первом пакете (артефакты CUDA FP16 / невалидный вывод). Отключение CUDA для llama-cli (переход на чистый CPU) и повтор пакета...",
-                    );
-                    use_gpu = false;
-                    batch_res = run_llama_cli(
-                        app_handle,
-                        &model_path.to_string_lossy(),
-                        &prompt,
-                        chunk.len(),
-                        false,
-                        cancel_rx.resubscribe(),
-                    ).await;
+                    // Прежде чем отключать GPU, проверяем: возможно, выбрана старая/битая GGUF-модель (например qwen-1.5b в Local),
+                    // тогда как рядом в Roaming установлена исправная qwen2.5-3b-instruct!
+                    mark_model_broken(&model_path_str);
+                    if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
+                        let alt_str = alt_path.to_string_lossy().to_string();
+                        if !is_model_marked_broken(&alt_str) && alt_str != model_path_str {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "warn",
+                                &format!(
+                                    "Модель '{}' выдала невалидный ответ. Автоматическое переключение на другую установленную GGUF-модель '{}' (GPU)...",
+                                    model_path.display(),
+                                    alt_path.display()
+                                ),
+                            );
+                            model_path = alt_path;
+                            model_path_str = alt_str;
+                            batch_res = run_llama_cli(
+                                app_handle,
+                                &model_path_str,
+                                &prompt,
+                                chunk.len(),
+                                true,
+                                cancel_rx.resubscribe(),
+                            )
+                            .await;
+                        }
+                    }
+
+                    let still_corrupted = match &batch_res {
+                        Ok(out) => parse_json_array(out, chunk.len()).is_none(),
+                        Err(_) => true,
+                    };
+
+                    if still_corrupted {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "warn",
+                            "Обнаружен сбой генерации на GPU в первом пакете (артефакты CUDA FP16 / невалидный вывод). Отключение CUDA для llama-cli (переход на чистый CPU) и повтор пакета...",
+                        );
+                        use_gpu = false;
+                        batch_res = run_llama_cli(
+                            app_handle,
+                            &model_path_str,
+                            &prompt,
+                            chunk.len(),
+                            false,
+                            cancel_rx.resubscribe(),
+                        )
+                        .await;
+                    }
                 }
 
                 match batch_res {

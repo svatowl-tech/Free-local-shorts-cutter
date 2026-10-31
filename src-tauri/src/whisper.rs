@@ -104,8 +104,13 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "тихая музыка",
         "громкая музыка",
         "фоновая музыка",
+        "интригующая музыка",
+        "торжественная музыка",
+        "зловещая музыка",
+        "романтическая музыка",
         "музыкальная заставка",
         "музыкальная пауза",
+        "позитивается",
         "продолжение следует",
         "подпишись на канал",
         "ставьте лайки",
@@ -115,6 +120,12 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         if lower.contains(pat) {
             return true;
         }
+    }
+
+    // Любая короткая ремарка (1–3 слова), содержащая слово «музыка» (например «ИНТРИГУЮЩАЯ МУЗЫКА»)
+    let word_count = clean_exact.split_whitespace().count();
+    if word_count <= 3 && (clean_exact.contains("музыка") || clean_exact.contains("music")) {
+        return true;
     }
 
     false
@@ -473,6 +484,7 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
         }
     }
 
+    let clean_fragments = deduplicate_multiline_loops(clean_fragments);
     let removed = raw_count.saturating_sub(clean_fragments.len());
     let (clean_fragments, stitched_words) = repair_split_words_and_orphans(clean_fragments);
 
@@ -482,7 +494,7 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
             "Whisper",
             "info",
             &format!(
-                "Очистка субтитров: удалено {} мусорных строк, склеено {} разорванных полуслов/фраз, итого {} чистых реплик.",
+                "Очистка субтитров: удалено {} мусорных/дублирующихся строк, склеено {} разорванных полуслов/фраз, итого {} чистых реплик.",
                 removed,
                 stitched_words,
                 clean_fragments.len()
@@ -503,6 +515,100 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
 
     tokio::fs::write(srt_path, out).await.map_err(AppError::Io)?;
     Ok(clean_fragments.len())
+}
+
+/// Убирает многострочные зацикленные повторы Whisper:
+/// 1) Блочные повторы ABAB / ABCABC из 2..=6 строк подряд (например, когда 5 реплик диалога повторяются дважды подряд).
+/// 2) Слитные эхо-повторы, когда Whisper объединяет предыдущие 2–3 короткие реплики в одну слитную строку-дубликат.
+fn deduplicate_multiline_loops(
+    fragments: Vec<crate::text_analyzer::SubtitleFragment>,
+) -> Vec<crate::text_analyzer::SubtitleFragment> {
+    if fragments.len() < 4 {
+        return fragments;
+    }
+
+    fn norm_alpha(s: &str) -> String {
+        s.chars()
+            .filter(|c| c.is_alphabetic() || c.is_whitespace())
+            .collect::<String>()
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    let norms: Vec<String> = fragments.iter().map(|f| norm_alpha(&f.text)).collect();
+    let mut out: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(fragments.len());
+    let mut out_norms: Vec<String> = Vec::with_capacity(fragments.len());
+
+    let mut i = 0usize;
+    while i < fragments.len() {
+        // 1. Проверяем блочный повтор длины k (от 2 до 6 строк)
+        let mut skipped_block_len = 0usize;
+        for k in (2..=6).rev() {
+            if out_norms.len() >= k && i + k <= fragments.len() {
+                let prev_block = &out_norms[out_norms.len() - k..];
+                let curr_block = &norms[i..i + k];
+                let all_match = prev_block
+                    .iter()
+                    .zip(curr_block.iter())
+                    .all(|(a, b)| {
+                        !a.is_empty()
+                            && (a == b
+                                || (a.chars().count() >= 10
+                                    && b.chars().count() >= 10
+                                    && a.chars().take(10).eq(b.chars().take(10))))
+                    });
+                if all_match {
+                    skipped_block_len = k;
+                    break;
+                }
+            }
+        }
+        if skipped_block_len > 0 {
+            i += skipped_block_len;
+            continue;
+        }
+
+        // 2. Проверяем слитный эхо-повтор: когда текущая длинная строка повторяет подряд склеенные последние 2 или 3 реплики
+        let curr_words: Vec<&str> = norms[i].split_whitespace().collect();
+        if curr_words.len() >= 6 && out_norms.len() >= 2 {
+            let mut is_merged_echo = false;
+            for m in 2..=3 {
+                if out_norms.len() >= m {
+                    let combined_prev = out_norms[out_norms.len() - m..].join(" ");
+                    let prev_words: Vec<&str> = combined_prev.split_whitespace().collect();
+                    if prev_words.len() >= 5 {
+                        let matched = curr_words
+                            .iter()
+                            .filter(|&&cw| {
+                                prev_words.iter().any(|&pw| {
+                                    cw == pw
+                                        || (cw.chars().count() >= 4
+                                            && pw.chars().count() >= 4
+                                            && cw.chars().take(4).eq(pw.chars().take(4)))
+                                })
+                            })
+                            .count();
+                        if matched * 10 >= curr_words.len() * 7 {
+                            is_merged_echo = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if is_merged_echo {
+                i += 1;
+                continue;
+            }
+        }
+
+        out.push(fragments[i].clone());
+        out_norms.push(norms[i].clone());
+        i += 1;
+    }
+
+    out
 }
 
 pub fn format_srt_timestamp(seconds: f64) -> String {
