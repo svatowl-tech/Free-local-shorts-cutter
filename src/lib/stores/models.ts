@@ -229,6 +229,29 @@ const createModelsStore = () => {
       const models = await getModelsStatus();
       update(s => ({ ...s, models, loading: false }));
 
+      // Автоматическая синхронизация выбранных моделей со скачанными весами (предпочитаем более точные модели Small/Medium/3B)
+      const pipeState = get(pipelineStore);
+      const installedWhisper = models.filter(m => m.category === 'whisper' && m.exists);
+      const installedLlm = models.filter(m => m.category === 'llm' && m.exists);
+
+      if (installedWhisper.length > 0) {
+        const currentAsr = pipeState.config.asr_model_path || '';
+        const currentAsrInstalled = installedWhisper.some(m => currentAsr.includes(m.filename));
+        const bestWhisper = installedWhisper[installedWhisper.length - 1];
+        if (!currentAsrInstalled || (currentAsr.includes('ggml-base.bin') && bestWhisper.filename !== 'ggml-base.bin' && bestWhisper.filename !== 'ggml-tiny.bin')) {
+          pipelineStore.updateConfig({ asr_model_path: `models/${bestWhisper.filename}` });
+        }
+      }
+
+      if (installedLlm.length > 0) {
+        const currentLlm = pipeState.config.text_model_name || '';
+        const currentLlmInstalled = installedLlm.some(m => currentLlm.includes(m.filename));
+        if (!currentLlmInstalled) {
+          const bestLlm = installedLlm[installedLlm.length - 1];
+          pipelineStore.updateConfig({ text_model_name: bestLlm.filename });
+        }
+      }
+
       // Подписываемся на прогресс скачивания
       if (!unlistenProgress) {
         unlistenProgress = await onModelDownloadProgress((payload: ModelDownloadProgressPayload) => {

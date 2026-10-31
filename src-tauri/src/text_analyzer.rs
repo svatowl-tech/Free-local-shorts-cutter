@@ -154,6 +154,61 @@ fn starts_with_lowercase_continuation(text: &str) -> bool {
     false
 }
 
+/// Определяет, начинается ли реплика с союза или вводного оборота, который грамматически привязан к предыдущему предложению
+/// (например: «Поэтому он все еще сидит...», «И в моих руках он...», «К тому же...», «Потому что...»)
+pub fn starts_with_discourse_continuation(text: &str) -> bool {
+    let clean = text
+        .trim()
+        .trim_start_matches(['-', '—', '"', '\'', '«', '(', '[', ' '])
+        .to_lowercase();
+
+    let continuation_prefixes = [
+        "поэтому ",
+        "потому что ",
+        "так что ",
+        "ведь ",
+        "причем ",
+        "причём ",
+        "к тому же",
+        "более того",
+        "тем более",
+        "однако ",
+        "зато ",
+        "и в моих ",
+        "и поэтому ",
+        "и тогда ",
+        "и всё же",
+        "и все же",
+        "и при этом",
+        "а также ",
+        "а значит",
+        "а потом ",
+        "но и ",
+        "да и ",
+        "или же ",
+        "во многом из-за",
+        "вам многом из-за",
+        "благодаря этому",
+        "в результате ",
+        "иначе говоря",
+    ];
+
+    if continuation_prefixes.iter().any(|p| clean.starts_with(p)) {
+        return true;
+    }
+
+    // Одиночные сочинительные союзы «И ...», «А ...», «Но ...» в начале строки без диалогового тире — это продолжение аргумента того же персонажа
+    let raw_trimmed = text.trim();
+    let has_dialog_dash = raw_trimmed.starts_with('-') || raw_trimmed.starts_with('—');
+    if !has_dialog_dash {
+        if clean.starts_with("и ") || clean.starts_with("но ") || clean.starts_with("а ") || clean.starts_with("или ") {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Проверяет, является ли реплика `idx` логическим НАЧАЛОМ нового предложения / законченной мысли
 pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     if idx == 0 || idx >= fragments.len() {
@@ -163,20 +218,32 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     let curr = &fragments[idx];
     let gap = (curr.start - prev.end).max(0.0);
 
-    // Если между репликами заметная пауза (>= 0.65с) — это гарантированно начало новой фразы
-    if gap >= 0.65 {
+    // Если между репликами длинная пауза (>= 1.25с) — это гарантированно начало новой фразы/сцены
+    if gap >= 1.25 {
         return true;
     }
 
-    // Если текущая строка начинается с диалогового тире («- » или «— ») — это новая реплика собеседника
     let curr_trimmed = curr.text.trim();
-    if curr_trimmed.starts_with('-') || curr_trimmed.starts_with('—') {
+
+    // Если текущая строка начинается с маленькой буквы и пауза < 1.1с — это середина незаконченного предложения!
+    if starts_with_lowercase_continuation(curr_trimmed) && gap < 1.1 {
+        return false;
+    }
+
+    // Если строка начинается с причинно-следственного или присоединительного союза («Поэтому...», «И в моих руках...», «К тому же...»)
+    // и пауза после предыдущей фразы небольшая (< 1.1с) — нельзя начинать клип с середины рассуждения!
+    if starts_with_discourse_continuation(curr_trimmed) && gap < 1.1 {
+        return false;
+    }
+
+    // Если между репликами заметная пауза (>= 0.70с) и предыдущая фраза закончилась знаком препинания
+    if gap >= 0.70 && has_terminal_punctuation(&prev.text) {
         return true;
     }
 
-    // Если текущая строка начинается с маленькой буквы и пауза маленькая (< 1.0с) — это середина предложения!
-    if starts_with_lowercase_continuation(curr_trimmed) && gap < 1.0 {
-        return false;
+    // Если текущая строка начинается с диалогового тире («- » или «— ») и предыдущая завершилась точкой/!/? — новая реплика собеседника
+    if (curr_trimmed.starts_with('-') || curr_trimmed.starts_with('—')) && has_terminal_punctuation(&prev.text) {
+        return true;
     }
 
     // Если предыдущая строка закончилась точкой, !, ? или многоточием — текущая начинает новое предложение
@@ -188,6 +255,58 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     false
 }
 
+/// Проверяет, является ли реплика `idx` слабым/оборванным финалом для клипа
+/// (короткие поддакивания вроде «- Да уж.», «- Ясно.», либо незаконченные подводки перед немедленным ответом собеседника)
+pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
+    if idx >= fragments.len() {
+        return false;
+    }
+    let curr = &fragments[idx];
+    let clean = curr
+        .text
+        .trim()
+        .trim_start_matches(['-', '—', ' '])
+        .trim_end_matches(['.', '!', '?', '…', '"', '»', ' '])
+        .to_lowercase();
+    let word_count = clean.split_whitespace().count();
+
+    // 1. Многоточие в конце («Вам многом из-за...», «И пока не добьюсь свои цели...») — мысль явно не договорена
+    if curr.text.trim().ends_with("...") || curr.text.trim().ends_with('…') {
+        return true;
+    }
+
+    // 2. Короткие реплики-поддакивания (1–2 слова), после которых сразу идет настоящая панчлайн-реплика
+    let weak_backchannels = [
+        "да уж", "ясно", "понятно", "угу", "ага", "это да", "вот как", "точно",
+        "да", "нет", "ну да", "конечно", "согласен", "интересно", "привет",
+        "разрешите войти", "разрешите представиться", "прошу сюда",
+    ];
+    if weak_backchannels.contains(&clean.as_str()) {
+        return true;
+    }
+
+    // 3. Приветствия и обращения, открывающие новую сцену («Прости за ожидание, офицер Синомия», «Значит, ты и есть та самая дочка Исао»)
+    if clean.starts_with("прости за ожидан")
+        || clean.starts_with("значит, и есть")
+        || clean.starts_with("значит, ты и есть")
+        || clean.contains("есть то самое дочка")
+        || clean.contains("есть та самая дочка")
+        || clean.starts_with("заходи, я представл")
+    {
+        return true;
+    }
+
+    // 4. Если после короткой реплики (<= 2 слов) без паузы (< 0.35с) следует продолжение диалога
+    if idx + 1 < fragments.len() {
+        let gap_next = (fragments[idx + 1].start - curr.end).max(0.0);
+        if word_count <= 2 && gap_next < 0.35 && !curr.text.contains('!') {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Проверяет, является ли реплика `idx` логическим КОНЦОМ предложения / законченной мысли
 pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
     if idx + 1 >= fragments.len() {
@@ -196,24 +315,40 @@ pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
     let curr = &fragments[idx];
     let next = &fragments[idx + 1];
     let gap_next = (next.start - curr.end).max(0.0);
+    let next_trimmed = next.text.trim();
 
-    // Если после реплики следует пауза >= 0.75с — фраза логически завершена
-    if gap_next >= 0.75 {
+    // Если следующая реплика начинается со строчной буквы без паузы — предложение ещё продолжается!
+    if starts_with_lowercase_continuation(next_trimmed) && gap_next < 0.95 {
+        return false;
+    }
+
+    // Если следующая реплика начинается с союза продолжения мысли («И в моих руках...», «Поэтому...») с малой паузой (< 0.55с) —
+    // желательно не обрывать мысль до завершения аргумента
+    if starts_with_discourse_continuation(next_trimmed) && gap_next < 0.55 {
+        return false;
+    }
+
+    // Если текущая строка заканчивается многоточием, а следующая идет сразу следом (< 0.8с) — мысль еще не закончена
+    if (curr.text.trim().ends_with("...") || curr.text.trim().ends_with('…')) && gap_next < 0.8 {
+        return false;
+    }
+
+    // Если после реплики следует пауза >= 0.75с и есть знак конца предложения — фраза логически завершена
+    if gap_next >= 0.75 && has_terminal_punctuation(&curr.text) {
         return true;
     }
 
-    // Если следующая реплика — реплика другого персонажа (начинается с тире) и текущая не оборвана на предлоге
-    let next_trimmed = next.text.trim();
+    // Если пауза >= 1.2с — даже без точки это конец реплики перед паузой
+    if gap_next >= 1.2 {
+        return true;
+    }
+
+    // Если следующая реплика — реплика другого персонажа (начинается с тире) и текущая имеет знак завершения
     if (next_trimmed.starts_with('-') || next_trimmed.starts_with('—')) && has_terminal_punctuation(&curr.text) {
         return true;
     }
 
-    // Если следующая реплика начинается со строчной буквы без паузы — предложение ещё продолжается!
-    if starts_with_lowercase_continuation(next_trimmed) && gap_next < 0.85 {
-        return false;
-    }
-
-    // Если текущая реплика заканчивается на ., !, ?, … — предложение завершено
+    // Если текущая реплика заканчивается на ., !, ? — предложение грамматически завершено
     if has_terminal_punctuation(&curr.text) {
         return true;
     }
@@ -315,6 +450,7 @@ pub async fn analyze_text_with_llm(
             let batch_size = 35;
             let total_batches = (fragments.len() + batch_size - 1) / batch_size;
             let mut use_gpu = true;
+            let mut gpu_succeeded_once = false;
             let mut consecutive_parse_failures = 0usize;
 
             for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
@@ -335,29 +471,31 @@ pub async fn analyze_text_with_llm(
                     app_handle,
                     &model_path.to_string_lossy(),
                     &prompt,
+                    chunk.len(),
                     use_gpu,
                     cancel_rx.resubscribe(),
                 ).await;
 
-                // Если запуск с GPU offload (-ngl 99) упал ИЛИ вернул поврежденный вывод (например, 'GGGG...' или мусор токенизатора),
-                // немедленно переключаемся в ЧИСТЫЙ режим CPU (CUDA_VISIBLE_DEVICES="" и -ngl 0) и повторяем пакет!
+                // Переключаемся на чистый CPU ТОЛЬКО если сбой произошел на самом первом пакете (когда GPU еще ни разу не выдал валидный ответ).
+                // Если GPU уже успешно обработал предыдущие пакеты 1..N, то видеокарта и GGUF-модель полностью исправны, и тратить 38с на CPU не нужно!
                 let gpu_output_corrupted = match &batch_res {
                     Ok(out) => parse_json_array(out, chunk.len()).is_none(),
                     Err(_) => true,
                 };
 
-                if gpu_output_corrupted && use_gpu {
+                if gpu_output_corrupted && use_gpu && !gpu_succeeded_once {
                     crate::logger::emit_log(
                         app_handle,
                         "LLM",
                         "warn",
-                        "Обнаружен сбой генерации на GPU (артефакты CUDA FP16 / невалидный вывод). Отключение CUDA для llama-cli (переход на чистый CPU) и повтор пакета...",
+                        "Обнаружен сбой генерации на GPU в первом пакете (артефакты CUDA FP16 / невалидный вывод). Отключение CUDA для llama-cli (переход на чистый CPU) и повтор пакета...",
                     );
                     use_gpu = false;
                     batch_res = run_llama_cli(
                         app_handle,
                         &model_path.to_string_lossy(),
                         &prompt,
+                        chunk.len(),
                         false,
                         cancel_rx.resubscribe(),
                     ).await;
@@ -368,6 +506,9 @@ pub async fn analyze_text_with_llm(
                         let parsed = parse_json_array(&result, chunk.len());
                         if let Some(ref batch_scores) = parsed {
                             consecutive_parse_failures = 0;
+                            if use_gpu {
+                                gpu_succeeded_once = true;
+                            }
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
@@ -380,20 +521,24 @@ pub async fn analyze_text_with_llm(
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
-                                "warn",
-                                "Невалидный ответ от GGUF-модели (поврежденный токенизатор или формат). Применяется встроенный семантический NLP-анализатор полных фраз.",
+                                "info",
+                                &format!(
+                                    "Пакет {}/{}: нестандартный формат ответа LLM, для {} реплик применен семантический NLP-анализатор полных фраз.",
+                                    batch_idx + 1,
+                                    total_batches,
+                                    chunk.len()
+                                ),
                             );
                             all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
 
-                            // Если даже в режиме чистого CPU модель выдает невалидный вывод (или 2 сбоя подряд) —
-                            // мгновенно срабатывает предохранитель, чтобы не тратить 6 минут на битые пакеты!
-                            if (!use_gpu || consecutive_parse_failures >= 2) && batch_idx + 1 < total_batches {
+                            // Помечаем модель как сломанную ТОЛЬКО если она ни разу не выдала валидный ответ (!gpu_succeeded_once)
+                            if !gpu_succeeded_once && (!use_gpu || consecutive_parse_failures >= 2) && batch_idx + 1 < total_batches {
                                 mark_model_broken(&model_path_str);
                                 crate::logger::emit_log(
                                     app_handle,
                                     "LLM",
                                     "warn",
-                                    "Предохранитель LLM: выбранная GGUF-модель выдает некорректные токены. Мгновенное переключение всех оставшихся пакетов на встроенный NLP-движок анализа полных фраз (экономия ~6 минут).",
+                                    "Предохранитель LLM: выбранная GGUF-модель выдает некорректные токены. Мгновенное переключение всех оставшихся пакетов на встроенный NLP-движок анализа полных фраз.",
                                 );
                                 let remaining = &fragments[(batch_idx + 1) * batch_size..];
                                 all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
@@ -581,6 +726,7 @@ async fn run_llama_cli(
     app_handle: &AppHandle, 
     model_path: &str, 
     prompt: &str,
+    expected_count: usize,
     use_gpu: bool,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<String> {
@@ -605,6 +751,10 @@ async fn run_llama_cli(
         .unwrap_or(4)
         .to_string();
 
+    // Динамический лимит токенов пропорционально размеру пакета (на последнем неполном пакете из 25 реплик
+    // избыточный лимит 384 заставлял модель дописывать комментарии после закрывающей скобки `]`)
+    let max_tokens = (expected_count * 8 + 28).clamp(64, 300).to_string();
+
     let mut cmd = sidecar_command
         .env("PATH", crate::logger::build_sidecar_env_path(app_handle));
 
@@ -624,7 +774,7 @@ async fn run_llama_cli(
         "-c", "2048",
         "-ngl", ngl_val,
         "-t", &threads,
-        "-n", "384",
+        "-n", &max_tokens,
         "--temp", "0.1",
         "--repeat-penalty", "1.15",
         "--no-display-prompt",
@@ -735,14 +885,15 @@ fn is_corrupted_llm_output(text: &str) -> bool {
 }
 
 /// Строгий парсер JSON-массива оценок от LLM.
-/// Отклоняет случайные числа из словесного мусора и требует не менее 50% валидных чисел в диапазоне [0.0, 1.0].
+/// Сначала отсекает любой лишний текст/комментарии модели после закрывающей скобки `]`,
+/// затем проверяет массив на отсутствие мусора и требует не менее 50% валидных чисел в диапазоне [0.0, 1.0].
 fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
-    if is_corrupted_llm_output(text) {
+    let raw_trimmed = text.trim();
+    if raw_trimmed.is_empty() || raw_trimmed.contains("GGGGGGGG") || raw_trimmed.contains('\u{FFFD}') {
         return None;
     }
 
-    let cleaned = text
-        .trim()
+    let cleaned = raw_trimmed
         .trim_start_matches("```json")
         .trim_start_matches("```")
         .trim_end_matches("```")
@@ -769,47 +920,64 @@ fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
         Some(nums.into_iter().map(|x| x.clamp(0.05, 0.96)).collect())
     };
 
-    // 1. Полноценный JSON-массив в квадратных скобках
-    if let (Some(start), Some(end)) = (cleaned.find('['), cleaned.rfind(']')) {
-        if start < end {
-            let json_str = &cleaned[start..=end];
-            if let Ok(nums) = serde_json::from_str::<Vec<f64>>(json_str) {
-                if let Some(valid) = validate_vec(nums) {
-                    return Some(valid);
+    // 1. Полноценный JSON-массив в квадратных скобках (берем ПЕРВУЮ закрывающую скобку `]` после `[`,
+    // чтобы отбросить любые пояснения, которые LLM могла дописать после завершения массива на коротком последнем пакете!)
+    if let Some(start) = cleaned.find('[') {
+        let after_start = &cleaned[start..];
+        if let Some(rel_end) = after_start.find(']') {
+            let json_str = &after_start[..=rel_end];
+            if !is_corrupted_llm_output(json_str) {
+                if let Ok(nums) = serde_json::from_str::<Vec<f64>>(json_str) {
+                    if let Some(valid) = validate_vec(nums) {
+                        return Some(valid);
+                    }
                 }
             }
         }
     }
 
-    // 2. Если ответ начинается с продолжения массива (т.к. промпт заканчивается на `[`), добавляем открывающую скобку
+    // 2. Если ответ начинается с продолжения массива (т.к. промпт заканчивается на `[`), добавляем открывающую скобку до первой `]`
     if !cleaned.starts_with('[') {
         if let Some(end) = cleaned.find(']') {
-            let with_opening = format!("[{}", &cleaned[..=end]);
-            if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_opening) {
-                if let Some(valid) = validate_vec(nums) {
-                    return Some(valid);
+            let slice_to_bracket = &cleaned[..=end];
+            if !is_corrupted_llm_output(slice_to_bracket) {
+                let with_opening = format!("[{}", slice_to_bracket);
+                if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_opening) {
+                    if let Some(valid) = validate_vec(nums) {
+                        return Some(valid);
+                    }
                 }
             }
         }
     }
 
-    // 3. Если ответ начинается с массива, но закрывающая скобка обрезана лимитом токенов
-    let candidate_body = cleaned.trim_start_matches('[').trim_end_matches(']');
-    // Разрешаем парсинг списка через запятую ТОЛЬКО если строка состоит исключительно из чисел, точек, запятых и пробелов
-    let is_pure_number_list = candidate_body
-        .chars()
-        .all(|c| c.is_ascii_digit() || c == '.' || c == ',' || c == '-' || c.is_whitespace());
-
-    if is_pure_number_list {
-        let nums: Vec<f64> = candidate_body
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .filter_map(|s| s.parse::<f64>().ok())
-            .collect();
-        if let Some(valid) = validate_vec(nums) {
-            return Some(valid);
+    // 3. Извлекаем числа напрямую из префикса ответа (до первой `]` или до конца строки, если скобка обрезана лимитом токенов)
+    let prefix_region = if let Some(start) = cleaned.find('[') {
+        let after = &cleaned[start + 1..];
+        if let Some(end) = after.find(']') {
+            &after[..end]
+        } else {
+            after
         }
+    } else if let Some(end) = cleaned.find(']') {
+        &cleaned[..end]
+    } else {
+        cleaned
+    };
+
+    if is_corrupted_llm_output(prefix_region) {
+        return None;
+    }
+
+    let nums: Vec<f64> = prefix_region
+        .split(|c: char| c == ',' || c == '\n' || c == ';')
+        .map(|s| s.trim().trim_matches(|c: char| c == '[' || c == ']'))
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<f64>().ok())
+        .collect();
+
+    if let Some(valid) = validate_vec(nums) {
+        return Some(valid);
     }
 
     None

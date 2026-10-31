@@ -193,14 +193,22 @@ pub fn resolve_model_path(app_handle: &AppHandle, model_name_or_path: &str) -> O
     None
 }
 
-/// Ищет сначала указанную Whisper-модель, а если её нет — любую установленную Whisper-модель
+/// Ищет сначала указанную Whisper-модель, а если её нет — лучшую из установленных Whisper-моделей (от старших к младшим)
 pub fn resolve_any_whisper_model(app_handle: &AppHandle, preferred: Option<&str>) -> Option<PathBuf> {
     if let Some(pref) = preferred {
-        if let Some(found) = resolve_model_path(app_handle, pref) {
-            return Some(found);
+        // Если передан дефолтный `models/ggml-base.bin`, проверяем сначала, не скачана ли более точная модель (Small / Medium / Large-v3-Turbo)
+        let is_default_base = pref == "models/ggml-base.bin" || pref == "ggml-base.bin";
+        if !is_default_base {
+            if let Some(found) = resolve_model_path(app_handle, pref) {
+                return Some(found);
+            }
         }
     }
-    for m in get_all_models_config().into_iter().filter(|m| m.category == "whisper") {
+    for m in get_all_models_config()
+        .into_iter()
+        .filter(|m| m.category == "whisper")
+        .rev()
+    {
         if let Some(found) = resolve_model_path(app_handle, &m.filename) {
             return Some(found);
         }
@@ -208,14 +216,18 @@ pub fn resolve_any_whisper_model(app_handle: &AppHandle, preferred: Option<&str>
     None
 }
 
-/// Ищет сначала указанную текстовую GGUF-модель, а если её нет — любую установленную LLM-модель (до 3B)
+/// Ищет сначала указанную текстовую GGUF-модель, а если её нет — лучшую из установленных LLM-моделей (от 3B к 0.5B)
 pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) -> Option<PathBuf> {
     if let Some(pref) = preferred {
         if let Some(found) = resolve_model_path(app_handle, pref) {
             return Some(found);
         }
     }
-    for m in get_all_models_config().into_iter().filter(|m| m.category == "llm") {
+    for m in get_all_models_config()
+        .into_iter()
+        .filter(|m| m.category == "llm")
+        .rev()
+    {
         if let Some(found) = resolve_model_path(app_handle, &m.filename) {
             return Some(found);
         }

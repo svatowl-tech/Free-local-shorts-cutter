@@ -522,7 +522,7 @@ pub async fn run_pipeline(
 }
 
 /// Строит логически завершенное окно клипа в гибком диапазоне `[min_dur, max_dur]` (например, 10–20 секунд),
-/// привязывая начало клипа строго к началу предложения, а конец — к полному завершению последней фразы без обрывов на полуслове.
+/// привязывая начало клипа строго к началу предложения, а конец — к полному завершению диалогового обмена без обрывов на полуслове или слабой реплике.
 #[allow(clippy::too_many_arguments)]
 fn build_complete_phrase_window(
     fragments: &[crate::text_analyzer::SubtitleFragment],
@@ -540,14 +540,15 @@ fn build_complete_phrase_window(
         return None;
     }
 
-    // 1. Сдвигаем точку старта назад до истинного НАЧАЛА предложения (если якорь попал в середину фразы)
+    // 1. Сдвигаем точку старта назад до истинного НАЧАЛА предложения / мысли
+    // (чтобы клип не начинался со слов «Поэтому...», «И в моих руках...» или с середины незаконченной фразы)
     let mut start_idx = anchor_idx;
     while start_idx > 0
         && !crate::text_analyzer::is_sentence_start(fragments, start_idx)
-        && (anchor_idx - start_idx) < 5
+        && (anchor_idx - start_idx) < 6
     {
         let gap = (fragments[start_idx].start - fragments[start_idx - 1].end).max(0.0);
-        if gap > 1.5 {
+        if gap > 1.8 {
             break;
         }
         start_idx -= 1;
@@ -566,18 +567,23 @@ fn build_complete_phrase_window(
         }
 
         let mut best_choice: Option<(usize, f64, f64, bool, f64)> = None; // (end_idx, c_start, c_end, is_clean_end, boundary_quality)
+        let mut crossed_scene_transition = false;
 
         for end_idx in s_idx..fragments.len() {
             if crate::whisper::is_whisper_hallucination(&fragments[end_idx].text) {
                 continue;
             }
 
-            // Если между предыдущей и текущей репликой огромная музыкальная пауза (> 5с), а мы уже набрали min_dur — останавливаемся
             if end_idx > s_idx {
                 let gap = (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0);
                 let prev_dur = fragments[end_idx - 1].end - pre_roll;
-                if gap > 5.0 && prev_dur >= min_dur {
+                // Если между репликами длинная пауза (> 3.2с, например удаленная музыкальная вставка между сценами)
+                // и мы уже набрали минимальную длительность — закрываем окно до смены сцены!
+                if gap > 3.2 && prev_dur >= min_dur * 0.9 {
                     break;
+                }
+                if gap >= 1.85 {
+                    crossed_scene_transition = true;
                 }
             }
 
@@ -597,6 +603,7 @@ fn build_complete_phrase_window(
 
             if dur >= min_dur {
                 let is_sent_end = crate::text_analyzer::is_sentence_end(fragments, end_idx);
+                let is_weak_end = crate::text_analyzer::is_weak_clip_ending(fragments, end_idx);
                 let has_punct = crate::text_analyzer::has_terminal_punctuation(&fragments[end_idx].text);
                 let pause_after = if end_idx + 1 < fragments.len() {
                     (fragments[end_idx + 1].start - fragments[end_idx].end).max(0.0)
@@ -604,24 +611,49 @@ fn build_complete_phrase_window(
                     1.0
                 };
 
-                // Если длительность вышла за `max_dur` (в буфер +1.5с), принимаем её ТОЛЬКО если она закрывает предложение!
-                if dur > max_dur && !is_sent_end {
+                // Если длительность вышла за `max_dur` (в буфер +1.5с), принимаем её ТОЛЬКО если она закрывает предложение и не является слабым концом!
+                if dur > max_dur && (!is_sent_end || is_weak_end) {
                     continue;
                 }
 
                 // Оценка качества границы окончания:
-                // Главный приоритет (+2.0) — полное логическое окончание предложения (is_sent_end)
-                let mut b_quality = if is_sent_end { 2.0 } else { 0.2 };
+                // 1. Главный приоритет (+2.2) — полное логическое окончание предложения (is_sent_end)
+                let mut b_quality = if is_sent_end { 2.2 } else { 0.1 };
                 if has_punct {
                     b_quality += 0.45;
                 }
-                b_quality += (pause_after * 0.25).min(0.35);
-                // Плавное предпочтение длительности ближе к золотой середине target_dur (15с), но в пределах 10..20с
-                let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.35;
+
+                // 2. Сильный штраф за обрыв на слабой реплике («- Да уж.», «- Ясно.», «Прости за ожидание...», «Значит, ты и есть та самая дочка...»),
+                // чтобы алгоритм продолжал окно еще на 2–4 секунды (до 18–20с) и захватывал финальный панчлайн собеседника!
+                if is_weak_end {
+                    b_quality -= 1.35;
+                }
+
+                // 3. Бонус за естественную паузу после финальной реплики (признак завершения микро-диалога),
+                // и небольшой штраф, если pause_after == 0.0с (собеседник мгновенно отвечает в ту же миллисекунду)
+                if pause_after >= 0.45 {
+                    b_quality += (pause_after * 0.35).min(0.55);
+                } else if pause_after < 0.12 && dur < max_dur - 2.5 {
+                    b_quality -= 0.22;
+                }
+
+                // 4. Штраф за склейку двух разных сцен через музыкальную паузу >= 1.85с
+                if crossed_scene_transition {
+                    b_quality -= 0.45;
+                }
+
+                // 5. Небольшой бонус за насыщенность диалога (чтобы полноценная сцена 16–19с с ярким панчлайном выигрывала у сухого 13с обрывка)
+                let end_cue_score = text_scores.get(end_idx).copied().unwrap_or(0.45);
+                if end_cue_score >= 0.68 && !is_weak_end {
+                    b_quality += 0.25;
+                }
+
+                // Мягкое предпочтение в коридоре 10..20с без жесткого притягивания к 15с
+                let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.22;
                 b_quality -= dist_penalty;
 
                 if best_choice.as_ref().map_or(true, |prev| b_quality > prev.4) {
-                    best_choice = Some((end_idx, pre_roll, post_roll, is_sent_end, b_quality));
+                    best_choice = Some((end_idx, pre_roll, post_roll, is_sent_end && !is_weak_end, b_quality));
                 }
             }
         }
@@ -631,21 +663,28 @@ fn build_complete_phrase_window(
 
     let mut chosen = find_best_end(start_idx);
 
-    // Если от `start_idx` вперед диалог закончился раньше 10 секунд (или не нашлось ни одного полного конца фразы),
+    // Если от `start_idx` вперед диалог закончился раньше 10 секунд (или закончился на слабой/оборванной фразе),
     // пробуем захватить предыдущее полное предложение перед `start_idx`, чтобы получился полноценный диалог 10–20с!
     if chosen.as_ref().map_or(true, |c| !c.3) && start_idx > 0 {
         let mut prev_start = start_idx - 1;
         while prev_start > 0
             && !crate::text_analyzer::is_sentence_start(fragments, prev_start)
-            && (start_idx - prev_start) < 5
+            && (start_idx - prev_start) < 6
         {
+            let gap = (fragments[prev_start].start - fragments[prev_start - 1].end).max(0.0);
+            if gap > 1.8 {
+                break;
+            }
             prev_start -= 1;
         }
         if fragments[prev_start].start >= intro_skip {
-            if let Some(alt) = find_best_end(prev_start) {
-                if alt.3 || chosen.is_none() {
-                    start_idx = prev_start;
-                    chosen = Some(alt);
+            let gap_between = (fragments[start_idx].start - fragments[prev_start].end).max(0.0);
+            if gap_between <= 2.5 {
+                if let Some(alt) = find_best_end(prev_start) {
+                    if alt.3 || chosen.is_none() {
+                        start_idx = prev_start;
+                        chosen = Some(alt);
+                    }
                 }
             }
         }
@@ -663,9 +702,16 @@ fn build_complete_phrase_window(
     let mut cue_count = 0usize;
     let mut song_cue_count = 0usize;
     let mut active_speech_sec = 0.0;
+    let mut max_internal_gap = 0.0_f64;
 
     for j in start_idx..=end_idx {
         let f = &fragments[j];
+        if j > start_idx {
+            let g = (f.start - fragments[j - 1].end).max(0.0);
+            if g > max_internal_gap {
+                max_internal_gap = g;
+            }
+        }
         if crate::whisper::is_whisper_hallucination(&f.text) {
             continue;
         }
@@ -679,7 +725,12 @@ fn build_complete_phrase_window(
         }
         sum_score += sc;
         cue_count += 1;
-        active_speech_sec += (f.end - f.start).max(0.0);
+        // Ограничиваем вклад одной реплики в active_speech_sec разумным пределом (до 5.5с),
+        // на случай если Whisper растянул таймкод короткой фразы на 9 секунд тишины/ходьбы
+        let words = f.text.split_whitespace().count();
+        let realistic_max_dur = (words as f64 * 0.85).max(1.8);
+        let effective_cue_dur = (f.end - f.start).max(0.0).min(realistic_max_dur);
+        active_speech_sec += effective_cue_dur;
     }
 
     // Защита от музыкальных заставок/опенингов: отсекаем окна с песнями и требуем >= 2 реплик и >= 3.2с живой речи
@@ -690,13 +741,17 @@ fn build_complete_phrase_window(
     let avg_score = sum_score / (cue_count as f64);
     let speech_density = (active_speech_sec / clip_dur).clamp(0.0, 1.0);
 
-    // Бонус за идеальную целостность начала и конца фразы
-    let is_clean_start = crate::text_analyzer::is_sentence_start(fragments, start_idx);
+    // Бонус за идеальную целостность начала и конца диалога
+    let is_clean_start = crate::text_analyzer::is_sentence_start(fragments, start_idx)
+        && !crate::text_analyzer::starts_with_discourse_continuation(&fragments[start_idx].text);
     let completeness_bonus = match (is_clean_start, is_clean_end) {
-        (true, true) => 0.06,
-        (true, false) | (false, true) => 0.02,
-        (false, false) => -0.06,
+        (true, true) => 0.07,
+        (true, false) | (false, true) => 0.01,
+        (false, false) => -0.08,
     };
+
+    // Штраф за длинный провал тишины/музыки посередине клипа (когда склеены две разные сцены)
+    let transition_penalty = if max_internal_gap >= 2.0 { 0.05 } else { 0.0 };
 
     // Бонус за совпадение с визуальной динамикой / аудио-пиком
     let max_scene_in_win = scenes
@@ -714,7 +769,8 @@ fn build_complete_phrase_window(
         + avg_score * 0.30
         + speech_density.min(0.85) * 0.11
         + completeness_bonus
-        + scene_bonus)
+        + scene_bonus
+        - transition_penalty)
         .clamp(0.35, 0.97);
 
     let first_preview: String = fragments[start_idx].text.trim().chars().take(36).collect();

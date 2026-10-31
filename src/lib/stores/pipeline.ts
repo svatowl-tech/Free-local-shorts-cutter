@@ -54,6 +54,8 @@ export interface PipelineState {
   detailedLogs: LogEntry[];
 }
 
+const STORAGE_CONFIG_KEY = 'vcp_pipeline_config_v2';
+
 const DEFAULT_CONFIG: PipelineConfig = {
   min_intensity_threshold: 0.6,
   max_clip_duration_sec: 15,
@@ -72,6 +74,27 @@ const DEFAULT_CONFIG: PipelineConfig = {
   },
   mode: 'confirm'
 };
+
+function loadInitialConfig(): PipelineConfig {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { ...DEFAULT_CONFIG };
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_CONFIG_KEY);
+    if (!raw) return { ...DEFAULT_CONFIG };
+    const parsed = JSON.parse(raw);
+    return {
+      ...DEFAULT_CONFIG,
+      ...parsed,
+      subtitle_style: {
+        ...DEFAULT_CONFIG.subtitle_style,
+        ...(parsed.subtitle_style || {})
+      }
+    };
+  } catch {
+    return { ...DEFAULT_CONFIG };
+  }
+}
 
 // Безопасная обертка регистрации слушателя Tauri с таймаутом (не блокирует конвейер)
 async function safeListen<T>(
@@ -95,7 +118,7 @@ async function safeListen<T>(
 const createPipelineStore = () => {
   const store = writable<PipelineState>({
     video: null,
-    config: { ...DEFAULT_CONFIG },
+    config: loadInitialConfig(),
     status: 'idle',
     currentStage: '',
     percentage: 0,
@@ -335,6 +358,11 @@ const createPipelineStore = () => {
     updateConfig: (fields: Partial<PipelineConfig>) => {
       update(s => {
         const config = { ...s.config, ...fields };
+        if (typeof window !== 'undefined' && window.localStorage) {
+          try {
+            window.localStorage.setItem(STORAGE_CONFIG_KEY, JSON.stringify(config));
+          } catch {}
+        }
         return { ...s, config };
       });
       addLog(`Обновлены настройки пайплайна: ${JSON.stringify(fields)}`);

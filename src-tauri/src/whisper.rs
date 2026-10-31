@@ -34,7 +34,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         return true;
     }
 
-    let lower = trimmed.to_lowercase();
+    let lower = trimmed.to_lowercase().replace('ё', "е");
 
     // Отсекаем технические теги музыки и фонового шума вида [музыка], (музыка), ♪ и т.д.
     if (lower.starts_with('[') && lower.ends_with(']'))
@@ -45,12 +45,30 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         return true;
     }
 
+    // Одиночные звуковые ремарки КАПСОМ или без скобок
+    let exact_tags = [
+        "музыка",
+        "аплодисменты",
+        "смех",
+        "вздох",
+        "звук",
+        "шум",
+        "тишина",
+        "music",
+        "applause",
+    ];
+    let clean_exact = lower.trim_matches(['.', '!', '?', '-', '—', ' ']);
+    if exact_tags.contains(&clean_exact) {
+        return true;
+    }
+
     let patterns = [
         "[музыка]",
         "(музыка)",
         "[music]",
         "(music)",
         "[аплодисменты]",
+        "аплодисменты",
         "[смех]",
         "редактор субтитров",
         "корректор а.",
@@ -60,9 +78,10 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "корректор ",
         "синецкая",
         "семкин",
-        "сёмкин",
         "егорова",
         "сухиашвили",
+        "александрова",
+        "кулакова",
         "диматоржок",
         "dimatorzok",
         "субтитры сделал",
@@ -79,7 +98,14 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "лирическая музыка",
         "веселая музыка",
         "грустная музыка",
+        "напряженная музыка",
+        "драматичная музыка",
+        "эпичная музыка",
+        "тихая музыка",
+        "громкая музыка",
+        "фоновая музыка",
         "музыкальная заставка",
+        "музыкальная пауза",
         "продолжение следует",
         "подпишись на канал",
         "ставьте лайки",
@@ -94,7 +120,8 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     false
 }
 
-/// Очищает растянутые циклические гласные и слоги Whisper (например «Ооооооо...tragenа» или 20x «Ха-ха-ха...»)
+/// Очищает растянутые циклические гласные и слоги Whisper (например «Ооооооо...tragenа» или 20x «Ха-ха-ха...»),
+/// а также сжимает зацикленные повторы одной и той же фразы внутри одной реплики
 pub fn clean_stretched_text(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -147,6 +174,9 @@ pub fn clean_stretched_text(text: &str) -> String {
     }
     if lower_comp.matches("-хе").count() > 3 {
         return "Хе-хе-хе!".to_string();
+    }
+    if lower_comp.matches(", дай").count() >= 4 {
+        return "Ай-ай-ай!".to_string();
     }
 
     compressed
@@ -253,7 +283,10 @@ fn is_bound_russian_word_tail(w_prev_lower: &str, w_next_alpha_lower: &str) -> b
     false
 }
 
-/// Восстанавливает слова и знаки препинания, разорванные на границе соседних SRT-блоков (из-за -ml 60 без -sow)
+/// Восстанавливает:
+/// 1) слова и знаки препинания, разорванные на границе соседних SRT-блоков;
+/// 2) короткие оторванные хвосты предложений (1–3 слова вроде «ты так.», «бою.», «нужна сила.», «вооружие.», «бойцом.»),
+///    которые whisper.cpp отрезает в микро-реплику длительностью 0.3–0.9с из-за байтового лимита `-ml`.
 fn repair_split_words_and_orphans(
     fragments: Vec<crate::text_analyzer::SubtitleFragment>,
 ) -> (Vec<crate::text_analyzer::SubtitleFragment>, usize) {
@@ -287,6 +320,7 @@ fn repair_split_words_and_orphans(
             }
 
             // 2. Проверяем, не разрезано ли русское слово пополам на стыке `prev` и `curr` (gap <= 0.12с)
+            let mut word_stitched = false;
             if gap <= 0.12 {
                 let prev_ends_alpha = prev
                     .text
@@ -317,12 +351,13 @@ fn repair_split_words_and_orphans(
 
                     if is_bound_russian_word_tail(&w_prev, &w_next_alpha) {
                         repaired_count += 1;
+                        word_stitched = true;
                         let remainder = curr_text[w_next_raw.len()..].trim_start().to_string();
                         let combined_chars = prev.text.chars().count() + curr_text.chars().count();
 
-                        // Если после склейки слова вторая строка пустая или короткая (общая длина <= 76 символов) —
+                        // Если после склейки слова вторая строка пустая или короткая (общая длина <= 85 символов) —
                         // объединяем оба блока в одну цельную фразу!
-                        if remainder.is_empty() || combined_chars <= 76 {
+                        if remainder.is_empty() || combined_chars <= 85 {
                             prev.text.push_str(&w_next_raw);
                             if !remainder.is_empty() {
                                 prev.text.push(' ');
@@ -338,6 +373,32 @@ fn repair_split_words_and_orphans(
                     }
                 }
             }
+
+            // 3. Склеиваем короткие оторванные хвосты предложений (1–3 слова, до 24 символов, например «ты так.», «бою.», «нужна сила.», «вооружие.», «бойцом.»),
+            // которые whisper.cpp перенес в конец сегмента при срабатывании лимита длины строки `-ml`
+            if !word_stitched && gap <= 0.30 && !crate::text_analyzer::has_terminal_punctuation(&prev.text) {
+                let curr_words = curr_text.split_whitespace().count();
+                let curr_chars = curr_text.chars().count();
+                let curr_dur = (frag.end - frag.start).max(0.0);
+                let starts_dialog = curr_text.starts_with('-') || curr_text.starts_with('—');
+                let starts_lower = curr_text
+                    .chars()
+                    .next()
+                    .map(|c| c.is_lowercase())
+                    .unwrap_or(false);
+
+                let is_short_orphan_tail = !starts_dialog
+                    && ((starts_lower && curr_words <= 3 && curr_chars <= 24 && curr_dur <= 1.6)
+                        || (curr_words == 1 && curr_chars <= 14 && curr_dur <= 1.0 && gap <= 0.08));
+
+                if is_short_orphan_tail && (prev.text.chars().count() + 1 + curr_chars) <= 95 {
+                    prev.text.push(' ');
+                    prev.text.push_str(&curr_text);
+                    prev.end = prev.end.max(frag.end);
+                    repaired_count += 1;
+                    continue;
+                }
+            }
         }
 
         out.push(crate::text_analyzer::SubtitleFragment {
@@ -350,16 +411,13 @@ fn repair_split_words_and_orphans(
     (out, repaired_count)
 }
 
-/// Очищает SRT-файл от мусорных галлюцинаций Whisper, зацикленных повторов и разорванных полуслов
+/// Очищает SRT-файл от мусорных галлюцинаций Whisper, зацикленных повторов и разорванных полуслов/хвостов фраз
 pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppResult<usize> {
     let content = tokio::fs::read_to_string(srt_path).await.map_err(AppError::Io)?;
     let raw_fragments = crate::text_analyzer::parse_srt(&content);
     let raw_count = raw_fragments.len();
 
-    let mut clean_fragments: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(raw_count);
-    let mut prev_norm = String::new();
-    let mut repeat_count = 0usize;
-
+    let mut stage1: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(raw_count);
     for mut frag in raw_fragments {
         let trimmed = frag.text.trim();
         if is_whisper_hallucination(trimmed) {
@@ -371,20 +429,48 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
             continue;
         }
         frag.text = cleaned_text;
+        stage1.push(frag);
+    }
 
-        let norm = frag.text.trim().to_lowercase();
-        if norm == prev_norm {
-            repeat_count += 1;
-            // Допускаем максимум 1 повтор короткой реплики (например «Нет. / Нет.»), но отсекаем циклы
-            if repeat_count >= 2 {
-                continue;
+    // Фильтруем зацикленные повторы Whisper (например 6x «Я не могу сказать, что ты нанесешься» на музыке эндинга
+    // или 5x «У нас не штатная ситуация!» подряд)
+    let mut clean_fragments: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(stage1.len());
+    let mut i = 0;
+    while i < stage1.len() {
+        let norm_i = stage1[i].text.trim().to_lowercase();
+        let prefix_i: String = norm_i.chars().take(18).collect();
+        let words_i = norm_i.split_whitespace().count();
+
+        // Считаем, сколько раз подряд повторяется эта же фраза (или 18-символьный префикс для длинных галлюцинаций песни)
+        let mut run_end = i + 1;
+        while run_end < stage1.len() {
+            let norm_k = stage1[run_end].text.trim().to_lowercase();
+            let same_exact = norm_k == norm_i;
+            let same_long_prefix = words_i >= 4
+                && prefix_i.chars().count() >= 18
+                && norm_k.starts_with(&prefix_i);
+            if same_exact || same_long_prefix {
+                run_end += 1;
+            } else {
+                break;
             }
-        } else {
-            repeat_count = 0;
-            prev_norm = norm;
         }
 
-        clean_fragments.push(frag);
+        let run_len = run_end - i;
+        if run_len >= 5 && words_i >= 4 {
+            // Если длинная фраза (>= 4 слов) зациклилась 5+ раз подряд (как «Я не могу сказать, что ты нанесешься» x7 в эндинге) —
+            // это 100% галлюцинация Whisper поверх вокала песни, отбрасываем весь зацикленный кластер!
+            i = run_end;
+            continue;
+        } else if run_len >= 2 {
+            // Для обычных фраз оставляем только 1 экземпляр без дублирования
+            clean_fragments.push(stage1[i].clone());
+            i = run_end;
+            continue;
+        } else {
+            clean_fragments.push(stage1[i].clone());
+            i += 1;
+        }
     }
 
     let removed = raw_count.saturating_sub(clean_fragments.len());
@@ -396,7 +482,7 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
             "Whisper",
             "info",
             &format!(
-                "Очистка субтитров: удалено {} мусорных строк, склеено {} разорванных полуслов, итого {} чистых реплик.",
+                "Очистка субтитров: удалено {} мусорных строк, склеено {} разорванных полуслов/фраз, итого {} чистых реплик.",
                 removed,
                 stitched_words,
                 clean_fragments.len()
@@ -593,7 +679,7 @@ pub async fn transcribe_audio(
     // -l auto: автоопределение русского/любого языка
     // -mc 0: отключение переноса текстового контекста между 30с окнами (предотвращает 7-минутные циклы «Корректор А. Кулак» после музыки!)
     // -et 2.2: порог энтропии для подавления повторов
-    // -ml 85 -sow: разбиение длинных строк СТРОГО по границам целых слов (-sow = split-on-word), чтобы слова никогда не резались пополам
+    // -ml 150 -sow: в whisper.cpp -ml измеряется в байтах UTF-8 (150 байт = ~75 русских букв) + разбиение строго по целым словам (-sow)
     // -pp: вывод процентов прогресса
     let command = command
         .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
@@ -602,7 +688,7 @@ pub async fn transcribe_audio(
             "-l", "auto",
             "-mc", "0",
             "-et", "2.2",
-            "-ml", "85",
+            "-ml", "150",
             "-sow",
             "-pp",
             "-osrt", 
