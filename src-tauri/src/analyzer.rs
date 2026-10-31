@@ -341,6 +341,13 @@ pub async fn analyze_video(
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
     if !candidates.is_empty() {
+        let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
+            percent: 100.0,
+            stage: "complete".to_string(),
+            current_frame: sampled_count,
+            total_frames: sampled_count,
+        });
+
         crate::logger::emit_log(
             &app_handle,
             "Analyzer",
@@ -357,17 +364,7 @@ pub async fn analyze_video(
         "info",
         "Переключение на высокоточный двухфакторный анализ сцен (FFmpeg Scene Detect + Audio Energy)...",
     );
-        return run_two_factor_scene_analysis(video_path, app_handle, cancel_rx).await;
-    }
-
-    let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
-        percent: 100.0,
-        stage: "complete".to_string(),
-        current_frame: sampled_count,
-        total_frames: sampled_count,
-    });
-
-    Ok(candidates)
+    run_two_factor_scene_analysis(video_path, app_handle, cancel_rx).await
 }
 
 /// Двухфакторный алгоритм анализа видео-хайлайтов (смена планов FFmpeg + энергетические пики аудиодорожки)
