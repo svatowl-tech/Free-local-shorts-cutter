@@ -215,7 +215,9 @@ pub async fn run_pipeline(
     // А. Строим кандидатов по границам полных предложений вокруг реплик
     if !fragments.is_empty() {
         for anchor_idx in 0..fragments.len() {
-            if crate::whisper::is_whisper_hallucination(&fragments[anchor_idx].text) {
+            if crate::whisper::is_whisper_hallucination(&fragments[anchor_idx].text)
+                || crate::text_analyzer::is_opening_or_song_fragment(&fragments, anchor_idx)
+            {
                 continue;
             }
             if let Some(cand) = build_complete_phrase_window(
@@ -249,8 +251,9 @@ pub async fn run_pipeline(
             if let Some((nearest_idx, _)) = fragments
                 .iter()
                 .enumerate()
-                .filter(|(_, f)| {
+                .filter(|(idx, f)| {
                     !crate::whisper::is_whisper_hallucination(&f.text)
+                        && !crate::text_analyzer::is_opening_or_song_fragment(&fragments, *idx)
                         && (f.start - scene.timestamp_sec).abs() <= 6.0
                 })
                 .min_by(|(_, a), (_, b)| {
@@ -658,11 +661,16 @@ fn build_complete_phrase_window(
     let mut peak_score: f64 = 0.0;
     let mut sum_score: f64 = 0.0;
     let mut cue_count = 0usize;
+    let mut song_cue_count = 0usize;
     let mut active_speech_sec = 0.0;
 
     for j in start_idx..=end_idx {
         let f = &fragments[j];
         if crate::whisper::is_whisper_hallucination(&f.text) {
+            continue;
+        }
+        if crate::text_analyzer::is_opening_or_song_fragment(fragments, j) {
+            song_cue_count += 1;
             continue;
         }
         let sc = text_scores.get(j).copied().unwrap_or(0.42);
@@ -674,8 +682,8 @@ fn build_complete_phrase_window(
         active_speech_sec += (f.end - f.start).max(0.0);
     }
 
-    // Защита от музыкальных заставок/опенингов: в 10–20 секундном ролике должно быть минимум 2 реплики и >= 3.2с живой речи
-    if cue_count < 2 || active_speech_sec < 3.2 {
+    // Защита от музыкальных заставок/опенингов: отсекаем окна с песнями и требуем >= 2 реплик и >= 3.2с живой речи
+    if song_cue_count >= 2 || cue_count < 2 || active_speech_sec < 3.2 {
         return None;
     }
 

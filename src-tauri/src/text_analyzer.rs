@@ -3,10 +3,31 @@
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::broadcast::Receiver;
+
+static BROKEN_GGUF_MODELS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn is_model_marked_broken(path_str: &str) -> bool {
+    BROKEN_GGUF_MODELS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .map(|set| set.contains(path_str))
+        .unwrap_or(false)
+}
+
+fn mark_model_broken(path_str: &str) {
+    if let Ok(mut set) = BROKEN_GGUF_MODELS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+    {
+        set.insert(path_str.to_string());
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubtitleFragment {
@@ -248,9 +269,42 @@ pub async fn analyze_text_with_llm(
             app_handle,
             "LLM",
             "info",
-            &format!("Поиск локальной GGUF-модели для llama-cli (предпочтительная: '{}')...", config.model_name),
+            &format!("Поиск локальной GGUF-модели для llama-cli (выбрана: '{}')...", config.model_name),
         );
-        if let Some(model_path) = crate::models::resolve_any_llm_model(app_handle, Some(&config.model_name)) {
+        let exact_match = crate::models::resolve_model_path(app_handle, &config.model_name);
+        let resolved_model = exact_match
+            .clone()
+            .or_else(|| crate::models::resolve_any_llm_model(app_handle, Some(&config.model_name)));
+
+        if let Some(model_path) = resolved_model {
+            let model_path_str = model_path.to_string_lossy().to_string();
+
+            if exact_match.is_none() {
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "warn",
+                    &format!(
+                        "Выбранная модель '{}' ещё не скачана в Менеджере ИИ-моделей. Найдена резервная локальная модель: '{}'",
+                        config.model_name,
+                        model_path.display()
+                    ),
+                );
+            }
+
+            if is_model_marked_broken(&model_path_str) {
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "warn",
+                    &format!(
+                        "Модель '{}' ранее показала ошибку токенизатора в этой сессии. Мгновенное применение встроенного NLP-анализатора полных фраз.",
+                        model_path.display()
+                    ),
+                );
+                return Ok(compute_text_scores_advanced(fragments));
+            }
+
             crate::logger::emit_log(
                 app_handle,
                 "LLM",
@@ -334,6 +388,7 @@ pub async fn analyze_text_with_llm(
                             // Если даже в режиме чистого CPU модель выдает невалидный вывод (или 2 сбоя подряд) —
                             // мгновенно срабатывает предохранитель, чтобы не тратить 6 минут на битые пакеты!
                             if (!use_gpu || consecutive_parse_failures >= 2) && batch_idx + 1 < total_batches {
+                                mark_model_broken(&model_path_str);
                                 crate::logger::emit_log(
                                     app_handle,
                                     "LLM",
@@ -760,6 +815,51 @@ fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
     None
 }
 
+/// Определяет, относится ли реплика к вокалу музыкального опенинга/эндинга (например, японская/английская песня поверх заставки)
+pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -> bool {
+    if idx >= fragments.len() {
+        return false;
+    }
+    let f = &fragments[idx];
+    let text = f.text.trim();
+
+    // 1. В русскоязычном видео строки с латинскими словами («We will like to start!», «you'll be speedy. Yes!») — это вокал песни/опенинга
+    let latin_letters = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
+    if latin_letters >= 3 {
+        return true;
+    }
+
+    // 2. Проверяем, не находится ли реплика внутри 30-секундного вокального блока опенинга/эндинга,
+    // который следует сразу после длинной музыкальной паузы (>= 14с, где были удалены теги [музыка]),
+    // и где Whisper нарезает вокал ровно по целочисленным секундам (3.000с, 4.000с, 5.000с)
+    let is_exact_int_dur = |frag: &SubtitleFragment| -> bool {
+        let d = frag.end - frag.start;
+        d >= 2.0 && d <= 6.0 && (d - d.round()).abs() < 0.025
+    };
+
+    if is_exact_int_dur(f) {
+        let win_start = idx.saturating_sub(4);
+        let win_end = (idx + 4).min(fragments.len().saturating_sub(1));
+        let int_dur_neighbors = (win_start..=win_end)
+            .filter(|&k| is_exact_int_dur(&fragments[k]))
+            .count();
+
+        // Проверяем, был ли перед этим кластером длинный музыкальный разрыв (>= 14с) или латинские строки песни рядом
+        let has_music_gap_nearby = (win_start..=win_end).any(|k| {
+            k > 0 && (fragments[k].start - fragments[k - 1].end) >= 14.0
+        });
+        let has_latin_nearby = (win_start..=win_end).any(|k| {
+            fragments[k].text.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 3
+        });
+
+        if int_dur_neighbors >= 4 && (has_music_gap_nearby || has_latin_nearby) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Продвинутый локальный семантический анализатор диалогов, эмоциональных всплесков и целостности фраз
 pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> {
     if fragments.is_empty() {
@@ -790,7 +890,9 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
         .iter()
         .enumerate()
         .map(|(idx, f)| {
-            if crate::whisper::is_whisper_hallucination(&f.text) {
+            if crate::whisper::is_whisper_hallucination(&f.text)
+                || is_opening_or_song_fragment(fragments, idx)
+            {
                 return 0.05;
             }
 
