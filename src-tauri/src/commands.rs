@@ -514,39 +514,40 @@ fn extract_models_from_json(val: &serde_json::Value) -> Vec<String> {
     let mut models = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    let mut push_id = |id: &str| {
-        let clean = id.trim();
-        if !clean.is_empty() && seen.insert(clean.to_string()) {
-            models.push(clean.to_string());
-        }
-    };
-
-    let extract_from_array = |arr: &[serde_json::Value], push: &mut dyn FnMut(&str)| {
+    fn extract_from_array(
+        arr: &[serde_json::Value],
+        models: &mut Vec<String>,
+        seen: &mut std::collections::HashSet<String>,
+    ) {
         for item in arr {
-            if let Some(s) = item.as_str() {
-                push(s);
+            let raw_id = if let Some(s) = item.as_str() {
+                Some(s)
             } else if let Some(obj) = item.as_object() {
-                if let Some(id) = obj
-                    .get("id")
+                obj.get("id")
                     .or_else(|| obj.get("model"))
                     .or_else(|| obj.get("name"))
                     .and_then(|v| v.as_str())
-                {
-                    push(id);
+            } else {
+                None
+            };
+            if let Some(id) = raw_id {
+                let clean = id.trim();
+                if !clean.is_empty() && seen.insert(clean.to_string()) {
+                    models.push(clean.to_string());
                 }
             }
         }
-    };
+    }
 
     if let Some(arr) = val.as_array() {
-        extract_from_array(arr, &mut push_id);
+        extract_from_array(arr, &mut models, &mut seen);
     } else if let Some(obj) = val.as_object() {
         if let Some(arr) = obj.get("data").and_then(|v| v.as_array()) {
-            extract_from_array(arr, &mut push_id);
+            extract_from_array(arr, &mut models, &mut seen);
         }
         if models.is_empty() {
             if let Some(arr) = obj.get("models").and_then(|v| v.as_array()) {
-                extract_from_array(arr, &mut push_id);
+                extract_from_array(arr, &mut models, &mut seen);
             }
         }
     }

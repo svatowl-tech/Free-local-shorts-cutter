@@ -405,7 +405,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
 async fn run_two_factor_scene_analysis(
     video_path: PathBuf,
     app_handle: AppHandle,
-    mut cancel_rx: Receiver<()>,
+    cancel_rx: Receiver<()>,
 ) -> AppResult<Vec<SceneCandidate>> {
     crate::logger::emit_log(
         &app_handle,
