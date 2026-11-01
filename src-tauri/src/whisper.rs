@@ -144,6 +144,9 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "подпишись на канал",
         "ставьте лайки",
         "let's go to the play",
+        "валерий курас",
+        "позитивный голос",
+        "позитивный позитивный",
     ];
 
     for pat in &patterns {
@@ -152,12 +155,34 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         }
     }
 
+    // Шаблонные титры песен вида «Исполнитель - "Название"» на музыке опенинга/эндинга
+    if (trimmed.contains(" - \"") || trimmed.contains(" — \"")) && trimmed.ends_with('"') {
+        return true;
+    }
+
     // Любая короткая ремарка (1–3 слова), содержащая слово «музыка» или «песня» (например «ИНТРИГУЮЩАЯ МУЗЫКА», «ПЕСНЯ ВСХЛИПЫМ»)
     let word_count = clean_exact.split_whitespace().count();
     if word_count <= 3
         && (clean_exact.contains("музыка")
             || clean_exact.contains("music")
             || clean_exact.starts_with("песня "))
+    {
+        return true;
+    }
+
+    // Капс-ремарки звукового описания из >= 2 слов (например «ПОЗИТИВНЫЙ ГОЛОС», «ГРОМКИЙ ШУМ»)
+    let has_upper_cyr = trimmed.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c) && c.is_uppercase());
+    let has_lower_cyr = trimmed.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c) && c.is_lowercase());
+    if has_upper_cyr
+        && !has_lower_cyr
+        && word_count >= 2
+        && (clean_exact.contains("голос")
+            || clean_exact.contains("звук")
+            || clean_exact.contains("шум")
+            || clean_exact.contains("песня")
+            || clean_exact.contains("музыка")
+            || clean_exact.contains("мелодия")
+            || clean_exact.contains("позитивный"))
     {
         return true;
     }
@@ -465,7 +490,9 @@ fn repair_split_words_and_orphans(
             }
 
             // 3. Склеиваем короткие оторванные хвосты предложений (1–3 слова, до 24 символов, например «ты так.», «бою.», «нужна сила.», «вооружие.», «бойцом.»),
-            // которые whisper.cpp перенес в конец сегмента при срабатывании лимита длины строки `-ml`
+            // которые whisper.cpp перенес в конец сегмента при срабатывании лимита длины строки `-ml`.
+            // ВАЖНО: Если короткий кусок НЕ имеет финальной точки/!/? и начинается с подчинительного союза («что для меня», «если я», «когда он»),
+            // то это НЕ хвост предыдущей фразы, а оторванное начало следующей клаузы — его нельзя оставлять висящим на конце `prev`!
             if !word_stitched && gap <= 0.30 && !crate::text_analyzer::has_terminal_punctuation(&prev.text) {
                 let curr_words = curr_text.split_whitespace().count();
                 let curr_chars = curr_text.chars().count();
@@ -476,8 +503,32 @@ fn repair_split_words_and_orphans(
                     .next()
                     .map(|c| c.is_lowercase())
                     .unwrap_or(false);
+                let curr_has_punct = crate::text_analyzer::has_terminal_punctuation(&curr_text);
+                let curr_lower = curr_text.to_lowercase().replace('ё', "е");
+                let starts_subordinate = [
+                    "что ", "чтобы ", "как ", "когда ", "если ", "потому ", "так как ",
+                    "хотя ", "пусть ", "словно ", "будто ", "где ", "куда ", "кто ", "чей ",
+                ]
+                .iter()
+                .any(|p| curr_lower.starts_with(p));
+
+                // Если `prev` сам является коротким оторванным зачином клаузы (1–3 слова без точки, например «что для меня» или «то не дядя,»),
+                // а `curr_text` — его прямое строчное продолжение («всё не по чём...»), склеиваем их в единую фразу!
+                let prev_words = prev.text.split_whitespace().count();
+                if starts_lower
+                    && !starts_dialog
+                    && prev_words <= 3
+                    && (prev.text.chars().count() + 1 + curr_chars) <= 105
+                {
+                    prev.text.push(' ');
+                    prev.text.push_str(&curr_text);
+                    prev.end = prev.end.max(frag.end);
+                    repaired_count += 1;
+                    continue;
+                }
 
                 let is_short_orphan_tail = !starts_dialog
+                    && (curr_has_punct || (!starts_subordinate && curr_words == 1))
                     && ((starts_lower && curr_words <= 3 && curr_chars <= 24 && curr_dur <= 1.6)
                         || (curr_words == 1 && curr_chars <= 14 && curr_dur <= 1.0 && gap <= 0.08));
 
@@ -503,7 +554,7 @@ fn repair_split_words_and_orphans(
 
 /// Строго идемпотентная подтяжка аномально растянутых таймкодов Whisper:
 /// - Исправляет ТОЛЬКО сегменты, где Whisper растянул таймкод через длинную паузу/музыку/экшен
-///   (например, одно слово «Зараза!» или «Капитан!» на 6–10 секунд или фраза на 12–28 секунд),
+///   (например, одно слово «Быстрый!» или «Рэну!» на 8 секунд или фраза на 12–28 секунд),
 ///   НЕ урезая живые драматичные паузы обычных реплик (2.5–6.0 сек).
 /// - Повторный вызов на уже очищенном SRT гарантированно дает `tightened_count == 0` (100% идемпотентность).
 pub fn tighten_subtitle_timestamps(
@@ -548,23 +599,29 @@ pub fn tighten_subtitle_timestamps(
         let prev_orig_end = if i > 0 { raw_bounds[i - 1].1 } else { 0.0 };
         let prev_new_end = if i > 0 { fragments[i - 1].end } else { 0.0 };
         let prev_raw_gap = (orig_start - prev_orig_end).max(0.0);
-        let has_punct = crate::text_analyzer::has_terminal_punctuation(&fragments[i].text);
         let prev_has_punct = if i > 0 {
             crate::text_analyzer::has_terminal_punctuation(&fragments[i - 1].text)
         } else {
             true
         };
+        let starts_lower = fragments[i]
+            .text
+            .trim()
+            .chars()
+            .next()
+            .map(|c| c.is_lowercase())
+            .unwrap_or(false);
 
-        // Если это короткая мгновенная реакция (1–2 слова со знаком !/?, например «Что?», «Капитан!») сразу после законченной фразы
-        // и растяжка умеренная (до 8.5с) — реплика звучит сразу после предыдущей фразы, а тишина идет ПОСЛЕ неё
-        if word_count <= 2 && has_punct && prev_has_punct && prev_raw_gap <= 0.15 && actual_dur <= 8.5 {
-            let new_start = (orig_start + 0.15).max(prev_new_end + 0.06);
+        // Если предыдущая строка НЕ завершила предложение (!prev_has_punct) или текущая начинается со строчной буквы без паузы,
+        // то персонаж продолжает говорить прямо с `orig_start` (нельзя отрывать `start` от предыдущей части предложения!).
+        if i > 0 && (!prev_has_punct || starts_lower) && prev_raw_gap <= 0.30 {
+            let new_start = orig_start.max(prev_new_end + 0.04);
             let new_end = (new_start + spoken_dur).min(orig_end);
             fragments[i].start = new_start;
             fragments[i].end = new_end.max(new_start + 0.80);
         } else {
-            // Во всех остальных случаях растяжки (10–28с через тишину/экшен/опенинг или продолжение в следующую строку)
-            // Whisper привязал start к концу предыдущего блока, а реальная речь звучит перед orig_end
+            // Во всех остальных случаях растяжки (через тишину/экшен/опенинг перед репликой)
+            // декодер whisper.cpp привязал `orig_start` к концу предыдущего сегмента, а `orig_end` поставил сразу по окончании фразы!
             let new_end = (orig_end - 0.04).max(orig_start + 0.80);
             let new_start = (new_end - spoken_dur).max(orig_start).max(prev_new_end + 0.06);
             fragments[i].start = new_start;
@@ -619,19 +676,30 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
         stage1.push(frag);
     }
 
-    // Фильтруем зацикленные повторы Whisper (например 9x «ПЕСНЯ ВСХЛИПЫМ», 22x «Let's go to the play again» или 6x вокал песни)
+    let norm_line = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_alphabetic() || c.is_ascii_digit() || c.is_whitespace())
+            .collect::<String>()
+            .to_lowercase()
+            .replace('ё', "е")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+
+    // Фильтруем зацикленные повторы Whisper (например 9x «ПЕСНЯ ВСХЛИПЫМ», 22x «Let's go to the play again» или «Он становится сильнее, прямо на глазах.»)
     let mut clean_fragments: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(stage1.len());
     let mut i = 0;
     while i < stage1.len() {
-        let norm_i = stage1[i].text.trim().to_lowercase();
+        let norm_i = norm_line(&stage1[i].text);
         let prefix_i: String = norm_i.chars().take(18).collect();
         let words_i = norm_i.split_whitespace().count();
 
-        // Считаем, сколько раз подряд повторяется эта же фраза (или 18-символьный префикс для длинных галлюцинаций песни)
+        // Считаем, сколько раз подряд повторяется эта же фраза без учета знаков препинания (или 18-символьный префикс для длинных галлюцинаций песни)
         let mut run_end = i + 1;
         while run_end < stage1.len() {
-            let norm_k = stage1[run_end].text.trim().to_lowercase();
-            let same_exact = norm_k == norm_i;
+            let norm_k = norm_line(&stage1[run_end].text);
+            let same_exact = !norm_i.is_empty() && norm_k == norm_i;
             let same_long_prefix = words_i >= 4
                 && prefix_i.chars().count() >= 18
                 && norm_k.starts_with(&prefix_i);
@@ -660,8 +728,14 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     }
 
     let clean_fragments = deduplicate_multiline_loops(clean_fragments);
-    let removed = raw_count.saturating_sub(clean_fragments.len());
+    let before_stitch_len = clean_fragments.len();
     let (clean_fragments, stitched_words) = repair_split_words_and_orphans(clean_fragments);
+    // Повторный прогон дедупликации ПОСЛЕ склейки полуслов гарантирует 100% идемпотентность при повторном чтении SRT из кэша!
+    let clean_fragments = deduplicate_multiline_loops(clean_fragments);
+    let post_stitch_dedup = before_stitch_len
+        .saturating_sub(stitched_words)
+        .saturating_sub(clean_fragments.len());
+    let removed = raw_count.saturating_sub(before_stitch_len) + post_stitch_dedup;
     let (clean_fragments, tightened_cues) = tighten_subtitle_timestamps(clean_fragments);
 
     if removed > 0 || stitched_words > 0 || tightened_cues > 0 {
@@ -696,7 +770,8 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
 
 /// Убирает многострочные зацикленные повторы Whisper:
 /// 1) Блочные повторы ABAB / ABCABC из 2..=6 строк подряд (например, когда 5 реплик диалога повторяются дважды подряд).
-/// 2) Слитные эхо-повторы, когда Whisper объединяет предыдущие 2–3 короткие реплики в одну слитную строку-дубликат.
+/// 2) Слитные и дробные эхо-повторы, когда Whisper объединяет предыдущие 2–3 короткие реплики в одну строку-дубликат
+///    или наоборот дробит только что сказанную длинную фразу на повторяющиеся половинки («Афицеры Чикава вступил в бой с кардиналом. Полная готовность!» -> «Офицеры Чикава вступил в бой с кардиналом!» + «Полная готовность!»).
 fn deduplicate_multiline_loops(
     fragments: Vec<crate::text_analyzer::SubtitleFragment>,
 ) -> Vec<crate::text_analyzer::SubtitleFragment> {
@@ -709,9 +784,25 @@ fn deduplicate_multiline_loops(
             .filter(|c| c.is_alphabetic() || c.is_whitespace())
             .collect::<String>()
             .to_lowercase()
+            .replace('ё', "е")
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    fn words_match_fuzzy(a: &str, b: &str) -> bool {
+        if a == b {
+            return true;
+        }
+        let ac: Vec<char> = a.chars().collect();
+        let bc: Vec<char> = b.chars().collect();
+        if ac.len() >= 4 && bc.len() >= 4 {
+            // Совпадение первых 4 букв ИЛИ последних 4 букв (ловит опечатки Whisper в первой букве: «Афицеры» / «Офицеры»)
+            if ac[..4] == bc[..4] || ac[ac.len() - 4..] == bc[bc.len() - 4..] {
+                return true;
+            }
+        }
+        false
     }
 
     let norms: Vec<String> = fragments.iter().map(|f| norm_alpha(&f.text)).collect();
@@ -747,34 +838,45 @@ fn deduplicate_multiline_loops(
             continue;
         }
 
-        // 2. Проверяем слитный эхо-повтор: когда текущая длинная строка повторяет подряд склеенные последние 2 или 3 реплики
+        // 2. Проверяем слитный или дробный эхо-повтор относительно последних 1..=3 принятых реплик
         let curr_words: Vec<&str> = norms[i].split_whitespace().collect();
-        if curr_words.len() >= 6 && out_norms.len() >= 2 {
-            let mut is_merged_echo = false;
-            for m in 2..=3 {
-                if out_norms.len() >= m {
-                    let combined_prev = out_norms[out_norms.len() - m..].join(" ");
-                    let prev_words: Vec<&str> = combined_prev.split_whitespace().collect();
-                    if prev_words.len() >= 5 {
-                        let matched = curr_words
-                            .iter()
-                            .filter(|&&cw| {
-                                prev_words.iter().any(|&pw| {
-                                    cw == pw
-                                        || (cw.chars().count() >= 4
-                                            && pw.chars().count() >= 4
-                                            && cw.chars().take(4).eq(pw.chars().take(4)))
-                                })
-                            })
-                            .count();
-                        if matched * 10 >= curr_words.len() * 7 {
-                            is_merged_echo = true;
-                            break;
+        if curr_words.len() >= 2 && !out_norms.is_empty() {
+            let mut is_echo = false;
+
+            // А) Дробный эхо-повтор: текущая строка (из >= 2 слов) целиком входит в предыдущую более длинную реплику
+            // (например «Офицеры Чикава вступил в бой с кардиналом!» или «Полная готовность!» сразу после «Афицеры Чикава вступил в бой с кардиналом. Полная готовность!»)
+            let last_prev_words: Vec<&str> = out_norms.last().unwrap().split_whitespace().collect();
+            if last_prev_words.len() >= curr_words.len() && last_prev_words.len() >= 4 {
+                let matched = curr_words
+                    .iter()
+                    .filter(|&&cw| last_prev_words.iter().any(|&pw| words_match_fuzzy(cw, pw)))
+                    .count();
+                if matched == curr_words.len() {
+                    is_echo = true;
+                }
+            }
+
+            // Б) Слитный эхо-повтор: текущая длинная строка (>= 6 слов) повторяет склеенные последние 2 или 3 реплики
+            if !is_echo && curr_words.len() >= 6 && out_norms.len() >= 2 {
+                for m in 2..=3 {
+                    if out_norms.len() >= m {
+                        let combined_prev = out_norms[out_norms.len() - m..].join(" ");
+                        let prev_words: Vec<&str> = combined_prev.split_whitespace().collect();
+                        if prev_words.len() >= 5 {
+                            let matched = curr_words
+                                .iter()
+                                .filter(|&&cw| prev_words.iter().any(|&pw| words_match_fuzzy(cw, pw)))
+                                .count();
+                            if matched * 10 >= curr_words.len() * 7 {
+                                is_echo = true;
+                                break;
+                            }
                         }
                     }
                 }
             }
-            if is_merged_echo {
+
+            if is_echo {
                 i += 1;
                 continue;
             }

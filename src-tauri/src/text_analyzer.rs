@@ -197,6 +197,17 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
         "благодаря этому",
         "в результате ",
         "иначе говоря",
+        "другими словами",
+        "короче говоря",
+        "тем не менее",
+        "например,",
+        "например ",
+        "к примеру",
+        "очень в духе",
+        "в духе ",
+        "впрочем,",
+        "впрочем ",
+        "то есть ",
     ];
 
     if continuation_prefixes.iter().any(|p| clean.starts_with(p)) {
@@ -223,20 +234,19 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     let prev = &fragments[idx - 1];
     let curr = &fragments[idx];
     let gap = (curr.start - prev.end).max(0.0);
-
-    // Если между репликами длинная пауза (>= 1.25с) — это гарантированно начало новой фразы/сцены
-    if gap >= 1.25 {
-        return true;
-    }
-
     let curr_trimmed = curr.text.trim();
 
-    // Если текущая строка начинается с маленькой буквы и пауза < 1.1с — это середина незаконченного предложения!
-    if starts_with_lowercase_continuation(curr_trimmed) && gap < 1.1 {
+    // Если текущая строка начинается с маленькой буквы (или предыдущая не имеет финальной точки) — это середина незаконченного предложения!
+    if starts_with_lowercase_continuation(curr_trimmed) && gap < 2.2 {
         return false;
     }
 
-    // Если строка начинается с причинно-следственного или присоединительного союза («Поэтому...», «И в моих руках...», «К тому же...», «Он еще и...»)
+    // Если между репликами длинная пауза (>= 1.25с) и предыдущая завершилась знаком препинания — начало новой фразы/сцены
+    if gap >= 1.25 && has_terminal_punctuation(&prev.text) {
+        return true;
+    }
+
+    // Если строка начинается с причинно-следственного или присоединительного союза («Поэтому...», «И в моих руках...», «К тому же...», «Он еще и...», «Очень в духе...»)
     // и пауза после предыдущей фразы небольшая (< 1.1с) — нельзя начинать клип с середины рассуждения!
     if starts_with_discourse_continuation(curr_trimmed) && gap < 1.1 {
         return false;
@@ -257,20 +267,25 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
         return true;
     }
 
-    // Иначе предыдущая строка оборвалась на запятой или на полуслове без паузы — значит это продолжение фразы
+    // Иначе предыдущая строка оборвалась на запятой или на полуслове — значит это продолжение фразы
     false
 }
 
 /// Проверяет, является ли реплика `idx` слабым/оборванным финалом для клипа
-/// (короткие поддакивания вроде «- Да уж.», «- Ясно.», одиночные переспросы «Ловушек?», либо незаконченные подводки вроде «А зовут его!»)
+/// (короткие поддакивания вроде «- Да уж.», «- Ясно.», одиночные переспросы «Ловушек?», либо незаконченные подводки вроде «А зовут его!» или строки без точки)
 pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
     if idx >= fragments.len() {
         return false;
     }
     let curr = &fragments[idx];
-    let clean = curr
-        .text
-        .trim()
+    let raw_trimmed = curr.text.trim();
+
+    // 0. Если в конце строки вообще нет завершающего знака препинания (., !, ?, …) — мысль оборвана на середине («...что для меня», «...порой важно»)
+    if !has_terminal_punctuation(raw_trimmed) {
+        return true;
+    }
+
+    let clean = raw_trimmed
         .trim_start_matches(['-', '—', ' '])
         .trim_end_matches(['.', '!', '?', '…', '"', '»', ' '])
         .to_lowercase()
@@ -278,7 +293,7 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
     let word_count = clean.split_whitespace().count();
 
     // 1. Многоточие в конце («Вам многом из-за...», «И пока не добьюсь свои цели...») — мысль явно не договорена
-    if curr.text.trim().ends_with("...") || curr.text.trim().ends_with('…') {
+    if raw_trimmed.ends_with("...") || raw_trimmed.ends_with('…') {
         return true;
     }
 
@@ -321,13 +336,17 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         return true;
     }
 
-    // 5. Короткий вопрос-переспрос из 1–3 слов («Ловушек?», «Создатель?», «А почему?», «Капитан?»), если за ним сразу следует ответ (< 2.0с)
+    // 5. Короткий вопрос-переспрос из 1–3 слов («Ловушек?», «Создатель?», «А почему?», «Капитан?») или одиночный возглас из 1 слова («Быстрый!»),
+    // если за ним сразу следует основная фраза (< 2.0с)
     if idx + 1 < fragments.len() {
         let gap_next = (fragments[idx + 1].start - curr.end).max(0.0);
-        if word_count <= 3 && curr.text.trim().ends_with('?') && gap_next < 2.0 {
+        if word_count <= 3 && raw_trimmed.ends_with('?') && gap_next < 2.0 {
             return true;
         }
-        if word_count <= 2 && gap_next < 0.35 && !curr.text.contains('!') {
+        if word_count == 1 && gap_next < 1.2 {
+            return true;
+        }
+        if word_count <= 2 && gap_next < 0.35 && !raw_trimmed.contains('!') {
             return true;
         }
     }
@@ -338,15 +357,21 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
 /// Проверяет, является ли реплика `idx` логическим КОНЦОМ предложения / законченной мысли
 pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
     if idx + 1 >= fragments.len() {
-        return true;
+        return has_terminal_punctuation(&fragments[idx].text);
     }
     let curr = &fragments[idx];
     let next = &fragments[idx + 1];
     let gap_next = (next.start - curr.end).max(0.0);
     let next_trimmed = next.text.trim();
 
-    // Если следующая реплика начинается со строчной буквы без паузы — предложение ещё продолжается!
-    if starts_with_lowercase_continuation(next_trimmed) && gap_next < 0.95 {
+    // Если текущая строка вообще не имеет знака завершения предложения (., !, ?, …),
+    // она НЕ может быть концом предложения (особенно если заканчивается запятой или следующая начинается со строчной буквы)!
+    if !has_terminal_punctuation(&curr.text) {
+        return false;
+    }
+
+    // Если следующая реплика начинается со строчной буквы — предложение ещё продолжается!
+    if starts_with_lowercase_continuation(next_trimmed) && gap_next < 2.0 {
         return false;
     }
 
@@ -361,27 +386,7 @@ pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
         return false;
     }
 
-    // Если после реплики следует пауза >= 0.75с и есть знак конца предложения — фраза логически завершена
-    if gap_next >= 0.75 && has_terminal_punctuation(&curr.text) {
-        return true;
-    }
-
-    // Если пауза >= 1.2с — даже без точки это конец реплики перед паузой
-    if gap_next >= 1.2 {
-        return true;
-    }
-
-    // Если следующая реплика — реплика другого персонажа (начинается с тире) и текущая имеет знак завершения
-    if (next_trimmed.starts_with('-') || next_trimmed.starts_with('—')) && has_terminal_punctuation(&curr.text) {
-        return true;
-    }
-
-    // Если текущая реплика заканчивается на ., !, ? — предложение грамматически завершено
-    if has_terminal_punctuation(&curr.text) {
-        return true;
-    }
-
-    false
+    true
 }
 
 /// Нормализует вектор оценок от LLM так, чтобы его длина строго совпадала с длиной пакета `chunk`

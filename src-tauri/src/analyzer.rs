@@ -101,15 +101,41 @@ pub async fn analyze_video(
         ),
     );
 
-    // Выбираем до 6 самых перспективных сцен по всему таймлайну для глубокой визуальной верификации через Vision AI
-    let mut top_indices: Vec<usize> = (0..base_scenes.len()).collect();
-    top_indices.sort_by(|&a, &b| {
+    // Выбираем до 6 самых перспективных сцен с равномерным охватом всей длительности видео (начало, середина, кульминация)
+    let mut ranked_indices: Vec<usize> = (0..base_scenes.len()).collect();
+    ranked_indices.sort_by(|&a, &b| {
         base_scenes[b]
             .intensity
             .partial_cmp(&base_scenes[a].intensity)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    top_indices.truncate(6);
+
+    let max_ts = base_scenes.iter().map(|s| s.timestamp_sec).fold(180.0_f64, f64::max);
+    let min_vision_spacing = (max_ts / 7.5).clamp(45.0, 170.0);
+    let mut top_indices: Vec<usize> = Vec::with_capacity(6);
+
+    for &idx in &ranked_indices {
+        let ts = base_scenes[idx].timestamp_sec;
+        if top_indices
+            .iter()
+            .all(|&sel| (base_scenes[sel].timestamp_sec - ts).abs() >= min_vision_spacing)
+        {
+            top_indices.push(idx);
+            if top_indices.len() >= 6 {
+                break;
+            }
+        }
+    }
+    if top_indices.len() < 6 {
+        for &idx in &ranked_indices {
+            if !top_indices.contains(&idx) {
+                top_indices.push(idx);
+                if top_indices.len() >= 6 {
+                    break;
+                }
+            }
+        }
+    }
     top_indices.sort_unstable();
 
     let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_micros();
@@ -321,7 +347,10 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
     }
 
     // 2. Очищаем текстовый ответ VQA-модели от эха промпта и вводных шаблонов
-    let mut clean = trimmed.replace(['\r', '\n'], " ");
+    let mut clean = trimmed
+        .replace(['\r', '\n'], " ")
+        .replace("towards the Assistant", "towards the camera")
+        .replace("the Assistant", "the viewer");
     if let Some(ans_pos) = clean.rfind("Answer:") {
         clean = clean[ans_pos + 7..].trim().to_string();
     }
@@ -440,7 +469,7 @@ async fn run_two_factor_scene_analysis(
             .iter()
             .filter(|&&t| (t - scene_t).abs() <= 7.5)
             .count();
-        let cut_density_bonus = ((local_cuts as f64 - 1.0) / 10.0).clamp(0.0, 0.16);
+        let cut_density_bonus = ((local_cuts as f64 - 1.0) / 14.0).clamp(0.0, 0.18);
 
         // 2. Сопоставление со звуковой активностью
         let matching_audio = audio_ranges.iter().find(|(a_start, a_end)| {
@@ -452,7 +481,7 @@ async fn run_two_factor_scene_analysis(
             let seg_len = (a_end - a_start).max(1.0);
             let rel_pos = ((scene_t - a_start) / seg_len).clamp(0.0, 1.0);
             let focus = 1.0 - (rel_pos - 0.35).abs();
-            0.12 + (focus * 0.06).clamp(0.0, 0.06)
+            0.10 + (focus * 0.06).clamp(0.0, 0.06)
         } else {
             0.0
         };
@@ -461,14 +490,14 @@ async fn run_two_factor_scene_analysis(
         let pos_ratio = (scene_t / duration).clamp(0.0, 1.0);
         let narrative_factor = if duration > 600.0 && (scene_t < 95.0 || scene_t > duration - 90.0) {
             0.85
-        } else if pos_ratio >= 0.35 && pos_ratio <= 0.88 {
-            1.04
+        } else if pos_ratio >= 0.25 && pos_ratio <= 0.90 {
+            1.02
         } else {
             1.0
         };
 
-        let raw_intensity = (0.60 + cut_density_bonus + audio_bonus) * narrative_factor;
-        let intensity = raw_intensity.clamp(0.55, 0.94);
+        let raw_intensity = (0.58 + cut_density_bonus + audio_bonus) * narrative_factor;
+        let intensity = raw_intensity.clamp(0.55, 0.95);
 
         let actions = if is_near_audio && local_cuts >= 4 {
             vec!["экшен/кульминация".to_string(), "эмоциональная речь".to_string()]
