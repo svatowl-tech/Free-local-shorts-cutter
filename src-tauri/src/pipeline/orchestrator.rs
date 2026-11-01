@@ -289,6 +289,7 @@ pub async fn run_pipeline(
     // Вместо жесткой привязки к 15.0 секундам задаем гибкий коридор длительности (например, от 10 до 20 секунд при цели 15с),
     // чтобы каждый ролик начинался ровно с начала первой фразы и заканчивался ровно после завершения последней фразы!
     let min_dur = (target_dur - 5.0).max(5.0).min(video_duration);
+    let max_dur = (target_dur + 5.0).max(min_dur + 4.0).min(video_duration);
     let (is_auto_clips, max_clips_limit) = match config.max_clips_count {
         Some(0) => (true, 60usize),
         Some(n) => (false, n.clamp(1, 100)),

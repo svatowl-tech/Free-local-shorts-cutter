@@ -425,7 +425,7 @@ pub struct OpenAiProfile {
     pub available_models: Vec<String>,
 }
 
-fn resolve_openai_profiles_path(app: &AppHandle) -> PathBuf {
+pub fn resolve_openai_profiles_path(app: &AppHandle) -> PathBuf {
     use tauri::Manager;
     let dir = app
         .path()
