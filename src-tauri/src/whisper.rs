@@ -71,6 +71,11 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "взрывы",
         "стон",
         "стоны",
+        "всхлип",
+        "всхлипы",
+        "всхлипым",
+        "песня всхлипым",
+        "песня",
         "what is this",
     ];
     let clean_exact = lower.trim_matches(['.', '!', '?', '-', '—', ' ']);
@@ -86,6 +91,11 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "[аплодисменты]",
         "аплодисменты",
         "[смех]",
+        "(поет)",
+        "(поёт)",
+        "[поет]",
+        "[поёт]",
+        "песня всхлип",
         "редактор субтитров",
         "корректор а.",
         "корректор в.",
@@ -133,6 +143,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "продолжение следует",
         "подпишись на канал",
         "ставьте лайки",
+        "let's go to the play",
     ];
 
     for pat in &patterns {
@@ -141,9 +152,13 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         }
     }
 
-    // Любая короткая ремарка (1–3 слова), содержащая слово «музыка» (например «ИНТРИГУЮЩАЯ МУЗЫКА»)
+    // Любая короткая ремарка (1–3 слова), содержащая слово «музыка» или «песня» (например «ИНТРИГУЮЩАЯ МУЗЫКА», «ПЕСНЯ ВСХЛИПЫМ»)
     let word_count = clean_exact.split_whitespace().count();
-    if word_count <= 3 && (clean_exact.contains("музыка") || clean_exact.contains("music")) {
+    if word_count <= 3
+        && (clean_exact.contains("музыка")
+            || clean_exact.contains("music")
+            || clean_exact.starts_with("песня "))
+    {
         return true;
     }
 
@@ -217,9 +232,9 @@ pub fn clean_stretched_text(text: &str) -> String {
         return "Ай-ай-ай!".to_string();
     }
 
-    // 3. Сжимаем внутристрочные зацикливания одного слова (например «И сразу же, я иду, иду, иду, иду...» 15 раз подряд)
+    // 3. Сжимаем внутристрочные зацикливания одного слова (например «И сразу же, я иду, иду, иду, иду...» 15 раз подряд или «Рену! Рену! Рену! Рену!»)
     let raw_tokens: Vec<&str> = compressed.split_whitespace().collect();
-    if raw_tokens.len() >= 5 {
+    if raw_tokens.len() >= 4 {
         let mut dedup_tokens: Vec<&str> = Vec::with_capacity(raw_tokens.len());
         let mut last_norm = String::new();
         let mut word_run = 0usize;
@@ -486,10 +501,11 @@ fn repair_split_words_and_orphans(
     (out, repaired_count)
 }
 
-/// Подтягивает таймкоды субтитров под реальную длительность живой речи:
-/// 1) Устраняет «растянутые» блоки Whisper (когда после паузы/боя/музыки Whisper ставит start в конец предыдущей реплики за 10–28 секунд до фактического начала фразы).
-/// 2) Подрезает раннее появление (pre-roll до начала голоса) и позднее зависание (post-roll после окончания фразы),
-///    чтобы субтитр появлялся строго синхронно с первым словом персонажа и исчезал сразу по окончании фразы.
+/// Строго идемпотентная подтяжка аномально растянутых таймкодов Whisper:
+/// - Исправляет ТОЛЬКО сегменты, где Whisper растянул таймкод через длинную паузу/музыку/экшен
+///   (например, одно слово «Зараза!» или «Капитан!» на 6–10 секунд или фраза на 12–28 секунд),
+///   НЕ урезая живые драматичные паузы обычных реплик (2.5–6.0 сек).
+/// - Повторный вызов на уже очищенном SRT гарантированно дает `tightened_count == 0` (100% идемпотентность).
 pub fn tighten_subtitle_timestamps(
     mut fragments: Vec<crate::text_analyzer::SubtitleFragment>,
 ) -> (Vec<crate::text_analyzer::SubtitleFragment>, usize) {
@@ -498,14 +514,13 @@ pub fn tighten_subtitle_timestamps(
     }
 
     let len = fragments.len();
-    // Сохраняем исходные границы для точного определения стыков между соседними сегментами Whisper
     let raw_bounds: Vec<(f64, f64)> = fragments.iter().map(|f| (f.start, f.end)).collect();
     let mut tightened_count = 0usize;
 
     for i in 0..len {
         let (orig_start, orig_end) = raw_bounds[i];
         let actual_dur = (orig_end - orig_start).max(0.0);
-        if actual_dur <= 0.35 {
+        if actual_dur <= 2.35 {
             continue;
         }
 
@@ -517,59 +532,43 @@ pub fn tighten_subtitle_timestamps(
             .max(1);
         let word_count = fragments[i].text.split_whitespace().count().max(1);
 
-        // Естественная длительность произнесения русской реплики (~12.8 символов/сек или ~0.40 сек/слово)
-        let natural_dur = ((char_count as f64) / 12.8)
-            .max((word_count as f64) * 0.40)
-            .clamp(0.95, 5.20);
-        let max_allowed_dur = (natural_dur * 1.32 + 0.30).clamp(1.30, 5.80);
+        // Естественная длительность произнесения фразы с учетом выразительной актерской речи в дубляже
+        let spoken_dur = (0.65 + (char_count as f64) / 9.5)
+            .max((word_count as f64) * 0.50)
+            .clamp(1.15, 6.00);
+        // Верхний порог допустимой длительности без вмешательства (все реплики короче max_valid_dur не трогаются вообще!)
+        let max_valid_dur = (spoken_dur * 1.60 + 0.75).clamp(2.35, 7.80);
+
+        if actual_dur <= max_valid_dur {
+            continue;
+        }
+
+        tightened_count += 1;
 
         let prev_orig_end = if i > 0 { raw_bounds[i - 1].1 } else { 0.0 };
         let prev_new_end = if i > 0 { fragments[i - 1].end } else { 0.0 };
-        let next_orig_start = if i + 1 < len {
-            raw_bounds[i + 1].0
+        let prev_raw_gap = (orig_start - prev_orig_end).max(0.0);
+        let has_punct = crate::text_analyzer::has_terminal_punctuation(&fragments[i].text);
+        let prev_has_punct = if i > 0 {
+            crate::text_analyzer::has_terminal_punctuation(&fragments[i - 1].text)
         } else {
-            orig_end + 10.0
+            true
         };
 
-        let prev_raw_gap = (orig_start - prev_orig_end).max(0.0);
-        let next_raw_gap = (next_orig_start - orig_end).max(0.0);
-
-        if actual_dur > max_allowed_dur {
-            tightened_count += 1;
-
-            // Если сегмент растянут более чем на 2.2с сверх нормы ИЛИ его начало вплотную приклеено к концу предыдущего сегмента (или началу 30с окна) —
-            // значит Whisper включил предшествующую тишину/музыку/шум боя в начало сегмента, а сама фраза звучит непосредственно перед `orig_end`!
-            if actual_dur > max_allowed_dur + 2.2 || prev_raw_gap <= 0.35 {
-                let tail_trim = if next_raw_gap > 0.25 { 0.10 } else { 0.04 };
-                let new_end = (orig_end - tail_trim).max(orig_start + 0.60);
-                let new_start = (new_end - natural_dur).max(orig_start).max(prev_new_end + 0.05);
-                fragments[i].start = new_start;
-                fragments[i].end = new_end.max(new_start + 0.55);
-            } else {
-                // Иначе перед репликой уже была пауза (голос начался вблизи `orig_start`), но субтитр завис в тишине после окончания фразы
-                let new_start = (orig_start + 0.10).max(prev_new_end + 0.05);
-                let new_end = (new_start + natural_dur).min(orig_end - 0.06);
-                fragments[i].start = new_start;
-                fragments[i].end = new_end.max(new_start + 0.55);
-            }
-        } else if actual_dur > natural_dur + 0.18 {
-            // Умеренно широкий сегмент: подрезаем ранний pre-roll (до начала голоса) и поздний хвост (после окончания голоса)
-            let excess = actual_dur - natural_dur;
-            let lead_trim = (excess * 0.48).clamp(0.07, 0.32);
-            let tail_trim = (excess * 0.52).clamp(0.08, 0.40);
-            let new_start = (orig_start + lead_trim).max(prev_new_end + 0.04);
-            let new_end = (orig_end - tail_trim).max(new_start + 0.55);
-            if excess >= 0.45 {
-                tightened_count += 1;
-            }
+        // Если это короткая мгновенная реакция (1–2 слова со знаком !/?, например «Что?», «Капитан!») сразу после законченной фразы
+        // и растяжка умеренная (до 8.5с) — реплика звучит сразу после предыдущей фразы, а тишина идет ПОСЛЕ неё
+        if word_count <= 2 && has_punct && prev_has_punct && prev_raw_gap <= 0.15 && actual_dur <= 8.5 {
+            let new_start = (orig_start + 0.15).max(prev_new_end + 0.06);
+            let new_end = (new_start + spoken_dur).min(orig_end);
             fragments[i].start = new_start;
-            fragments[i].end = new_end;
-        } else if actual_dur >= 1.25 {
-            // Компактный сегмент: легкая микро-подрезка краев (60 мс в начале и 75 мс в конце), чтобы титр не опережал губы персонажа
-            let new_start = (orig_start + 0.06).max(prev_new_end + 0.04);
-            let new_end = (orig_end - 0.075).max(new_start + 0.50);
+            fragments[i].end = new_end.max(new_start + 0.80);
+        } else {
+            // Во всех остальных случаях растяжки (10–28с через тишину/экшен/опенинг или продолжение в следующую строку)
+            // Whisper привязал start к концу предыдущего блока, а реальная речь звучит перед orig_end
+            let new_end = (orig_end - 0.04).max(orig_start + 0.80);
+            let new_start = (new_end - spoken_dur).max(orig_start).max(prev_new_end + 0.06);
             fragments[i].start = new_start;
-            fragments[i].end = new_end;
+            fragments[i].end = new_end.max(new_start + 0.80);
         }
     }
 
@@ -581,6 +580,14 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     let content = tokio::fs::read_to_string(srt_path).await.map_err(AppError::Io)?;
     let raw_fragments = crate::text_analyzer::parse_srt(&content);
     let raw_count = raw_fragments.len();
+
+    // Определяем, является ли дорожка русскоязычной (>= 70% реплик содержат кириллицу),
+    // чтобы отсекать англоязычные галлюцинации Whisper на вокале опенинга/эндинга (например «Let's go to the play again»)
+    let cyrillic_lines = raw_fragments
+        .iter()
+        .filter(|f| f.text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)))
+        .count();
+    let is_predominantly_russian = raw_count >= 10 && cyrillic_lines * 10 >= raw_count * 7;
 
     let mut stage1: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(raw_count);
     for mut frag in raw_fragments {
@@ -598,12 +605,21 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
         if cleaned_text.is_empty() || is_whisper_hallucination(&cleaned_text) {
             continue;
         }
+
+        // Если видео русскоязычное, а строка состоит только из латиницы без единой русской буквы — это песня OP/ED или английский шум Whisper
+        if is_predominantly_russian {
+            let has_cyr = cleaned_text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+            let has_lat = cleaned_text.chars().any(|c| c.is_ascii_alphabetic());
+            if !has_cyr && has_lat {
+                continue;
+            }
+        }
+
         frag.text = cleaned_text;
         stage1.push(frag);
     }
 
-    // Фильтруем зацикленные повторы Whisper (например 6x «Я не могу сказать, что ты нанесешься» на музыке эндинга
-    // или 5x «У нас не штатная ситуация!» подряд)
+    // Фильтруем зацикленные повторы Whisper (например 9x «ПЕСНЯ ВСХЛИПЫМ», 22x «Let's go to the play again» или 6x вокал песни)
     let mut clean_fragments: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(stage1.len());
     let mut i = 0;
     while i < stage1.len() {
@@ -627,13 +643,13 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
         }
 
         let run_len = run_end - i;
-        if run_len >= 5 && words_i >= 4 {
-            // Если длинная фраза (>= 4 слов) зациклилась 5+ раз подряд (как «Я не могу сказать, что ты нанесешься» x7 в эндинге) —
-            // это 100% галлюцинация Whisper поверх вокала песни, отбрасываем весь зацикленный кластер!
+        if run_len >= 4 {
+            // Любая фраза (даже из 1–3 слов, как «ПЕСНЯ ВСХЛИПЫМ» x9), повторенная 4+ раз подряд —
+            // это 100% зацикленная галлюцинация Whisper на музыке или шуме, отбрасываем весь кластер!
             i = run_end;
             continue;
         } else if run_len >= 2 {
-            // Для обычных фраз оставляем только 1 экземпляр без дублирования
+            // Для обычного двойного/тройного эха оставляем только 1 экземпляр без дублирования
             clean_fragments.push(stage1[i].clone());
             i = run_end;
             continue;

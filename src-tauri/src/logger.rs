@@ -67,7 +67,7 @@ pub fn emit_stream_lines(app: &AppHandle, stage: &str, level: &str, bytes: &[u8]
 }
 
 fn is_noisy_stream_line(stage: &str, line: &str) -> bool {
-    if stage == "LLM" {
+    if stage == "LLM" || stage == "Analyzer" {
         const LLAMA_NOISE_PREFIXES: &[&str] = &[
             "Log start",
             "Log end",
@@ -83,6 +83,8 @@ fn is_noisy_stream_line(stage: &str, line: &str) -> bool {
             "llm_load_tensors:",
             "llama_new_context_with_model:",
             "llama_kv_cache_init:",
+            "clip_model_load:",
+            "key clip.vision.",
             "system_info:",
             "sampling:",
             "sampling order:",
@@ -93,7 +95,7 @@ fn is_noisy_stream_line(stage: &str, line: &str) -> bool {
         if LLAMA_NOISE_PREFIXES.iter().any(|p| line.starts_with(p)) {
             return true;
         }
-        if line.chars().all(|c| c == '.' || c.is_whitespace()) {
+        if line.chars().all(|c| c == '.' || c == '*' || c.is_whitespace()) {
             return true;
         }
         if line.contains("GGGGGGGG") || line.contains('\u{FFFD}') {

@@ -54,8 +54,7 @@ async fn create_clip_srt(
     duration_sec: f64,
 ) -> Option<PathBuf> {
     let content = tokio::fs::read_to_string(full_srt_path).await.ok()?;
-    let raw_fragments = crate::text_analyzer::parse_srt(&content);
-    let (all_fragments, _) = crate::whisper::tighten_subtitle_timestamps(raw_fragments);
+    let all_fragments = crate::text_analyzer::parse_srt(&content);
     let end_sec = start_sec + duration_sec;
 
     let mut selected: Vec<crate::text_analyzer::SubtitleFragment> = Vec::new();
