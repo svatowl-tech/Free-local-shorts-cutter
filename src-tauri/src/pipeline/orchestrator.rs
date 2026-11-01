@@ -13,6 +13,10 @@ pub struct PipelineConfig {
     pub text_engine: String,
     pub text_model_name: String,
     pub ollama_url: String,
+    pub openai_base_url: Option<String>,
+    pub openai_api_key: Option<String>,
+    pub openai_model: Option<String>,
+    pub openai_profile_id: Option<String>,
     pub output_dir: Option<String>,
     pub min_intensity_threshold: f64,
     pub max_clip_duration_sec: f64,
@@ -127,15 +131,38 @@ pub async fn run_pipeline(
                     "info",
                     &format!("Найдено {} чистых реплик в субтитрах. Запуск семантического анализа через движок '{}'...", frags.len(), config.text_engine),
                 );
+                let effective_model_name = if config.text_engine == "openai" {
+                    config
+                        .openai_model
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| {
+                            if config.text_model_name.ends_with(".gguf") || config.text_model_name.trim().is_empty() {
+                                "gpt-4o-mini".to_string()
+                            } else {
+                                config.text_model_name.clone()
+                            }
+                        })
+                } else {
+                    config.text_model_name.clone()
+                };
+
                 let text_config = crate::text_analyzer::TextAnalysisConfig {
                     engine: match config.text_engine.as_str() {
+                        "openai" => crate::text_analyzer::TextEngine::OpenAi,
                         "ollama" => crate::text_analyzer::TextEngine::Ollama,
                         "llama" => crate::text_analyzer::TextEngine::LlamaCli,
                         "builtin" => crate::text_analyzer::TextEngine::Builtin,
                         _ => crate::text_analyzer::TextEngine::Builtin,
                     },
-                    model_name: config.text_model_name.clone(),
+                    model_name: effective_model_name,
                     ollama_url: config.ollama_url.clone(),
+                    openai_base_url: config
+                        .openai_base_url
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+                    openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
                 };
 
                 let scores = match crate::text_analyzer::analyze_text_with_llm(
@@ -315,7 +342,7 @@ pub async fn run_pipeline(
                 .map(|(i, _)| (i, text_scores.get(i).copied().unwrap_or(0.5)))
                 .collect();
             frag_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (idx, _) in frag_with_scores.into_iter().take(max_clips * 2) {
+            for (idx, _) in frag_with_scores.iter().copied().take(max_clips * 4) {
                 if let Some(cand) = build_complete_phrase_window(
                     &fragments,
                     &text_scores,
@@ -331,9 +358,42 @@ pub async fn run_pipeline(
                     candidate_intervals.push(cand);
                 }
             }
-        } else if !scenes.is_empty() {
-            for scn in scenes.iter().take(max_clips) {
-                let start = (scn.timestamp_sec - 1.0).max(0.0).min((video_duration - target_dur).max(0.0));
+
+            // Если даже строгий построитель диалоговых окон (build_complete_phrase_window) отфильтровал все окна
+            // (например, при редких одиночных репликах с длинными паузами), строим аккуратные окна вокруг лучших реплик!
+            if candidate_intervals.is_empty() {
+                for (idx, sc) in frag_with_scores.into_iter().take(max_clips * 3) {
+                    let f = &fragments[idx];
+                    if f.start < intro_skip || f.start >= outro_limit {
+                        continue;
+                    }
+                    let start = (f.start - 0.30).max(0.0);
+                    let mut end = (start + target_dur).min(video_duration);
+                    let mut last_txt = f.text.clone();
+                    for next_f in &fragments[idx..] {
+                        if next_f.end <= start + max_dur && next_f.end >= start + min_dur * 0.8 {
+                            end = (next_f.end + 0.24).min(video_duration);
+                            last_txt = next_f.text.clone();
+                        } else if next_f.start > start + max_dur {
+                            break;
+                        }
+                    }
+                    if end - start >= min_dur * 0.75 {
+                        candidate_intervals.push((
+                            start,
+                            end,
+                            sc.clamp(0.52, 0.90),
+                            f.text.chars().take(36).collect(),
+                            last_txt.chars().take(36).collect(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        if candidate_intervals.is_empty() && !scenes.is_empty() {
+            for scn in scenes.iter().take(max_clips * 2) {
+                let start = (scn.timestamp_sec - 1.0).max(intro_skip).min((video_duration - target_dur).max(0.0));
                 let end = (start + target_dur).min(video_duration);
                 if end - start >= 3.0 {
                     candidate_intervals.push((
@@ -345,7 +405,9 @@ pub async fn run_pipeline(
                     ));
                 }
             }
-        } else {
+        }
+
+        if candidate_intervals.is_empty() {
             let num_clips = if video_duration < 30.0 { 1 } else if video_duration < 90.0 { 2 } else { 3 };
             let step = video_duration / (num_clips as f64);
             for i in 0..num_clips {

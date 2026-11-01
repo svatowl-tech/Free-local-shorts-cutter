@@ -3,7 +3,7 @@ use crate::error::{AppResult, AppError};
 use crate::AppState;
 use tauri::{AppHandle, Emitter, State};
 use std::path::PathBuf;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use crate::pipeline::orchestrator::PipelineConfig;
 
 #[derive(Serialize)]
@@ -413,4 +413,230 @@ pub async fn open_folder(
 
     Ok(existing_dir.to_string_lossy().to_string())
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiProfile {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+    #[serde(default)]
+    pub available_models: Vec<String>,
+}
+
+fn resolve_openai_profiles_path(app: &AppHandle) -> PathBuf {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("openai_profiles.json")
+}
+
+/// Загрузка сохранённых локально на компьютере профилей OpenAI API
+#[tauri::command]
+pub async fn get_openai_profiles(app: AppHandle) -> AppResult<Vec<OpenAiProfile>> {
+    let path = resolve_openai_profiles_path(&app);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    match tokio::fs::read_to_string(&path).await {
+        Ok(content) => {
+            let profiles: Vec<OpenAiProfile> = serde_json::from_str(&content).unwrap_or_default();
+            Ok(profiles)
+        }
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// Сохранение профилей OpenAI API локально на компьютере
+#[tauri::command]
+pub async fn save_openai_profiles(
+    app: AppHandle,
+    profiles: Vec<OpenAiProfile>,
+) -> AppResult<String> {
+    let path = resolve_openai_profiles_path(&app);
+    let json = serde_json::to_string_pretty(&profiles)
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка сериализации профилей OpenAI: {}", e)))?;
+    tokio::fs::write(&path, json.as_bytes())
+        .await
+        .map_err(AppError::Io)?;
+    crate::logger::emit_log(
+        &app,
+        "System",
+        "info",
+        &format!(
+            "Сохранено {} профилей OpenAI API в локальную память: '{}'",
+            profiles.len(),
+            path.display()
+        ),
+    );
+    Ok(path.to_string_lossy().to_string())
+}
+
+fn build_openai_models_urls(base_url: &str) -> Vec<String> {
+    let mut trimmed = base_url.trim().trim_end_matches('/').to_string();
+    if trimmed.is_empty() {
+        trimmed = "https://api.openai.com/v1".to_string();
+    }
+
+    for suffix in ["/chat/completions", "/completions", "/models"] {
+        if let Some(stripped) = trimmed.strip_suffix(suffix) {
+            trimmed = stripped.trim_end_matches('/').to_string();
+        }
+    }
+
+    let mut urls = Vec::new();
+    if trimmed.ends_with("/v1")
+        || trimmed.ends_with("/v1beta")
+        || trimmed.ends_with("/v4")
+        || trimmed.ends_with("/openai")
+    {
+        urls.push(format!("{}/models", trimmed));
+    } else {
+        urls.push(format!("{}/v1/models", trimmed));
+        urls.push(format!("{}/models", trimmed));
+    }
+
+    // Дополнительный fallback для локальных серверов типа Ollama (/api/tags)
+    if let Some(root) = trimmed.strip_suffix("/v1") {
+        urls.push(format!("{}/api/tags", root.trim_end_matches('/')));
+    } else {
+        urls.push(format!("{}/api/tags", trimmed));
+    }
+
+    urls
+}
+
+fn extract_models_from_json(val: &serde_json::Value) -> Vec<String> {
+    let mut models = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut push_id = |id: &str| {
+        let clean = id.trim();
+        if !clean.is_empty() && seen.insert(clean.to_string()) {
+            models.push(clean.to_string());
+        }
+    };
+
+    let extract_from_array = |arr: &[serde_json::Value], push: &mut dyn FnMut(&str)| {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                push(s);
+            } else if let Some(obj) = item.as_object() {
+                if let Some(id) = obj
+                    .get("id")
+                    .or_else(|| obj.get("model"))
+                    .or_else(|| obj.get("name"))
+                    .and_then(|v| v.as_str())
+                {
+                    push(id);
+                }
+            }
+        }
+    };
+
+    if let Some(arr) = val.as_array() {
+        extract_from_array(arr, &mut push_id);
+    } else if let Some(obj) = val.as_object() {
+        if let Some(arr) = obj.get("data").and_then(|v| v.as_array()) {
+            extract_from_array(arr, &mut push_id);
+        }
+        if models.is_empty() {
+            if let Some(arr) = obj.get("models").and_then(|v| v.as_array()) {
+                extract_from_array(arr, &mut push_id);
+            }
+        }
+    }
+
+    models
+}
+
+/// Запрос списка доступных Model ID напрямую с OpenAI-совместимого сервера
+#[tauri::command]
+pub async fn fetch_openai_models(
+    app: AppHandle,
+    base_url: String,
+    api_key: String,
+) -> AppResult<Vec<String>> {
+    let candidate_urls = build_openai_models_urls(&base_url);
+    let clean_key = api_key.trim();
+
+    crate::logger::emit_log(
+        &app,
+        "LLM",
+        "info",
+        &format!(
+            "Запрос списка доступных моделей с сервера: {}",
+            candidate_urls.first().cloned().unwrap_or_default()
+        ),
+    );
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка создания HTTP-клиента: {}", e)))?;
+
+    let mut last_error = String::from("Сервер не вернул список моделей");
+
+    for url in &candidate_urls {
+        let mut req = client
+            .get(url)
+            .header("Accept", "application/json");
+
+        if !clean_key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {}", clean_key));
+        }
+
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let body_text = resp.text().await.unwrap_or_default();
+
+                if !status.is_success() {
+                    let preview: String = body_text.chars().take(180).collect();
+                    last_error = format!("HTTP {} ({}): {}", status, url, preview);
+                    // Если 401/403 (неверный API-ключ), сразу сообщаем пользователю без перебора остальных путей
+                    if status.as_u16() == 401 || status.as_u16() == 403 {
+                        break;
+                    }
+                    continue;
+                }
+
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                    let models = extract_models_from_json(&json_val);
+                    if !models.is_empty() {
+                        crate::logger::emit_log(
+                            &app,
+                            "LLM",
+                            "info",
+                            &format!("✓ Получено {} моделей с сервера {}", models.len(), url),
+                        );
+                        return Ok(models);
+                    } else {
+                        last_error = format!("Сервер {} ответил успешно, но список моделей пуст", url);
+                    }
+                } else {
+                    last_error = format!("Сервер {} вернул некорректный JSON", url);
+                }
+            }
+            Err(e) => {
+                last_error = format!("Ошибка подключения к {}: {}", url, e);
+            }
+        }
+    }
+
+    crate::logger::emit_log(
+        &app,
+        "LLM",
+        "warn",
+        &format!("Не удалось получить список моделей: {}", last_error),
+    );
+
+    Err(AppError::Anyhow(anyhow::anyhow!(last_error)))
+}
+
+
 

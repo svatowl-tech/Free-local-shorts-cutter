@@ -41,14 +41,17 @@ pub enum TextEngine {
     Builtin,
     LlamaCli,
     Ollama,
+    OpenAi,
     Auto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextAnalysisConfig {
     pub engine: TextEngine,
-    pub model_name: String,   // for LlamaCli: path to ".gguf" or name, for Ollama: "qwen2.5:1.5b"
-    pub ollama_url: String,   // e.g. "http://localhost:11434"
+    pub model_name: String,       // for LlamaCli: path to ".gguf" or name, for Ollama: "qwen2.5:1.5b", for OpenAi: "gpt-4o-mini"
+    pub ollama_url: String,       // e.g. "http://localhost:11434"
+    pub openai_base_url: String,  // e.g. "https://api.openai.com/v1"
+    pub openai_api_key: String,   // e.g. "sk-..."
 }
 
 /// Функция парсинга SRT
@@ -128,6 +131,35 @@ struct OllamaRequest {
 #[derive(Deserialize)]
 struct OllamaResponse {
     response: String,
+}
+
+#[derive(Serialize)]
+struct OpenAiMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct OpenAiChatRequest {
+    model: String,
+    messages: Vec<OpenAiMessage>,
+    temperature: f64,
+    stream: bool,
+}
+
+#[derive(Deserialize)]
+struct OpenAiChoiceMessage {
+    content: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OpenAiChoice {
+    message: OpenAiChoiceMessage,
+}
+
+#[derive(Deserialize)]
+struct OpenAiChatResponse {
+    choices: Vec<OpenAiChoice>,
 }
 
 /// Определяет, заканчивается ли текст реплики знаком завершения предложения (., !, ?, …, »)
@@ -742,6 +774,106 @@ pub async fn analyze_text_with_llm(
         return Ok(all_scores);
     }
 
+    if config.engine == TextEngine::OpenAi {
+        let base_url_display = if config.openai_base_url.trim().is_empty() {
+            "https://api.openai.com/v1"
+        } else {
+            config.openai_base_url.trim()
+        };
+        let model_display = if config.model_name.trim().is_empty() {
+            "gpt-4o-mini"
+        } else {
+            config.model_name.trim()
+        };
+
+        crate::logger::emit_log(
+            app_handle,
+            "LLM",
+            "info",
+            &format!(
+                "Подключение к OpenAI-совместимому API: {} (модель: {})",
+                base_url_display, model_display
+            ),
+        );
+
+        let client = Client::builder()
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap_or_default();
+
+        let mut all_scores = Vec::with_capacity(fragments.len());
+        let batch_size = 30;
+        let total_batches = (fragments.len() + batch_size - 1) / batch_size;
+
+        for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
+            if cancel_rx.try_recv().is_ok() {
+                crate::logger::emit_log(app_handle, "LLM", "warn", "Анализ отменен пользователем.");
+                return Err(AppError::Pipeline("Отменено пользователем".into()));
+            }
+
+            crate::logger::emit_log(
+                app_handle,
+                "LLM",
+                "info",
+                &format!(
+                    "Пакет {}/{}: отправка {} реплик в OpenAI API ({})...",
+                    batch_idx + 1,
+                    total_batches,
+                    chunk.len(),
+                    model_display
+                ),
+            );
+
+            let prompt = build_prompt(chunk);
+            match run_openai(&client, config, &prompt, app_handle).await {
+                Ok(result) => {
+                    let parsed = parse_json_array(&result, chunk.len());
+                    if let Some(ref batch_scores) = parsed {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "info",
+                            &format!(
+                                "✓ Пакет {}/{}: получено {} валидных оценок от OpenAI API",
+                                batch_idx + 1,
+                                total_batches,
+                                batch_scores.len()
+                            ),
+                        );
+                        all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
+                    } else {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "warn",
+                            &format!(
+                                "Пакет {}/{}: OpenAI API вернул нестандартный JSON. Применяется встроенный NLP-анализатор полных фраз.",
+                                batch_idx + 1,
+                                total_batches
+                            ),
+                        );
+                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                    }
+                }
+                Err(e) => {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "warn",
+                        &format!(
+                            "OpenAI API недоступен или вернул ошибку ({}). Автоматическое переключение оставшихся пакетов на встроенный NLP-движок.",
+                            e
+                        ),
+                    );
+                    let remaining = &fragments[batch_idx * batch_size..];
+                    all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                    break;
+                }
+            }
+        }
+        return Ok(all_scores);
+    }
+
     crate::logger::emit_log(app_handle, "LLM", "info", "Расчет семантических оценок через встроенный NLP завершен.");
     Ok(compute_text_scores_advanced(fragments))
 }
@@ -820,6 +952,104 @@ async fn run_ollama(client: &Client, config: &TextAnalysisConfig, prompt: &str, 
     );
 
     Ok(parsed.response)
+}
+
+fn build_openai_chat_url(base_url: &str) -> String {
+    let trimmed = base_url.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "https://api.openai.com/v1/chat/completions".to_string();
+    }
+    if trimmed.ends_with("/chat/completions") {
+        return trimmed.to_string();
+    }
+    if trimmed.ends_with("/v1")
+        || trimmed.ends_with("/v1beta")
+        || trimmed.ends_with("/v4")
+        || trimmed.ends_with("/openai")
+    {
+        return format!("{}/chat/completions", trimmed);
+    }
+    format!("{}/v1/chat/completions", trimmed)
+}
+
+async fn run_openai(
+    client: &Client,
+    config: &TextAnalysisConfig,
+    prompt: &str,
+    app_handle: &AppHandle,
+) -> AppResult<String> {
+    let url = build_openai_chat_url(&config.openai_base_url);
+    let model = if config.model_name.trim().is_empty() || config.model_name.ends_with(".gguf") {
+        "gpt-4o-mini".to_string()
+    } else {
+        config.model_name.trim().to_string()
+    };
+
+    let req_body = OpenAiChatRequest {
+        model: model.clone(),
+        messages: vec![
+            OpenAiMessage {
+                role: "system".to_string(),
+                content: "Ты профессиональный ИИ-режиссер монтажа вертикальных роликов (Shorts, Reels, TikTok). Возвращай ТОЛЬКО валидный JSON-массив чисел от 0.0 до 1.0 без пояснений.".to_string(),
+            },
+            OpenAiMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            },
+        ],
+        temperature: 0.1,
+        stream: false,
+    };
+
+    crate::logger::emit_log(
+        app_handle,
+        "LLM",
+        "debug",
+        &format!("OpenAI API POST {} (модель: {}, длина промпта: {} симв.)", url, model, prompt.len()),
+    );
+
+    let mut req = client.post(&url).json(&req_body);
+    let api_key = config.openai_api_key.trim();
+    if !api_key.is_empty() {
+        req = req.bearer_auth(api_key);
+    }
+
+    let resp = req.send().await.map_err(|e| {
+        let err_msg = format!("Ошибка сетевого запроса к OpenAI API ({}): {}", url, e);
+        crate::logger::emit_log(app_handle, "LLM", "error", &err_msg);
+        AppError::Pipeline(err_msg)
+    })?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let err_body = resp.text().await.unwrap_or_default();
+        let snippet: String = err_body.chars().take(180).collect();
+        let err_msg = format!("HTTP {} от OpenAI API: {}", status, snippet);
+        crate::logger::emit_log(app_handle, "LLM", "error", &err_msg);
+        return Err(AppError::Pipeline(err_msg));
+    }
+
+    let parsed: OpenAiChatResponse = resp.json().await.map_err(|e| {
+        let err_msg = format!("Не удалось распарсить JSON-ответ от OpenAI API: {}", e);
+        crate::logger::emit_log(app_handle, "LLM", "error", &err_msg);
+        AppError::Pipeline(err_msg)
+    })?;
+
+    let content = parsed
+        .choices
+        .into_iter()
+        .next()
+        .and_then(|c| c.message.content)
+        .unwrap_or_default();
+
+    crate::logger::emit_log(
+        app_handle,
+        "LLM",
+        "debug",
+        &format!("OpenAI API ответ получен (длина: {} символов)", content.len()),
+    );
+
+    Ok(content)
 }
 
 async fn run_llama_cli(
@@ -993,7 +1223,14 @@ fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
         return None;
     }
 
-    let cleaned = raw_trimmed
+    // Если используется reasoning-модель (DeepSeek-R1, QwQ и т.д.), отсекаем блок размышлений <think>...</think>
+    let after_think = if let Some(think_end) = raw_trimmed.rfind("</think>") {
+        raw_trimmed[think_end + "</think>".len()..].trim()
+    } else {
+        raw_trimmed
+    };
+
+    let cleaned = after_think
         .trim_start_matches("```json")
         .trim_start_matches("```")
         .trim_end_matches("```")
@@ -1091,10 +1328,21 @@ pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -
     let f = &fragments[idx];
     let text = f.text.trim();
 
-    // 1. В русскоязычном видео строки с латинскими словами («We will like to start!», «you'll be speedy. Yes!») — это вокал песни/опенинга
-    let latin_letters = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
-    if latin_letters >= 3 {
-        return true;
+    // Определяем, является ли весь файл субтитров преимущественно русскоязычным (>= 40% реплик содержат кириллицу).
+    // Это защищает от ложного срабатывания, если видео изначально на английском языке!
+    let cyrillic_lines = fragments
+        .iter()
+        .filter(|frag| frag.text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)))
+        .count();
+    let is_cyrillic_track = !fragments.is_empty() && cyrillic_lines * 10 >= fragments.len() * 4;
+
+    // 1. В русскоязычном видео строки, состоящие из латинских слов без кириллицы («We will like to start!», «you'll be speedy. Yes!») — это вокал песни/опенинга
+    if is_cyrillic_track {
+        let has_cyrillic = text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+        let latin_letters = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
+        if !has_cyrillic && latin_letters >= 3 {
+            return true;
+        }
     }
 
     // 2. Проверяем, не находится ли реплика внутри 30-секундного вокального блока опенинга/эндинга,
@@ -1116,9 +1364,12 @@ pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -
         let has_music_gap_nearby = (win_start..=win_end).any(|k| {
             k > 0 && (fragments[k].start - fragments[k - 1].end) >= 14.0
         });
-        let has_latin_nearby = (win_start..=win_end).any(|k| {
-            fragments[k].text.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 3
-        });
+        let has_latin_nearby = is_cyrillic_track
+            && (win_start..=win_end).any(|k| {
+                let t = &fragments[k].text;
+                !t.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
+                    && t.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 3
+            });
 
         if int_dur_neighbors >= 4 && (has_music_gap_nearby || has_latin_nearby) {
             return true;
@@ -1144,7 +1395,10 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
         "тайна", "правда", "лжешь", "врёшь", "прости", "обещаю", "поклялся", "никогда",
         "навсегда", "люблю", "ненавижу", "убью", "защищ", "опасно", "ловушк", "план",
         "конец", "начало", "победил", "проиграл", "герой", "монстр", "магия", "способност",
-        "уровень", "память", "разум", "сердц", "душа", "судьб", "выбор", "шанс", "черт", "чёрт"
+        "уровень", "память", "разум", "сердц", "душа", "судьб", "выбор", "шанс", "черт", "чёрт",
+        "кайдзю", "капитан", "командир", "оружи", "прорыв", "берегись", "держись",
+        "impossible", "never", "wait", "stop", "watch", "attack", "power", "fight",
+        "monster", "secret", "truth", "promise", "protect", "danger", "victory", "destroy"
     ];
 
     let hook_starters = [

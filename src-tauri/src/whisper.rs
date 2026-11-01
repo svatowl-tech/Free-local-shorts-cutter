@@ -147,6 +147,8 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "валерий курас",
         "позитивный голос",
         "позитивный позитивный",
+        "speaking russian",
+        "speaking foreign",
     ];
 
     for pat in &patterns {
@@ -298,20 +300,30 @@ pub fn clean_stretched_text(text: &str) -> String {
 }
 
 /// Проверяет, содержит ли существующий SRT-файл зацикленные галлюцинации от старых сборок
-fn has_hallucination_loops(srt_content: &str) -> bool {
+/// или ошибочную англоязычную транскрибацию (когда `-l auto` определял `en` по песне опенинга и переводил русский дубляж на английский)
+fn check_cached_srt_validity(srt_content: &str) -> (bool, bool) {
     let fragments = crate::text_analyzer::parse_srt(srt_content);
     if fragments.is_empty() {
-        return true;
+        return (true, false);
+    }
+
+    let lower_all = srt_content.to_lowercase();
+    if lower_all.contains("[speaking russian]") || lower_all.contains("(speaking russian)") {
+        return (false, true);
     }
 
     let mut hallucination_count = 0usize;
     let mut consecutive_dups = 0usize;
     let mut max_consecutive_dups = 0usize;
+    let mut cyrillic_lines = 0usize;
     let mut prev_norm = String::new();
 
     for frag in &fragments {
         if is_whisper_hallucination(&frag.text) {
             hallucination_count += 1;
+        }
+        if frag.text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)) {
+            cyrillic_lines += 1;
         }
         let norm = frag.text.trim().to_lowercase();
         if !norm.is_empty() && norm == prev_norm {
@@ -325,8 +337,12 @@ fn has_hallucination_loops(srt_content: &str) -> bool {
         }
     }
 
-    // Если более 60% строк — галлюцинации или более 6 одинаковых строк подряд — требуется повторная транскрибация
-    hallucination_count * 2 > fragments.len() || max_consecutive_dups >= 6
+    let has_loops = hallucination_count * 2 > fragments.len() || max_consecutive_dups >= 6;
+    // Если в кэшированном SRT >= 5 строк, но менее 20% содержат кириллицу (например 0 из 237 после `-l auto` на английском опенинге),
+    // считаем кэш испорченным неверным автоопределением языка и перезапускаем транскрибацию с `-l ru`!
+    let wrong_lang = fragments.len() >= 5 && cyrillic_lines * 5 < fragments.len();
+
+    (has_loops, wrong_lang)
 }
 
 /// Проверяет, является ли токен типичным оторванным окончанием/суффиксом русского слова
@@ -913,38 +929,63 @@ pub async fn get_or_create_subtitles(
 
     // 1. Проверяем, есть ли уже готовые субтитры для этого видео в папке проекта
     if project_srt.exists() {
-        // Всегда прогоняем быструю санитизацию кэшированного SRT (удаляет [музыка], титры редакторов и растяжки букв)
-        let _ = sanitize_srt_file(&project_srt, &app_handle).await;
-        if let Ok(content) = tokio::fs::read_to_string(&project_srt).await {
-            if !content.trim().is_empty() && !has_hallucination_loops(&content) {
-                let count = crate::text_analyzer::parse_srt(&content).len();
-                if count > 0 {
-                    crate::logger::emit_log(
-                        &app_handle,
-                        "Whisper",
-                        "info",
-                        &format!(
-                            "✓ Найдены готовые чистые субтитры в папке проекта ({} реплик): '{}'. Повторная транскрибация не требуется!",
-                            count,
-                            project_srt.display()
-                        ),
-                    );
-                    let _ = app_handle.emit(
-                        "whisper-progress",
-                        WhisperProgressPayload {
-                            percent: 100.0,
-                            stage: "cached".to_string(),
-                        },
-                    );
-                    return Ok(Some(project_srt));
-                }
-            } else if has_hallucination_loops(&content) {
+        if let Ok(raw_before_sanitize) = tokio::fs::read_to_string(&project_srt).await {
+            let (raw_loops, raw_wrong_lang) = check_cached_srt_validity(&raw_before_sanitize);
+            if raw_wrong_lang {
                 crate::logger::emit_log(
                     &app_handle,
                     "Whisper",
                     "warn",
-                    "В старом файле субтитров обнаружены зацикленные галлюцинации. Выполняется чистая повторная транскрибация (-mc 0)...",
+                    "В кэшированном файле субтитров обнаружена ошибочная англоязычная транскрибация (из-за автоопределения языка на песне опенинга). Выполняется чистая повторная транскрибация на русском языке (-l ru)...",
                 );
+                let _ = tokio::fs::remove_file(&project_srt).await;
+            } else if raw_loops {
+                crate::logger::emit_log(
+                    &app_handle,
+                    "Whisper",
+                    "warn",
+                    "В старом файле субтитров обнаружены зацикленные галлюцинации. Выполняется чистая повторная транскрибация (-l ru -mc 0)...",
+                );
+                let _ = tokio::fs::remove_file(&project_srt).await;
+            }
+        }
+
+        if project_srt.exists() {
+            // Всегда прогоняем быструю санитизацию кэшированного SRT (удаляет [музыка], титры редакторов и растяжки букв)
+            let _ = sanitize_srt_file(&project_srt, &app_handle).await;
+            if let Ok(content) = tokio::fs::read_to_string(&project_srt).await {
+                let (has_loops, wrong_lang) = check_cached_srt_validity(&content);
+                if !content.trim().is_empty() && !has_loops && !wrong_lang {
+                    let count = crate::text_analyzer::parse_srt(&content).len();
+                    if count > 0 {
+                        crate::logger::emit_log(
+                            &app_handle,
+                            "Whisper",
+                            "info",
+                            &format!(
+                                "✓ Найдены готовые чистые субтитры в папке проекта ({} реплик): '{}'. Повторная транскрибация не требуется!",
+                                count,
+                                project_srt.display()
+                            ),
+                        );
+                        let _ = app_handle.emit(
+                            "whisper-progress",
+                            WhisperProgressPayload {
+                                percent: 100.0,
+                                stage: "cached".to_string(),
+                            },
+                        );
+                        return Ok(Some(project_srt));
+                    }
+                } else {
+                    crate::logger::emit_log(
+                        &app_handle,
+                        "Whisper",
+                        "warn",
+                        "Кэшированный файл субтитров не прошел проверку качества языка/повторов. Выполняется повторная транскрибация (-l ru)...",
+                    );
+                    let _ = tokio::fs::remove_file(&project_srt).await;
+                }
             }
         }
     }
@@ -1057,11 +1098,12 @@ pub async fn transcribe_audio(
         &app_handle,
         "Whisper",
         "info",
-        &format!("Запуск whisper.cpp (модель: {}, язык: auto, anti-loop: -mc 0, вывод: {}.srt)...", model.display(), base_out),
+        &format!("Запуск whisper.cpp (модель: {}, язык: ru, anti-loop: -mc 0, вывод: {}.srt)...", model.display(), base_out),
     );
 
     // Передаем:
-    // -l auto: автоопределение русского/любого языка
+    // -l ru: жесткая фиксация русского языка распознавания (иначе на аниме/сериалах с англоязычной/японской песней в первые 30с
+    //        флаг `-l auto` ошибочно ставит `lang = en` и переводит весь 24-минутный русский дубляж на ломаный английский!)
     // -mc 0: отключение переноса текстового контекста между 30с окнами (предотвращает 7-минутные циклы «Корректор А. Кулак» после музыки!)
     // -et 2.2: порог энтропии для подавления повторов
     // -wt 0.01: порог вероятности таймкода слова (устраняет растягивание начала субтитра на предшествующую тишину/музыку)
@@ -1071,7 +1113,7 @@ pub async fn transcribe_audio(
         .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
         .args([
             "-m", &model.to_string_lossy(),
-            "-l", "auto",
+            "-l", "ru",
             "-mc", "0",
             "-et", "2.2",
             "-wt", "0.01",

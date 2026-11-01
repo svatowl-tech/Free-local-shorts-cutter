@@ -44,12 +44,25 @@ export interface RenderConfig {
   hw_accel: boolean;
 }
 
+export interface OpenAiProfile {
+  id: string;
+  name: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+  available_models?: string[];
+}
+
 export interface PipelineConfig {
   asr_model_path?: string;
   vision_model_path?: string;
   text_engine: string;
   text_model_name: string;
   ollama_url: string;
+  openai_base_url?: string;
+  openai_api_key?: string;
+  openai_model?: string;
+  openai_profile_id?: string;
   output_dir?: string;
   min_intensity_threshold: number;
   max_clip_duration_sec: number;
@@ -244,5 +257,107 @@ export async function openFolder(folderPath: string): Promise<string> {
   return await invoke<string>('open_folder', { folderPath });
 }
 
+export async function getOpenAiProfiles(): Promise<OpenAiProfile[]> {
+  try {
+    return await invoke<OpenAiProfile[]>('get_openai_profiles');
+  } catch {
+    return [];
+  }
+}
 
+export async function saveOpenAiProfiles(profiles: OpenAiProfile[]): Promise<string> {
+  return await invoke<string>('save_openai_profiles', { profiles });
+}
+
+function buildBrowserModelsUrls(baseUrl: string): string[] {
+  let trimmed = (baseUrl || '').trim().replace(/\/+$/, '');
+  if (!trimmed) {
+    trimmed = 'https://api.openai.com/v1';
+  }
+  for (const suffix of ['/chat/completions', '/completions', '/models']) {
+    if (trimmed.endsWith(suffix)) {
+      trimmed = trimmed.slice(0, -suffix.length).replace(/\/+$/, '');
+    }
+  }
+  const urls: string[] = [];
+  if (
+    trimmed.endsWith('/v1') ||
+    trimmed.endsWith('/v1beta') ||
+    trimmed.endsWith('/v4') ||
+    trimmed.endsWith('/openai')
+  ) {
+    urls.push(`${trimmed}/models`);
+  } else {
+    urls.push(`${trimmed}/v1/models`);
+    urls.push(`${trimmed}/models`);
+  }
+  return urls;
+}
+
+function parseModelsFromJson(json: any): string[] {
+  const seen = new Set<string>();
+  const models: string[] = [];
+  const pushId = (val: unknown) => {
+    if (typeof val === 'string') {
+      const clean = val.trim();
+      if (clean && !seen.has(clean)) {
+        seen.add(clean);
+        models.push(clean);
+      }
+    }
+  };
+  const scanArray = (arr: any[]) => {
+    for (const item of arr) {
+      if (typeof item === 'string') {
+        pushId(item);
+      } else if (item && typeof item === 'object') {
+        pushId(item.id ?? item.model ?? item.name);
+      }
+    }
+  };
+
+  if (Array.isArray(json)) {
+    scanArray(json);
+  } else if (json && typeof json === 'object') {
+    if (Array.isArray(json.data)) scanArray(json.data);
+    if (models.length === 0 && Array.isArray(json.models)) scanArray(json.models);
+  }
+  return models;
+}
+
+export async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promise<string[]> {
+  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+  if (isTauri) {
+    return await invoke<string[]>('fetch_openai_models', { baseUrl, apiKey });
+  }
+
+  const urls = buildBrowserModelsUrls(baseUrl);
+  const cleanKey = (apiKey || '').trim();
+  let lastError = 'Не удалось получить список моделей с сервера';
+
+  for (const url of urls) {
+    try {
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (cleanKey) {
+        headers['Authorization'] = `Bearer ${cleanKey}`;
+      }
+      const resp = await fetch(url, { method: 'GET', headers });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        lastError = `HTTP ${resp.status}: ${text.slice(0, 140) || resp.statusText}`;
+        if (resp.status === 401 || resp.status === 403) break;
+        continue;
+      }
+      const data = await resp.json();
+      const models = parseModelsFromJson(data);
+      if (models.length > 0) {
+        return models;
+      }
+      lastError = 'Сервер ответил успешно, но список моделей пуст';
+    } catch (err: any) {
+      lastError = err?.message || String(err);
+    }
+  }
+  throw new Error(lastError);
+}
 

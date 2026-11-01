@@ -66,6 +66,10 @@ const DEFAULT_CONFIG: PipelineConfig = {
   text_engine: 'llama',
   text_model_name: 'qwen2.5-3b-instruct-q4_k_m.gguf',
   ollama_url: 'http://localhost:11434',
+  openai_base_url: 'https://api.openai.com/v1',
+  openai_api_key: '',
+  openai_model: 'gpt-4o-mini',
+  openai_profile_id: '',
   output_dir: 'output_cuts/',
   subtitle_style: {
     font_name: 'Arial',
@@ -367,7 +371,12 @@ const createPipelineStore = () => {
         }
         return { ...s, config };
       });
-      addLog(`Обновлены настройки пайплайна: ${JSON.stringify(fields)}`);
+      const safeFields = { ...fields };
+      if (safeFields.openai_api_key) {
+        const k = safeFields.openai_api_key;
+        safeFields.openai_api_key = k.length > 8 ? `${k.slice(0, 4)}...${k.slice(-4)}` : '***';
+      }
+      addLog(`Обновлены настройки пайплайна: ${JSON.stringify(safeFields)}`);
     },
     updateError: (error: string | null) => {
       update(s => ({ ...s, error }));
@@ -879,7 +888,12 @@ const createPipelineStore = () => {
     },
     downloadLogsAsFile: () => {
       const currentState = get(store);
-      const header = `=== Video Cutter Pro - Журнал логирования ===\nДата: ${new Date().toLocaleString()}\nВидео: ${currentState.video ? currentState.video.path : 'Не выбрано'}\nКонфигурация: ${JSON.stringify(currentState.config, null, 2)}\n===========================================\n\n`;
+      const safeConfig = { ...currentState.config };
+      if (safeConfig.openai_api_key) {
+        const k = safeConfig.openai_api_key;
+        safeConfig.openai_api_key = k.length > 8 ? `${k.slice(0, 4)}...${k.slice(-4)}` : '***';
+      }
+      const header = `=== Video Cutter Pro - Журнал логирования ===\nДата: ${new Date().toLocaleString()}\nВидео: ${currentState.video ? currentState.video.path : 'Не выбрано'}\nКонфигурация: ${JSON.stringify(safeConfig, null, 2)}\n===========================================\n\n`;
       const text = header + currentState.logs.join('\n');
       const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);
