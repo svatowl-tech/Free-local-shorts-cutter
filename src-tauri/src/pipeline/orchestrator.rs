@@ -173,13 +173,43 @@ pub async fn run_pipeline(
                 ).await {
                     Ok(s) => s,
                     Err(e) => {
+                        if e.to_string().contains("Отменено") {
+                            return Err(e);
+                        }
                         crate::logger::emit_log(
                             &app_handle,
                             "LLM",
                             "warn",
-                            &format!("Сбой анализа LLM: {}. Переход на высокоскоростной встроенный NLP расчет.", e),
+                            &format!("Предохранитель текстового анализа: {}. Каскадный переход на llama-cli...", e),
                         );
-                        crate::text_analyzer::compute_text_scores_advanced(&frags)
+                        match crate::text_analyzer::analyze_with_llama_cli(
+                            &frags,
+                            None,
+                            &app_handle,
+                            cancel_rx.resubscribe(),
+                        ).await {
+                            Ok(llama_s) => {
+                                crate::logger::emit_log(
+                                    &app_handle,
+                                    "LLM",
+                                    "info",
+                                    &format!("✓ Резервный llama-cli успешно оценил {} реплик", frags.len()),
+                                );
+                                llama_s
+                            }
+                            Err(e2) => {
+                                if e2.to_string().contains("Отменено") {
+                                    return Err(e2);
+                                }
+                                crate::logger::emit_log(
+                                    &app_handle,
+                                    "LLM",
+                                    "warn",
+                                    &format!("Сбой llama-cli: {}. Финальный переход на высокоскоростной встроенный NLP расчет.", e2),
+                                );
+                                crate::text_analyzer::compute_text_scores_advanced(&frags)
+                            }
+                        }
                     }
                 };
                 (frags, scores)
@@ -618,6 +648,28 @@ fn build_complete_phrase_window(
         start_idx -= 1;
     }
 
+    // Если начальная реплика является диалоговым ответом / реакцией («Хорошо, полагаюсь на тебя!», «Да, конечно», «Ладно!»),
+    // и собеседник произнес вводную реплику/вопрос совсем недавно (gap <= 2.8с) — включаем реплику собеседника, чтобы не терять контекст!
+    if start_idx > 0 && crate::text_analyzer::starts_with_dialogue_response(&fragments[start_idx].text) {
+        let gap_prev = (fragments[start_idx].start - fragments[start_idx - 1].end).max(0.0);
+        if gap_prev <= 2.8 {
+            let mut prompt_start = start_idx - 1;
+            while prompt_start > 0
+                && !crate::text_analyzer::is_sentence_start(fragments, prompt_start)
+                && (start_idx - prompt_start) < 4
+            {
+                let g = (fragments[prompt_start].start - fragments[prompt_start - 1].end).max(0.0);
+                if g > 1.8 {
+                    break;
+                }
+                prompt_start -= 1;
+            }
+            if fragments[prompt_start].start >= intro_skip {
+                start_idx = prompt_start;
+            }
+        }
+    }
+
     if fragments[start_idx].start < intro_skip || fragments[start_idx].start >= outro_limit {
         return None;
     }
@@ -660,8 +712,9 @@ fn build_complete_phrase_window(
             }
 
             let dur = post_roll - pre_roll;
-            // Допускаем небольшое расширение (+1.5с сверх max_dur), ТОЛЬКО если это нужно для завершения длинного предложения
-            if dur > max_dur + 1.5 {
+            // Допускаем гибкое адаптивное расширение до +3.8с сверх max_dur для завершения красивого панчлайна/мысли
+            let max_ceiling = max_dur + 3.8;
+            if dur > max_ceiling {
                 break;
             }
 
@@ -675,22 +728,22 @@ fn build_complete_phrase_window(
                     1.0
                 };
 
-                // Если длительность вышла за `max_dur` (в буфер +1.5с), принимаем её ТОЛЬКО если она закрывает предложение и не является слабым концом!
+                // Если длительность вышла за `max_dur`, принимаем её ТОЛЬКО если она закрывает предложение и не является слабым концом!
                 if dur > max_dur && (!is_sent_end || is_weak_end) {
                     continue;
                 }
 
                 // Оценка качества границы окончания:
-                // 1. Главный приоритет (+2.2) — полное логическое окончание предложения (is_sent_end)
-                let mut b_quality = if is_sent_end { 2.2 } else { 0.1 };
+                // 1. Главный приоритет (+2.4) — полное логическое окончание предложения (is_sent_end)
+                let mut b_quality = if is_sent_end { 2.4 } else { 0.1 };
                 if has_punct {
                     b_quality += 0.45;
                 }
 
                 // 2. Сильный штраф за обрыв на слабой реплике («- Да уж.», «- Ясно.», «Прости за ожидание...», «Значит, ты и есть та самая дочка...»),
-                // чтобы алгоритм продолжал окно еще на 2–4 секунды (до 18–20с) и захватывал финальный панчлайн собеседника!
+                // чтобы алгоритм продолжал окно еще на 2–4 секунды (до 18–22с) и захватывал финальный панчлайн собеседника!
                 if is_weak_end {
-                    b_quality -= 1.35;
+                    b_quality -= 1.45;
                 }
 
                 // 3. Бонус за естественную паузу после финальной реплики (признак завершения микро-диалога),
@@ -706,14 +759,14 @@ fn build_complete_phrase_window(
                     b_quality -= 0.45;
                 }
 
-                // 5. Небольшой бонус за насыщенность диалога (чтобы полноценная сцена 16–19с с ярким панчлайном выигрывала у сухого 13с обрывка)
+                // 5. Небольшой бонус за насыщенность диалога (чтобы полноценная сцена 16–21с с ярким панчлайном выигрывала у сухого 10с обрывка)
                 let end_cue_score = text_scores.get(end_idx).copied().unwrap_or(0.45);
                 if end_cue_score >= 0.68 && !is_weak_end {
                     b_quality += 0.25;
                 }
 
-                // Мягкое предпочтение в коридоре 10..20с без жесткого притягивания к 15с
-                let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.22;
+                // Мягкое предпочтение в коридоре 10..22с без жесткого притягивания к 15с
+                let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.18;
                 b_quality -= dist_penalty;
 
                 if best_choice.as_ref().map_or(true, |prev| b_quality > prev.4) {
@@ -728,7 +781,7 @@ fn build_complete_phrase_window(
     let mut chosen = find_best_end(start_idx);
 
     // Если от `start_idx` вперед диалог закончился раньше 10 секунд (или закончился на слабой/оборванной фразе),
-    // пробуем захватить предыдущее полное предложение перед `start_idx`, чтобы получился полноценный диалог 10–20с!
+    // пробуем захватить предыдущее полное предложение перед `start_idx`, чтобы получился полноценный диалог!
     if chosen.as_ref().map_or(true, |c| !c.3) && start_idx > 0 {
         let mut prev_start = start_idx - 1;
         while prev_start > 0
@@ -756,7 +809,7 @@ fn build_complete_phrase_window(
 
     let (end_idx, clip_start, clip_end, is_clean_end) = chosen?;
     let clip_dur = clip_end - clip_start;
-    if clip_dur < min_dur * 0.9 || clip_dur > max_dur + 1.6 {
+    if clip_dur < min_dur * 0.9 || clip_dur > max_dur + 3.9 {
         return None;
     }
 

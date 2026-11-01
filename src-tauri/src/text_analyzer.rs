@@ -258,6 +258,117 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
     false
 }
 
+/// Проверяет, заканчивается ли текст реплики грамматически незавершенным придаточным оборотом,
+/// союзом, предлогом или подлежащим без сказуемого (например: «Не сомневаюсь, что и этот путь.», «к стене, в преграде.», «что для меня»)
+pub fn has_incomplete_clause(text: &str) -> bool {
+    let clean = text
+        .trim()
+        .trim_matches(['"', '\'', '»', '«', '(', ')', '[', ']', '-', '—'])
+        .trim_end_matches(['.', '!', '?', '…', ' ', ','])
+        .to_lowercase()
+        .replace('ё', "е");
+
+    let tokens: Vec<&str> = clean.split_whitespace().collect();
+    if tokens.is_empty() {
+        return false;
+    }
+
+    let last_tok = tokens.last().unwrap_or(&"");
+
+    // Заканчивается на союз, предлог, связку или местоимение
+    let dangling_tails = [
+        "что", "чтобы", "как", "если", "когда", "хотя", "пусть", "будто", "словно",
+        "потому", "так", "где", "куда", "откуда", "зачем", "почему", "чей", "чья", "чье", "чьи",
+        "который", "которая", "которое", "которые", "какой", "какая", "какое", "какие",
+        "этот", "эта", "это", "эти", "тот", "та", "то", "те", "такой", "такая", "такое", "такие",
+        "свой", "своя", "свое", "свои", "мой", "моя", "мое", "мои", "твой", "твоя", "твое", "твои",
+        "наш", "наша", "наше", "наши", "ваш", "ваша", "ваше", "ваши",
+        "и", "а", "но", "да", "или", "ли", "же", "в", "на", "к", "с", "из", "от", "до", "по", "для", "о", "об", "про", "без",
+    ];
+
+    if dangling_tails.contains(last_tok) {
+        return true;
+    }
+
+    // Сочетания незавершенной мысли в конце фразы:
+    let incomplete_tails = [
+        "что и этот путь",
+        "что этот путь",
+        "что и этот",
+        "что этот",
+        "что эта",
+        "что эти",
+        "что данн",
+        "что такой",
+        "что такая",
+        "что такое",
+        "что такие",
+        "что для меня",
+        "что для нас",
+        "что со мной",
+        "что с ним",
+        "потому что",
+        "так как",
+        "для того чтобы",
+        "вместо того чтобы",
+        "не сомневаюсь, что",
+        "не сомневаюсь что",
+        "уверен, что",
+        "уверен что",
+        "думаю, что",
+        "думаю что",
+        "знаю, что",
+        "знаю что",
+        "кажется, что",
+        "кажется что",
+    ];
+
+    if incomplete_tails.iter().any(|t| clean.ends_with(t) || clean == *t) {
+        return true;
+    }
+
+    // Если фраза содержит «что и этот ...» или «не сомневаюсь, что и ...» и в ней нет глагола действия (сказуемого)
+    if clean.contains("что и этот") || clean.contains("не сомневаюсь, что и этот") {
+        let has_verb = tokens.iter().any(|w| {
+            w.ends_with("ет") || w.ends_with("ит") || w.ends_with("ут") || w.ends_with("ят")
+                || w.ends_with("ел") || w.ends_with("ил") || w.ends_with("ал") || w.ends_with("ла")
+                || w.ends_with("ло") || w.ends_with("ли") || w.ends_with("ся") || w.ends_with("сь")
+                || w.ends_with("ть") || w.ends_with("ти")
+        });
+        if !has_verb {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Проверяет, начинается ли реплика с диалогового ответа / реакции на реплику собеседника
+/// («Хорошо, полагаюсь на тебя!», «Да, конечно», «Ладно, замком!», «Нет, я сам», «Есть!», «Понял!»)
+pub fn starts_with_dialogue_response(text: &str) -> bool {
+    let clean = text
+        .trim()
+        .trim_start_matches(['-', '—', '"', '\'', '«', '(', '[', ' '])
+        .to_lowercase()
+        .replace('ё', "е");
+
+    let responsive_prefixes = [
+        "хорошо,", "хорошо!", "хорошо ",
+        "ладно,", "ладно!", "ладно ",
+        "да,", "да!", "да ",
+        "нет,", "нет!", "нет ",
+        "согласен,", "согласен!", "согласен ",
+        "понял,", "понял!", "понял ",
+        "ясно,", "ясно!", "ясно ",
+        "есть!", "так точно", "договорились",
+        "благодарю,", "благодарю ", "спасибо,", "спасибо ",
+        "конечно,", "конечно ", "само собой", "разумеется",
+        "верно,", "верно ", "точно,", "точно ", "правда,",
+    ];
+
+    responsive_prefixes.iter().any(|p| clean.starts_with(p))
+}
+
 /// Проверяет, является ли реплика `idx` логическим НАЧАЛОМ нового предложения / законченной мысли
 pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     if idx == 0 || idx >= fragments.len() {
@@ -274,7 +385,7 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     }
 
     // Если между репликами длинная пауза (>= 1.25с) и предыдущая завершилась знаком препинания — начало новой фразы/сцены
-    if gap >= 1.25 && has_terminal_punctuation(&prev.text) {
+    if gap >= 1.25 && has_terminal_punctuation(&prev.text) && !has_incomplete_clause(&prev.text) {
         return true;
     }
 
@@ -285,7 +396,7 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     }
 
     // Если между репликами заметная пауза (>= 0.70с) и предыдущая фраза закончилась знаком препинания
-    if gap >= 0.70 && has_terminal_punctuation(&prev.text) {
+    if gap >= 0.70 && has_terminal_punctuation(&prev.text) && !has_incomplete_clause(&prev.text) {
         return true;
     }
 
@@ -294,8 +405,8 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
         return true;
     }
 
-    // Если предыдущая строка закончилась точкой, !, ? или многоточием — текущая начинает новое предложение
-    if has_terminal_punctuation(&prev.text) {
+    // Если предыдущая строка закончилась точкой, !, ? или многоточием — текущая начинает новое предложение (если у предыдущей нет незавершенного придаточного)
+    if has_terminal_punctuation(&prev.text) && !has_incomplete_clause(&prev.text) {
         return true;
     }
 
@@ -314,6 +425,11 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
 
     // 0. Если в конце строки вообще нет завершающего знака препинания (., !, ?, …) — мысль оборвана на середине («...что для меня», «...порой важно»)
     if !has_terminal_punctuation(raw_trimmed) {
+        return true;
+    }
+
+    // Грамматически незавершенное придаточное («Не сомневаюсь, что и этот путь.», «к стене, в»)
+    if has_incomplete_clause(raw_trimmed) {
         return true;
     }
 
@@ -389,7 +505,7 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
 /// Проверяет, является ли реплика `idx` логическим КОНЦОМ предложения / законченной мысли
 pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
     if idx + 1 >= fragments.len() {
-        return has_terminal_punctuation(&fragments[idx].text);
+        return has_terminal_punctuation(&fragments[idx].text) && !has_incomplete_clause(&fragments[idx].text);
     }
     let curr = &fragments[idx];
     let next = &fragments[idx + 1];
@@ -399,6 +515,12 @@ pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
     // Если текущая строка вообще не имеет знака завершения предложения (., !, ?, …),
     // она НЕ может быть концом предложения (особенно если заканчивается запятой или следующая начинается со строчной буквы)!
     if !has_terminal_punctuation(&curr.text) {
+        return false;
+    }
+
+    // Если фраза оканчивается на грамматически незавершенное придаточное («что и этот путь», «потому что»)
+    // и следующая фраза начинается вскоре (gap_next < 3.2с) — это НЕ конец предложения!
+    if has_incomplete_clause(&curr.text) && gap_next < 3.2 {
         return false;
     }
 
@@ -442,12 +564,249 @@ fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64
     out
 }
 
+/// Асинхронный запуск анализа через llama-cli с автоматическим поиском и валидацией локальной GGUF-модели
+pub async fn analyze_with_llama_cli(
+    fragments: &[SubtitleFragment],
+    preferred_model_name: Option<&str>,
+    app_handle: &AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<Vec<f64>> {
+    if fragments.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let exact_match = if let Some(pref) = preferred_model_name {
+        let is_legacy_default = pref == "models/qwen-1.5b-chat.gguf" || pref == "qwen-1.5b-chat.gguf";
+        if is_legacy_default {
+            crate::models::resolve_any_llm_model(app_handle, Some(pref))
+        } else if pref.ends_with(".gguf") || pref.ends_with(".bin") {
+            crate::models::resolve_model_path(app_handle, pref)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mut resolved_model = exact_match
+        .clone()
+        .or_else(|| crate::models::resolve_any_llm_model(app_handle, preferred_model_name));
+
+    if let Some(ref primary_path) = resolved_model {
+        let primary_str = primary_path.to_string_lossy().to_string();
+        if is_model_marked_broken(&primary_str) {
+            if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
+                let alt_str = alt_path.to_string_lossy().to_string();
+                if !is_model_marked_broken(&alt_str) && alt_str != primary_str {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "info",
+                        &format!(
+                            "Переключение с проблемной модели '{}' на исправную локальную GGUF-модель '{}'",
+                            primary_path.display(),
+                            alt_path.display()
+                        ),
+                    );
+                    resolved_model = Some(alt_path);
+                }
+            }
+        }
+    }
+
+    let Some(mut model_path) = resolved_model else {
+        let err_msg = "Локальная GGUF-модель для llama-cli не найдена на диске (скачайте в Менеджере ИИ-моделей).".to_string();
+        crate::logger::emit_log(app_handle, "LLM", "warn", &err_msg);
+        return Err(AppError::Pipeline(err_msg));
+    };
+
+    let mut model_path_str = model_path.to_string_lossy().to_string();
+
+    if exact_match.is_none() && preferred_model_name.is_some() {
+        crate::logger::emit_log(
+            app_handle,
+            "LLM",
+            "warn",
+            &format!(
+                "Выбранная модель '{}' ещё не скачана в Менеджере ИИ-моделей. Найдена резервная локальная модель: '{}'",
+                preferred_model_name.unwrap_or_default(),
+                model_path.display()
+            ),
+        );
+    }
+
+    if is_model_marked_broken(&model_path_str) {
+        let err_msg = format!("Модель '{}' ранее показала ошибку токенизатора в этой сессии.", model_path.display());
+        crate::logger::emit_log(app_handle, "LLM", "warn", &err_msg);
+        return Err(AppError::Pipeline(err_msg));
+    }
+
+    crate::logger::emit_log(
+        app_handle,
+        "LLM",
+        "info",
+        &format!("Запуск локального llama-cli с моделью: '{}' (контекст: 2048, контроль целостности фраз)", model_path.display()),
+    );
+
+    let mut all_scores = Vec::with_capacity(fragments.len());
+    let batch_size = 35;
+    let total_batches = (fragments.len() + batch_size - 1) / batch_size;
+    let mut use_gpu = true;
+    let mut gpu_succeeded_once = false;
+    let mut consecutive_parse_failures = 0usize;
+
+    for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
+        if cancel_rx.try_recv().is_ok() {
+            crate::logger::emit_log(app_handle, "LLM", "warn", "Анализ отменен пользователем.");
+            return Err(AppError::Pipeline("Отменено пользователем".into()));
+        }
+
+        crate::logger::emit_log(
+            app_handle,
+            "LLM",
+            "info",
+            &format!("Пакет {}/{}: анализ {} реплик через llama-cli (GPU offload={})...", batch_idx + 1, total_batches, chunk.len(), use_gpu),
+        );
+
+        let prompt = build_prompt(chunk);
+        let mut batch_res = run_llama_cli(
+            app_handle,
+            &model_path.to_string_lossy(),
+            &prompt,
+            chunk.len(),
+            use_gpu,
+            cancel_rx.resubscribe(),
+        ).await;
+
+        let gpu_output_corrupted = match &batch_res {
+            Ok(out) => parse_json_array(out, chunk.len()).is_none(),
+            Err(_) => true,
+        };
+
+        if gpu_output_corrupted && use_gpu && !gpu_succeeded_once {
+            mark_model_broken(&model_path_str);
+            if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
+                let alt_str = alt_path.to_string_lossy().to_string();
+                if !is_model_marked_broken(&alt_str) && alt_str != model_path_str {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "warn",
+                        &format!(
+                            "Модель '{}' выдала невалидный ответ. Автоматическое переключение на другую установленную GGUF-модель '{}' (GPU)...",
+                            model_path.display(),
+                            alt_path.display()
+                        ),
+                    );
+                    model_path = alt_path;
+                    model_path_str = alt_str;
+                    batch_res = run_llama_cli(
+                        app_handle,
+                        &model_path_str,
+                        &prompt,
+                        chunk.len(),
+                        true,
+                        cancel_rx.resubscribe(),
+                    )
+                    .await;
+                }
+            }
+
+            let still_corrupted = match &batch_res {
+                Ok(out) => parse_json_array(out, chunk.len()).is_none(),
+                Err(_) => true,
+            };
+
+            if still_corrupted {
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "warn",
+                    "Обнаружен сбой генерации на GPU в первом пакете (артефакты CUDA FP16 / невалидный вывод). Отключение CUDA для llama-cli (переход на чистый CPU) и повтор пакета...",
+                );
+                use_gpu = false;
+                batch_res = run_llama_cli(
+                    app_handle,
+                    &model_path_str,
+                    &prompt,
+                    chunk.len(),
+                    false,
+                    cancel_rx.resubscribe(),
+                )
+                .await;
+            }
+        }
+
+        match batch_res {
+            Ok(result) => {
+                let parsed = parse_json_array(&result, chunk.len());
+                if let Some(ref batch_scores) = parsed {
+                    consecutive_parse_failures = 0;
+                    if use_gpu {
+                        gpu_succeeded_once = true;
+                    }
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "info",
+                        &format!("✓ Пакет {}/{}: получено {} валидных оценок от llama-cli", batch_idx + 1, total_batches, batch_scores.len()),
+                    );
+                    all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
+                } else {
+                    consecutive_parse_failures += 1;
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "info",
+                        &format!(
+                            "Пакет {}/{}: нестандартный формат ответа LLM, для {} реплик применен семантический NLP-анализатор полных фраз.",
+                            batch_idx + 1,
+                            total_batches,
+                            chunk.len()
+                        ),
+                    );
+                    all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+
+                    if !gpu_succeeded_once && (!use_gpu || consecutive_parse_failures >= 2) && batch_idx + 1 < total_batches {
+                        mark_model_broken(&model_path_str);
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "warn",
+                            "Предохранитель LLM: выбранная GGUF-модель выдает некорректные токены. Переключение всех оставшихся пакетов на встроенный NLP-движок анализа полных фраз.",
+                        );
+                        let remaining = &fragments[(batch_idx + 1) * batch_size..];
+                        all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "warn",
+                    &format!(
+                        "llama-cli завершился со сбоем ({}). Автоматическое переключение оставшихся пакетов на встроенный скоростной NLP-движок.",
+                        e
+                    ),
+                );
+                let remaining = &fragments[batch_idx * batch_size..];
+                all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                break;
+            }
+        }
+    }
+
+    Ok(all_scores)
+}
+
 /// Асинхронная аналитика текста реплик
 pub async fn analyze_text_with_llm(
     fragments: &[SubtitleFragment],
     config: &TextAnalysisConfig,
     app_handle: &AppHandle,
-    mut cancel_rx: Receiver<()>,
+    cancel_rx: Receiver<()>,
 ) -> AppResult<Vec<f64>> {
     if fragments.is_empty() {
         return Ok(Vec::new());
@@ -469,240 +828,22 @@ pub async fn analyze_text_with_llm(
             app_handle,
             "LLM",
             "info",
-            &format!("Поиск локальной GGUF-модели для llama-cli (выбрана: '{}')...", config.model_name),
+            &format!("Запуск анализа через llama-cli (модель: '{}')...", config.model_name),
         );
-        let is_legacy_default = config.model_name == "models/qwen-1.5b-chat.gguf"
-            || config.model_name == "qwen-1.5b-chat.gguf";
-        let exact_match = if is_legacy_default {
-            crate::models::resolve_any_llm_model(app_handle, Some(&config.model_name))
-        } else {
-            crate::models::resolve_model_path(app_handle, &config.model_name)
-        };
-        let mut resolved_model = exact_match
-            .clone()
-            .or_else(|| crate::models::resolve_any_llm_model(app_handle, Some(&config.model_name)));
-
-        if let Some(ref primary_path) = resolved_model {
-            let primary_str = primary_path.to_string_lossy().to_string();
-            if is_model_marked_broken(&primary_str) {
-                // Проверяем, нет ли другой рабочей GGUF-модели на диске (например, qwen2.5-3b-instruct в Roaming вместо битой qwen-1.5b в Local)
-                if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
-                    let alt_str = alt_path.to_string_lossy().to_string();
-                    if !is_model_marked_broken(&alt_str) && alt_str != primary_str {
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "info",
-                            &format!(
-                                "Переключение с проблемной модели '{}' на исправную локальную GGUF-модель '{}'",
-                                primary_path.display(),
-                                alt_path.display()
-                            ),
-                        );
-                        resolved_model = Some(alt_path);
-                    }
+        match analyze_with_llama_cli(fragments, Some(&config.model_name), app_handle, cancel_rx.resubscribe()).await {
+            Ok(scores) => return Ok(scores),
+            Err(e) => {
+                if e.to_string().contains("Отменено") {
+                    return Err(e);
                 }
-            }
-        }
-
-        if let Some(mut model_path) = resolved_model {
-            let mut model_path_str = model_path.to_string_lossy().to_string();
-
-            if exact_match.is_none() {
                 crate::logger::emit_log(
                     app_handle,
                     "LLM",
                     "warn",
-                    &format!(
-                        "Выбранная модель '{}' ещё не скачана в Менеджере ИИ-моделей. Найдена резервная локальная модель: '{}'",
-                        config.model_name,
-                        model_path.display()
-                    ),
-                );
-            }
-
-            if is_model_marked_broken(&model_path_str) {
-                crate::logger::emit_log(
-                    app_handle,
-                    "LLM",
-                    "warn",
-                    &format!(
-                        "Модель '{}' ранее показала ошибку токенизатора в этой сессии. Мгновенное применение встроенного NLP-анализатора полных фраз.",
-                        model_path.display()
-                    ),
+                    &format!("llama-cli не может быть запущен ({}). Предохранитель переключает на встроенный NLP-движок.", e),
                 );
                 return Ok(compute_text_scores_advanced(fragments));
             }
-
-            crate::logger::emit_log(
-                app_handle,
-                "LLM",
-                "info",
-                &format!("Запуск локального llama-cli с моделью: '{}' (контекст: 2048, контроль целостности фраз)", model_path.display()),
-            );
-            let mut all_scores = Vec::with_capacity(fragments.len());
-            let batch_size = 35;
-            let total_batches = (fragments.len() + batch_size - 1) / batch_size;
-            let mut use_gpu = true;
-            let mut gpu_succeeded_once = false;
-            let mut consecutive_parse_failures = 0usize;
-
-            for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
-                if cancel_rx.try_recv().is_ok() {
-                    crate::logger::emit_log(app_handle, "LLM", "warn", "Анализ отменен пользователем.");
-                    return Err(AppError::Pipeline("Отменено пользователем".into()));
-                }
-
-                crate::logger::emit_log(
-                    app_handle,
-                    "LLM",
-                    "info",
-                    &format!("Пакет {}/{}: анализ {} реплик через llama-cli (GPU offload={})...", batch_idx + 1, total_batches, chunk.len(), use_gpu),
-                );
-
-                let prompt = build_prompt(chunk);
-                let mut batch_res = run_llama_cli(
-                    app_handle,
-                    &model_path.to_string_lossy(),
-                    &prompt,
-                    chunk.len(),
-                    use_gpu,
-                    cancel_rx.resubscribe(),
-                ).await;
-
-                // Переключаемся на чистый CPU ТОЛЬКО если сбой произошел на самом первом пакете (когда GPU еще ни разу не выдал валидный ответ).
-                // Если GPU уже успешно обработал предыдущие пакеты 1..N, то видеокарта и GGUF-модель полностью исправны, и тратить 38с на CPU не нужно!
-                let gpu_output_corrupted = match &batch_res {
-                    Ok(out) => parse_json_array(out, chunk.len()).is_none(),
-                    Err(_) => true,
-                };
-
-                if gpu_output_corrupted && use_gpu && !gpu_succeeded_once {
-                    // Прежде чем отключать GPU, проверяем: возможно, выбрана старая/битая GGUF-модель (например qwen-1.5b в Local),
-                    // тогда как рядом в Roaming установлена исправная qwen2.5-3b-instruct!
-                    mark_model_broken(&model_path_str);
-                    if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
-                        let alt_str = alt_path.to_string_lossy().to_string();
-                        if !is_model_marked_broken(&alt_str) && alt_str != model_path_str {
-                            crate::logger::emit_log(
-                                app_handle,
-                                "LLM",
-                                "warn",
-                                &format!(
-                                    "Модель '{}' выдала невалидный ответ. Автоматическое переключение на другую установленную GGUF-модель '{}' (GPU)...",
-                                    model_path.display(),
-                                    alt_path.display()
-                                ),
-                            );
-                            model_path = alt_path;
-                            model_path_str = alt_str;
-                            batch_res = run_llama_cli(
-                                app_handle,
-                                &model_path_str,
-                                &prompt,
-                                chunk.len(),
-                                true,
-                                cancel_rx.resubscribe(),
-                            )
-                            .await;
-                        }
-                    }
-
-                    let still_corrupted = match &batch_res {
-                        Ok(out) => parse_json_array(out, chunk.len()).is_none(),
-                        Err(_) => true,
-                    };
-
-                    if still_corrupted {
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "warn",
-                            "Обнаружен сбой генерации на GPU в первом пакете (артефакты CUDA FP16 / невалидный вывод). Отключение CUDA для llama-cli (переход на чистый CPU) и повтор пакета...",
-                        );
-                        use_gpu = false;
-                        batch_res = run_llama_cli(
-                            app_handle,
-                            &model_path_str,
-                            &prompt,
-                            chunk.len(),
-                            false,
-                            cancel_rx.resubscribe(),
-                        )
-                        .await;
-                    }
-                }
-
-                match batch_res {
-                    Ok(result) => {
-                        let parsed = parse_json_array(&result, chunk.len());
-                        if let Some(ref batch_scores) = parsed {
-                            consecutive_parse_failures = 0;
-                            if use_gpu {
-                                gpu_succeeded_once = true;
-                            }
-                            crate::logger::emit_log(
-                                app_handle,
-                                "LLM",
-                                "info",
-                                &format!("✓ Пакет {}/{}: получено {} валидных оценок от llama-cli", batch_idx + 1, total_batches, batch_scores.len()),
-                            );
-                            all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
-                        } else {
-                            consecutive_parse_failures += 1;
-                            crate::logger::emit_log(
-                                app_handle,
-                                "LLM",
-                                "info",
-                                &format!(
-                                    "Пакет {}/{}: нестандартный формат ответа LLM, для {} реплик применен семантический NLP-анализатор полных фраз.",
-                                    batch_idx + 1,
-                                    total_batches,
-                                    chunk.len()
-                                ),
-                            );
-                            all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
-
-                            // Помечаем модель как сломанную ТОЛЬКО если она ни разу не выдала валидный ответ (!gpu_succeeded_once)
-                            if !gpu_succeeded_once && (!use_gpu || consecutive_parse_failures >= 2) && batch_idx + 1 < total_batches {
-                                mark_model_broken(&model_path_str);
-                                crate::logger::emit_log(
-                                    app_handle,
-                                    "LLM",
-                                    "warn",
-                                    "Предохранитель LLM: выбранная GGUF-модель выдает некорректные токены. Мгновенное переключение всех оставшихся пакетов на встроенный NLP-движок анализа полных фраз.",
-                                );
-                                let remaining = &fragments[(batch_idx + 1) * batch_size..];
-                                all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "warn",
-                            &format!(
-                                "llama-cli завершился со сбоем ({}). Автоматическое переключение оставшихся пакетов на встроенный скоростной NLP-движок.",
-                                e
-                            ),
-                        );
-                        let remaining = &fragments[batch_idx * batch_size..];
-                        all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
-                        break;
-                    }
-                }
-            }
-            return Ok(all_scores);
-        } else {
-            crate::logger::emit_log(
-                app_handle,
-                "LLM",
-                "warn",
-                &format!("Модель для llama-cli '{}' не найдена. Применяется встроенный NLP-движок.", config.model_name),
-            );
-            return Ok(compute_text_scores_advanced(fragments));
         }
     }
 
@@ -763,10 +904,32 @@ pub async fn analyze_text_with_llm(
                         app_handle,
                         "LLM",
                         "warn",
-                        &format!("Ollama недоступна ({})! Переключение оставшихся пакетов на встроенный NLP анализ.", e),
+                        &format!("Предохранитель Ollama: сервис недоступен ({})! Каскадный переход на llama-cli...", e),
                     );
                     let remaining = &fragments[batch_idx * batch_size..];
-                    all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                    match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
+                        Ok(llama_scores) => {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "info",
+                                &format!("✓ Резервный llama-cli успешно обработал {} оставшихся реплик", remaining.len()),
+                            );
+                            all_scores.extend_from_slice(&llama_scores);
+                        }
+                        Err(llama_err) => {
+                            if llama_err.to_string().contains("Отменено") {
+                                return Err(llama_err);
+                            }
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "warn",
+                                &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
+                            );
+                            all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                        }
+                    }
                     break;
                 }
             }
@@ -797,13 +960,14 @@ pub async fn analyze_text_with_llm(
         );
 
         let client = Client::builder()
-            .timeout(Duration::from_secs(60))
+            .timeout(Duration::from_secs(120))
             .build()
             .unwrap_or_default();
 
         let mut all_scores = Vec::with_capacity(fragments.len());
-        let batch_size = 30;
+        let batch_size = 24;
         let total_batches = (fragments.len() + batch_size - 1) / batch_size;
+        let mut consecutive_failures = 0usize;
 
         for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
             if cancel_rx.try_recv().is_ok() {
@@ -825,10 +989,49 @@ pub async fn analyze_text_with_llm(
             );
 
             let prompt = build_prompt(chunk);
-            match run_openai(&client, config, &prompt, app_handle).await {
-                Ok(result) => {
+            let mut result_opt = None;
+            for attempt in 1..=2 {
+                match run_openai(&client, config, &prompt, app_handle).await {
+                    Ok(res) => {
+                        result_opt = Some(res);
+                        break;
+                    }
+                    Err(e) => {
+                        if attempt < 2 {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "warn",
+                                &format!(
+                                    "Пакет {}/{}: задержка/сбой сети ({}), повторный запрос через 2 сек...",
+                                    batch_idx + 1,
+                                    total_batches,
+                                    e
+                                ),
+                            );
+                            tokio::time::sleep(Duration::from_millis(2000)).await;
+                        } else {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "warn",
+                                &format!(
+                                    "Пакет {}/{}: повторный запрос не удался ({}).",
+                                    batch_idx + 1,
+                                    total_batches,
+                                    e
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+
+            match result_opt {
+                Some(result) => {
                     let parsed = parse_json_array(&result, chunk.len());
                     if let Some(ref batch_scores) = parsed {
+                        consecutive_failures = 0;
                         crate::logger::emit_log(
                             app_handle,
                             "LLM",
@@ -842,32 +1045,115 @@ pub async fn analyze_text_with_llm(
                         );
                         all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
                     } else {
+                        consecutive_failures += 1;
                         crate::logger::emit_log(
                             app_handle,
                             "LLM",
                             "warn",
                             &format!(
-                                "Пакет {}/{}: OpenAI API вернул нестандартный JSON. Применяется встроенный NLP-анализатор полных фраз.",
+                                "Пакет {}/{}: OpenAI API вернул нестандартный JSON. Применяется семантический NLP-анализатор полных фраз.",
                                 batch_idx + 1,
                                 total_batches
                             ),
                         );
                         all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+
+                        if consecutive_failures >= 2 && batch_idx + 1 < total_batches {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "warn",
+                                "Предохранитель OpenAI API: 2 сбоя парсинга подряд. Каскадное переключение оставшихся пакетов на llama-cli...",
+                            );
+                            let remaining = &fragments[(batch_idx + 1) * batch_size..];
+                            match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
+                                Ok(llama_scores) => {
+                                    crate::logger::emit_log(
+                                        app_handle,
+                                        "LLM",
+                                        "info",
+                                        &format!("✓ Резервный llama-cli успешно обработал {} оставшихся реплик", remaining.len()),
+                                    );
+                                    all_scores.extend_from_slice(&llama_scores);
+                                }
+                                Err(llama_err) => {
+                                    if llama_err.to_string().contains("Отменено") {
+                                        return Err(llama_err);
+                                    }
+                                    crate::logger::emit_log(
+                                        app_handle,
+                                        "LLM",
+                                        "warn",
+                                        &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
+                                    );
+                                    all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                                }
+                            }
+                            break;
+                        }
                     }
                 }
-                Err(e) => {
-                    crate::logger::emit_log(
-                        app_handle,
-                        "LLM",
-                        "warn",
-                        &format!(
-                            "OpenAI API недоступен или вернул ошибку ({}). Автоматическое переключение оставшихся пакетов на встроенный NLP-движок.",
-                            e
-                        ),
-                    );
-                    let remaining = &fragments[batch_idx * batch_size..];
-                    all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
-                    break;
+                None => {
+                    consecutive_failures += 1;
+                    if total_batches == 1 {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "warn",
+                            "Предохранитель OpenAI API: сбой сетевого запроса. Переключение на llama-cli...",
+                        );
+                        match analyze_with_llama_cli(chunk, None, app_handle, cancel_rx.resubscribe()).await {
+                            Ok(llama_scores) => {
+                                all_scores.extend_from_slice(&llama_scores);
+                            }
+                            Err(llama_err) => {
+                                if llama_err.to_string().contains("Отменено") {
+                                    return Err(llama_err);
+                                }
+                                crate::logger::emit_log(
+                                    app_handle,
+                                    "LLM",
+                                    "warn",
+                                    &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
+                                );
+                                all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                            }
+                        }
+                    } else if consecutive_failures >= 2 && batch_idx + 1 < total_batches {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "warn",
+                            "Предохранитель OpenAI API: 2 сбоя запросов подряд. Каскадное переключение оставшихся пакетов на llama-cli...",
+                        );
+                        let remaining = &fragments[(batch_idx + 1) * batch_size..];
+                        match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
+                            Ok(llama_scores) => {
+                                crate::logger::emit_log(
+                                    app_handle,
+                                    "LLM",
+                                    "info",
+                                    &format!("✓ Резервный llama-cli успешно обработал {} оставшихся реплик", remaining.len()),
+                                );
+                                all_scores.extend_from_slice(&llama_scores);
+                            }
+                            Err(llama_err) => {
+                                if llama_err.to_string().contains("Отменено") {
+                                    return Err(llama_err);
+                                }
+                                crate::logger::emit_log(
+                                    app_handle,
+                                    "LLM",
+                                    "warn",
+                                    &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
+                                );
+                                all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                            }
+                        }
+                        break;
+                    } else {
+                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                    }
                 }
             }
         }
@@ -882,26 +1168,23 @@ fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
         let clean_txt = frag.text.replace(['\n', '\r', '"'], " ");
-        let start_tag = if is_sentence_start(fragments, i) { "[НАЧАЛО ФРАЗЫ]" } else { "[ПРОДОЛЖЕНИЕ]" };
-        let end_tag = if is_sentence_end(fragments, i) { "[КОНЕЦ ФРАЗЫ]" } else { "[НЕ ЗАВЕРШЕНА]" };
+        let start_tag = if is_sentence_start(fragments, i) { "[START]" } else { "[CONT]" };
+        let end_tag = if is_sentence_end(fragments, i) { "[END]" } else { "[INCOMPLETE]" };
         lines.push(format!("{}. {} {} \"{}\"", i + 1, start_tag, end_tag, clean_txt.trim()));
     }
     let input_list = lines.join("\n");
     format!(
-        "Instruction: Ты профессиональный режиссер монтажа вертикальных роликов (Shorts, Reels, TikTok) длительностью от 10 до 20 секунд.\n\
-Оцени каждую из {} реплик по шкале от 0.0 до 1.0 для выбора лучших цельных диалогов.\n\
-ВАЖНЫЕ ПРАВИЛА ЦЕЛОСТНОСТИ ФРАЗ:\n\
-1. Высокую оценку (0.75 - 0.95) давай ярким, эмоциональным, драматичным или смешным репликам, которые начинают или завершают законченную мысль ([НАЧАЛО ФРАЗЫ] ... [КОНЕЦ ФРАЗЫ]).\n\
-2. Если строка является обрывком на полуслове ([ПРОДОЛЖЕНИЕ] и [НЕ ЗАВЕРШЕНА]), оценивай её ниже (0.25 - 0.55), чтобы ролик всегда начинался с начала фразы и заканчивался на полной точке/восклицании.\n\
-3. Выведи ТОЛЬКО валидный JSON-массив из {} чисел от 0.0 до 1.0 в том же порядке. Никакого текста и комментариев.\n\
-Пример ответа: [0.85, 0.40, 0.72]\n\n\
-Реплики ({} шт.):\n{}\n\n\
-Ответ (JSON-массив из {} чисел):\n[",
+        "Ты профессиональный режиссер монтажа вертикальных роликов (Shorts, Reels, TikTok) длительностью от 10 до 20 секунд.\n\
+Оцени каждую из {} реплик от 0.0 до 1.0:\n\
+1. 0.75-0.95: законченные эмоциональные, яркие фразы ([START]...[END]).\n\
+2. 0.25-0.50: обрывки и полуфразы ([CONT] или [INCOMPLETE]).\n\
+3. Выведи ТОЛЬКО валидный JSON-массив из {} чисел в диапазоне 0.0-1.0 без текста и комментариев.\n\
+Пример: [0.85, 0.40, 0.72]\n\n\
+Реплики:\n{}\n\n\
+JSON:[",
         fragments.len(),
         fragments.len(),
-        fragments.len(),
-        input_list,
-        fragments.len()
+        input_list
     )
 }
 

@@ -70,28 +70,29 @@ async fn create_clip_srt(
         let mut rel_start = (frag.start - start_sec).max(0.0);
         let mut rel_end = (frag.end - start_sec).min(duration_sec);
         let cue_dur = rel_end - rel_start;
-        if cue_dur < 0.22 {
+        if cue_dur < 0.20 {
             continue;
         }
 
-        // Контроль максимальной длительности удержания одного титра на экране по длине фразы
+        // Контроль максимальной длительности удержания одного титра на экране по длине фразы в живой актерской речи
         let char_count = frag.text.chars().filter(|c| !c.is_whitespace()).count().max(1);
         let word_count = frag.text.split_whitespace().count().max(1);
-        let max_hold_dur = ((char_count as f64) / 11.5)
-            .max((word_count as f64) * 0.42)
-            .clamp(1.10, 5.20);
+        let natural_dur = (0.28 + (char_count as f64) / 11.5)
+            .max((word_count as f64) * 0.40)
+            .clamp(0.65, 5.20);
 
-        if cue_dur > max_hold_dur {
-            rel_end = (rel_start + max_hold_dur).min(duration_sec);
+        // Если титр висит дольше естественной длительности речи — закрываем его сразу по окончании фразы
+        if cue_dur > natural_dur * 1.25 + 0.25 {
+            rel_end = (rel_start + natural_dur).min(duration_sec);
         }
 
-        // Гарантируем чистый зазор минимум 50 мс после предыдущего титра, чтобы реплики не слипались
+        // Гарантируем чистый зазор 60 мс после предыдущего титра, чтобы реплики не слипались
         if let Some(prev) = selected.last_mut() {
-            if rel_start < prev.end + 0.04 {
-                if prev.end - prev.start > 0.70 {
-                    prev.end = (rel_start - 0.04).max(prev.start + 0.45);
+            if rel_start < prev.end + 0.05 {
+                if prev.end - prev.start > 0.60 {
+                    prev.end = (rel_start - 0.05).max(prev.start + 0.40);
                 }
-                rel_start = rel_start.max(prev.end + 0.04);
+                rel_start = rel_start.max(prev.end + 0.05);
             }
         }
 

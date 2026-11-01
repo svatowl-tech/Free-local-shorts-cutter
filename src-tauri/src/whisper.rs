@@ -587,7 +587,7 @@ pub fn tighten_subtitle_timestamps(
     for i in 0..len {
         let (orig_start, orig_end) = raw_bounds[i];
         let actual_dur = (orig_end - orig_start).max(0.0);
-        if actual_dur <= 2.35 {
+        if actual_dur <= 0.80 {
             continue;
         }
 
@@ -599,12 +599,14 @@ pub fn tighten_subtitle_timestamps(
             .max(1);
         let word_count = fragments[i].text.split_whitespace().count().max(1);
 
-        // Естественная длительность произнесения фразы с учетом выразительной актерской речи в дубляже
-        let spoken_dur = (0.65 + (char_count as f64) / 9.5)
-            .max((word_count as f64) * 0.50)
-            .clamp(1.15, 6.00);
-        // Верхний порог допустимой длительности без вмешательства (все реплики короче max_valid_dur не трогаются вообще!)
-        let max_valid_dur = (spoken_dur * 1.60 + 0.75).clamp(2.35, 7.80);
+        // Естественная длительность произнесения фразы в живой актерской речи (русский дубляж)
+        // ~11-13 знаков в секунду, ~2.5-3.2 слова в секунду + 200-300мс на паузы
+        let spoken_dur = (0.28 + (char_count as f64) / 11.5)
+            .max((word_count as f64) * 0.40)
+            .clamp(0.65, 5.50);
+
+        // Допустимый максимум удержания титра на экране: не дольше естественной речи + 400мс
+        let max_valid_dur = (spoken_dur * 1.25 + 0.35).clamp(0.90, 6.20);
 
         if actual_dur <= max_valid_dur {
             continue;
@@ -612,37 +614,16 @@ pub fn tighten_subtitle_timestamps(
 
         tightened_count += 1;
 
-        let prev_orig_end = if i > 0 { raw_bounds[i - 1].1 } else { 0.0 };
+        // В Whisper.cpp начало фразы (orig_start) всегда привязано к моменту произнесения реплики,
+        // а растяжка происходит из-за тишины/музыки ПОСЛЕ фразы!
+        // Поэтому фиксируем начало строго по факту произнесения, а конец ограничиваем естественной длительностью речи:
         let prev_new_end = if i > 0 { fragments[i - 1].end } else { 0.0 };
-        let prev_raw_gap = (orig_start - prev_orig_end).max(0.0);
-        let prev_has_punct = if i > 0 {
-            crate::text_analyzer::has_terminal_punctuation(&fragments[i - 1].text)
-        } else {
-            true
-        };
-        let starts_lower = fragments[i]
-            .text
-            .trim()
-            .chars()
-            .next()
-            .map(|c| c.is_lowercase())
-            .unwrap_or(false);
+        let new_start = orig_start.max(prev_new_end + 0.05);
+        let target_end = new_start + spoken_dur;
+        let new_end = target_end.min(orig_end).max(new_start + 0.60);
 
-        // Если предыдущая строка НЕ завершила предложение (!prev_has_punct) или текущая начинается со строчной буквы без паузы,
-        // то персонаж продолжает говорить прямо с `orig_start` (нельзя отрывать `start` от предыдущей части предложения!).
-        if i > 0 && (!prev_has_punct || starts_lower) && prev_raw_gap <= 0.30 {
-            let new_start = orig_start.max(prev_new_end + 0.04);
-            let new_end = (new_start + spoken_dur).min(orig_end);
-            fragments[i].start = new_start;
-            fragments[i].end = new_end.max(new_start + 0.80);
-        } else {
-            // Во всех остальных случаях растяжки (через тишину/экшен/опенинг перед репликой)
-            // декодер whisper.cpp привязал `orig_start` к концу предыдущего сегмента, а `orig_end` поставил сразу по окончании фразы!
-            let new_end = (orig_end - 0.04).max(orig_start + 0.80);
-            let new_start = (new_end - spoken_dur).max(orig_start).max(prev_new_end + 0.06);
-            fragments[i].start = new_start;
-            fragments[i].end = new_end.max(new_start + 0.80);
-        }
+        fragments[i].start = new_start;
+        fragments[i].end = new_end;
     }
 
     (fragments, tightened_count)
@@ -1106,8 +1087,8 @@ pub async fn transcribe_audio(
     //        флаг `-l auto` ошибочно ставит `lang = en` и переводит весь 24-минутный русский дубляж на ломаный английский!)
     // -mc 0: отключение переноса текстового контекста между 30с окнами (предотвращает 7-минутные циклы «Корректор А. Кулак» после музыки!)
     // -et 2.2: порог энтропии для подавления повторов
-    // -wt 0.01: порог вероятности таймкода слова (устраняет растягивание начала субтитра на предшествующую тишину/музыку)
-    // -ml 150 -sow: в whisper.cpp -ml измеряется в байтах UTF-8 (150 байт = ~75 русских букв) + разбиение строго по целым словам (-sow)
+    // -wt 0.05: порог вероятности таймкода слова (устраняет растягивание начала субтитра на предшествующую тишину/музыку)
+    // -ml 90 -sow: в whisper.cpp -ml измеряется в байтах UTF-8 (90 байт = ~45 русских букв) + разбиение строго по целым словам (-sow)
     // -pp: вывод процентов прогресса
     let command = command
         .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
@@ -1116,8 +1097,8 @@ pub async fn transcribe_audio(
             "-l", "ru",
             "-mc", "0",
             "-et", "2.2",
-            "-wt", "0.01",
-            "-ml", "150",
+            "-wt", "0.05",
+            "-ml", "90",
             "-sow",
             "-pp",
             "-osrt", 
