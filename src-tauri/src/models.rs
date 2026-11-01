@@ -184,12 +184,12 @@ fn expand_model_aliases(filename: &str) -> Vec<String> {
     let mut search_filenames = vec![filename.to_string()];
     let lower = filename.to_lowercase();
 
-    if lower.contains("qwen-vl") || lower.contains("qwen2-vl") {
-        search_filenames.push("qwen-vl-2b.gguf".to_string());
-        search_filenames.push("Qwen2-VL-2B-Instruct-Q4_K_M.gguf".to_string());
-        search_filenames.push("qwen2-vl-2b-instruct-q4_k_m.gguf".to_string());
-        search_filenames.push("qwen2-vl-2b.gguf".to_string());
+    if lower.contains("llava-phi-3") || lower.contains("llava_phi_3") {
+        search_filenames.push("llava-phi-3-mini-int4.gguf".to_string());
+        search_filenames.push("llava-phi-3-mini-f16.gguf".to_string());
     } else if lower.contains("moondream") {
+        search_filenames.push("moondream2-q4_k.gguf".to_string());
+        search_filenames.push("moondream2-text-model-f16.gguf".to_string());
         search_filenames.push("moondream2-text-model.gguf".to_string());
         search_filenames.push("moondream2.gguf".to_string());
     } else if lower.contains("qwen-0.5b") || lower.contains("qwen2.5-0.5b") {
@@ -261,18 +261,16 @@ pub fn resolve_model_path(app_handle: &AppHandle, model_name_or_path: &str) -> O
     None
 }
 
-/// Поиск парного проектора mmproj для Vision-модели (Qwen2-VL, Moondream2, LLaVA)
+/// Поиск парного проектора mmproj для Vision-модели (Moondream2, LLaVA Phi-3 Mini)
 pub fn resolve_mmproj_for_model(app_handle: &AppHandle, model_path: &Path) -> Option<PathBuf> {
     let parent = model_path.parent();
     let model_stem = model_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     let lower_stem = model_stem.to_lowercase();
 
     let mut mmproj_names = Vec::new();
-    if lower_stem.contains("qwen") {
-        mmproj_names.push("mmproj-Qwen2-VL-2B-Instruct-f16.gguf".to_string());
-        mmproj_names.push("mmproj-qwen2-vl-2b-instruct-q4_k_m.gguf".to_string());
-        mmproj_names.push("mmproj-qwen2-vl-2b.gguf".to_string());
-        mmproj_names.push("qwen-vl-mmproj.gguf".to_string());
+    if lower_stem.contains("llava-phi-3") || lower_stem.contains("llava") {
+        mmproj_names.push("llava-phi-3-mini-mmproj-f16.gguf".to_string());
+        mmproj_names.push("mmproj-model-f16.gguf".to_string());
     } else if lower_stem.contains("moondream") {
         mmproj_names.push("moondream2-mmproj-f16.gguf".to_string());
         mmproj_names.push("mmproj-moondream2.gguf".to_string());
@@ -302,14 +300,17 @@ pub fn resolve_mmproj_for_model(app_handle: &AppHandle, model_path: &Path) -> Op
     None
 }
 
-/// Находит полнофункциональную связку Vision-модели и её проектора mmproj: (model_path, mmproj_path)
+/// Находит полнофункциональную связку Vision-модели и её проектора mmproj: (model_path, mmproj_path),
+/// совместимую с движком llama-vision (llava-cli: архитектуры llama / phi2 / phi3 + clip mmproj)
 pub fn resolve_vision_model_and_projector(
     app_handle: &AppHandle,
     preferred: Option<&str>,
 ) -> Option<(PathBuf, PathBuf)> {
     if let Some(pref) = preferred {
         let trimmed = pref.trim();
-        if !trimmed.is_empty() {
+        let lower_pref = trimmed.to_lowercase();
+        // Игнорируем устаревшие qwen2-vl веса (архитектура qwen2vl не поддерживается бинарником llama-llava-cli)
+        if !trimmed.is_empty() && !lower_pref.contains("qwen2-vl") && !lower_pref.contains("qwen-vl") {
             if let Some(m_path) = resolve_model_path(app_handle, trimmed) {
                 if let Some(proj) = resolve_mmproj_for_model(app_handle, &m_path) {
                     return Some((m_path, proj));
@@ -507,28 +508,28 @@ pub fn get_all_models_config() -> Vec<ModelInfo> {
 
         // ==================== VISION AI (ВИЗУАЛЬНЫЙ АНАЛИЗ КАДРОВ — МОДЕЛЬ + ПРОЕКТОР MMPROJ) ====================
         ModelInfo::vision(
-            "qwen-vl-2b",
-            "Qwen2-VL 2B Vision (Флагман + mmproj)",
-            "Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
-            "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf",
-            1520.0,
-            "Флагманский визуальный ИИ для видео и аниме: глубокий анализ кадров, персонажей, эмоций и динамики. Включает проектор mmproj (2.36 ГБ комплект).",
-            "2B VL + mmproj",
-            "mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
-            "https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-f16.gguf",
-            847.0,
-        ),
-        ModelInfo::vision(
             "moondream2",
-            "Moondream 2 Vision (Быстрая и легкая)",
-            "moondream2-text-model.gguf",
-            "https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-text-model.gguf",
-            780.0,
-            "Сверхлегкая визуальная нейросеть для слабых ПК: быстрое сканирование ключевых кадров без нагрузки на ОЗУ и GPU (1.63 ГБ комплект с mmproj).",
+            "Moondream 2 Vision Q4_K (Быстрая + mmproj)",
+            "moondream2-q4_k.gguf",
+            "https://huggingface.co/salivosa/moondream2-gguf/resolve/main/moondream2-q4_k.gguf",
+            877.0,
+            "Быстрая и легкая Vision-нейросеть (архитектура Phi-2 + CLIP), нативно совместимая с llama-vision: сканирует кадры видео без перегрузки ПК (1.74 ГБ комплект с mmproj).",
             "1.8B + mmproj",
             "moondream2-mmproj-f16.gguf",
-            "https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-mmproj-f16.gguf",
-            850.0,
+            "https://huggingface.co/salivosa/moondream2-gguf/resolve/main/moondream2-mmproj-f16.gguf",
+            868.0,
+        ),
+        ModelInfo::vision(
+            "llava-phi-3-mini",
+            "LLaVA Phi-3 Mini Vision INT4 (Флагман Pro + mmproj)",
+            "llava-phi-3-mini-int4.gguf",
+            "https://huggingface.co/xtuner/llava-phi-3-mini-gguf/resolve/main/llava-phi-3-mini-int4.gguf",
+            2211.0,
+            "Флагманская мультимодальная модель LLaVA (XTuner Phi-3 Mini + CLIP): высокая точность распознавания сцен, эмоций персонажей и экшена (2.79 ГБ комплект с mmproj).",
+            "3.8B INT4 + mmproj",
+            "llava-phi-3-mini-mmproj-f16.gguf",
+            "https://huggingface.co/xtuner/llava-phi-3-mini-gguf/resolve/main/llava-phi-3-mini-mmproj-f16.gguf",
+            579.0,
         ),
     ]
 }

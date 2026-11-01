@@ -58,6 +58,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "applause",
         "выстрелы",
         "выстрел",
+        "перестрелка",
         "вздостный телефон",
         "сигналы",
         "сигнал",
@@ -70,6 +71,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "взрывы",
         "стон",
         "стоны",
+        "what is this",
     ];
     let clean_exact = lower.trim_matches(['.', '!', '?', '-', '—', ' ']);
     if exact_tags.contains(&clean_exact) {
@@ -96,6 +98,8 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "сухиашвили",
         "александрова",
         "кулакова",
+        "закомолдина",
+        "савельева",
         "диматоржок",
         "dimatorzok",
         "субтитры сделал",
@@ -155,7 +159,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
 }
 
 /// Очищает растянутые циклические гласные и слоги Whisper (например «Ооооооо...tragenа» или 20x «Ха-ха-ха...»),
-/// а также сжимает зацикленные повторы одной и той же фразы внутри одной реплики
+/// а также сжимает зацикленные повторы одного и того же слова внутри одной реплики (например «я иду, иду, иду, иду...» x18)
 pub fn clean_stretched_text(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -211,6 +215,43 @@ pub fn clean_stretched_text(text: &str) -> String {
     }
     if lower_comp.matches(", дай").count() >= 4 {
         return "Ай-ай-ай!".to_string();
+    }
+
+    // 3. Сжимаем внутристрочные зацикливания одного слова (например «И сразу же, я иду, иду, иду, иду...» 15 раз подряд)
+    let raw_tokens: Vec<&str> = compressed.split_whitespace().collect();
+    if raw_tokens.len() >= 5 {
+        let mut dedup_tokens: Vec<&str> = Vec::with_capacity(raw_tokens.len());
+        let mut last_norm = String::new();
+        let mut word_run = 0usize;
+        let mut had_word_loop = false;
+
+        for tok in raw_tokens {
+            let norm: String = tok
+                .chars()
+                .filter(|c| c.is_alphabetic())
+                .collect::<String>()
+                .to_lowercase();
+            if !norm.is_empty() && norm == last_norm {
+                word_run += 1;
+                if word_run >= 3 {
+                    had_word_loop = true;
+                    continue;
+                }
+            } else {
+                last_norm = norm;
+                word_run = 1;
+            }
+            dedup_tokens.push(tok);
+        }
+
+        if had_word_loop {
+            let mut rebuilt = dedup_tokens.join(" ");
+            if rebuilt.ends_with(',') {
+                rebuilt.pop();
+                rebuilt.push('!');
+            }
+            return rebuilt;
+        }
     }
 
     compressed
@@ -445,7 +486,97 @@ fn repair_split_words_and_orphans(
     (out, repaired_count)
 }
 
-/// Очищает SRT-файл от мусорных галлюцинаций Whisper, зацикленных повторов и разорванных полуслов/хвостов фраз
+/// Подтягивает таймкоды субтитров под реальную длительность живой речи:
+/// 1) Устраняет «растянутые» блоки Whisper (когда после паузы/боя/музыки Whisper ставит start в конец предыдущей реплики за 10–28 секунд до фактического начала фразы).
+/// 2) Подрезает раннее появление (pre-roll до начала голоса) и позднее зависание (post-roll после окончания фразы),
+///    чтобы субтитр появлялся строго синхронно с первым словом персонажа и исчезал сразу по окончании фразы.
+pub fn tighten_subtitle_timestamps(
+    mut fragments: Vec<crate::text_analyzer::SubtitleFragment>,
+) -> (Vec<crate::text_analyzer::SubtitleFragment>, usize) {
+    if fragments.is_empty() {
+        return (fragments, 0);
+    }
+
+    let len = fragments.len();
+    // Сохраняем исходные границы для точного определения стыков между соседними сегментами Whisper
+    let raw_bounds: Vec<(f64, f64)> = fragments.iter().map(|f| (f.start, f.end)).collect();
+    let mut tightened_count = 0usize;
+
+    for i in 0..len {
+        let (orig_start, orig_end) = raw_bounds[i];
+        let actual_dur = (orig_end - orig_start).max(0.0);
+        if actual_dur <= 0.35 {
+            continue;
+        }
+
+        let char_count = fragments[i]
+            .text
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .count()
+            .max(1);
+        let word_count = fragments[i].text.split_whitespace().count().max(1);
+
+        // Естественная длительность произнесения русской реплики (~12.8 символов/сек или ~0.40 сек/слово)
+        let natural_dur = ((char_count as f64) / 12.8)
+            .max((word_count as f64) * 0.40)
+            .clamp(0.95, 5.20);
+        let max_allowed_dur = (natural_dur * 1.32 + 0.30).clamp(1.30, 5.80);
+
+        let prev_orig_end = if i > 0 { raw_bounds[i - 1].1 } else { 0.0 };
+        let prev_new_end = if i > 0 { fragments[i - 1].end } else { 0.0 };
+        let next_orig_start = if i + 1 < len {
+            raw_bounds[i + 1].0
+        } else {
+            orig_end + 10.0
+        };
+
+        let prev_raw_gap = (orig_start - prev_orig_end).max(0.0);
+        let next_raw_gap = (next_orig_start - orig_end).max(0.0);
+
+        if actual_dur > max_allowed_dur {
+            tightened_count += 1;
+
+            // Если сегмент растянут более чем на 2.2с сверх нормы ИЛИ его начало вплотную приклеено к концу предыдущего сегмента (или началу 30с окна) —
+            // значит Whisper включил предшествующую тишину/музыку/шум боя в начало сегмента, а сама фраза звучит непосредственно перед `orig_end`!
+            if actual_dur > max_allowed_dur + 2.2 || prev_raw_gap <= 0.35 {
+                let tail_trim = if next_raw_gap > 0.25 { 0.10 } else { 0.04 };
+                let new_end = (orig_end - tail_trim).max(orig_start + 0.60);
+                let new_start = (new_end - natural_dur).max(orig_start).max(prev_new_end + 0.05);
+                fragments[i].start = new_start;
+                fragments[i].end = new_end.max(new_start + 0.55);
+            } else {
+                // Иначе перед репликой уже была пауза (голос начался вблизи `orig_start`), но субтитр завис в тишине после окончания фразы
+                let new_start = (orig_start + 0.10).max(prev_new_end + 0.05);
+                let new_end = (new_start + natural_dur).min(orig_end - 0.06);
+                fragments[i].start = new_start;
+                fragments[i].end = new_end.max(new_start + 0.55);
+            }
+        } else if actual_dur > natural_dur + 0.18 {
+            // Умеренно широкий сегмент: подрезаем ранний pre-roll (до начала голоса) и поздний хвост (после окончания голоса)
+            let excess = actual_dur - natural_dur;
+            let lead_trim = (excess * 0.48).clamp(0.07, 0.32);
+            let tail_trim = (excess * 0.52).clamp(0.08, 0.40);
+            let new_start = (orig_start + lead_trim).max(prev_new_end + 0.04);
+            let new_end = (orig_end - tail_trim).max(new_start + 0.55);
+            if excess >= 0.45 {
+                tightened_count += 1;
+            }
+            fragments[i].start = new_start;
+            fragments[i].end = new_end;
+        } else if actual_dur >= 1.25 {
+            // Компактный сегмент: легкая микро-подрезка краев (60 мс в начале и 75 мс в конце), чтобы титр не опережал губы персонажа
+            let new_start = (orig_start + 0.06).max(prev_new_end + 0.04);
+            let new_end = (orig_end - 0.075).max(new_start + 0.50);
+            fragments[i].start = new_start;
+            fragments[i].end = new_end;
+        }
+    }
+
+    (fragments, tightened_count)
+}
+
+/// Очищает SRT-файл от мусорных галлюцинаций Whisper, зацикленных повторов, разорванных полуслов/хвостов фраз и растянутых таймкодов
 pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppResult<usize> {
     let content = tokio::fs::read_to_string(srt_path).await.map_err(AppError::Io)?;
     let raw_fragments = crate::text_analyzer::parse_srt(&content);
@@ -515,16 +646,18 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     let clean_fragments = deduplicate_multiline_loops(clean_fragments);
     let removed = raw_count.saturating_sub(clean_fragments.len());
     let (clean_fragments, stitched_words) = repair_split_words_and_orphans(clean_fragments);
+    let (clean_fragments, tightened_cues) = tighten_subtitle_timestamps(clean_fragments);
 
-    if removed > 0 || stitched_words > 0 {
+    if removed > 0 || stitched_words > 0 || tightened_cues > 0 {
         crate::logger::emit_log(
             app_handle,
             "Whisper",
             "info",
             &format!(
-                "Очистка субтитров: удалено {} мусорных/дублирующихся строк, склеено {} разорванных полуслов/фраз, итого {} чистых реплик.",
+                "Очистка и синхронизация субтитров: удалено {} мусорных/дублирующихся строк, склеено {} полуслов/фраз, подтянуто {} растянутых таймкодов, итого {} точных реплик.",
                 removed,
                 stitched_words,
+                tightened_cues,
                 clean_fragments.len()
             ),
         );
@@ -813,6 +946,7 @@ pub async fn transcribe_audio(
     // -l auto: автоопределение русского/любого языка
     // -mc 0: отключение переноса текстового контекста между 30с окнами (предотвращает 7-минутные циклы «Корректор А. Кулак» после музыки!)
     // -et 2.2: порог энтропии для подавления повторов
+    // -wt 0.01: порог вероятности таймкода слова (устраняет растягивание начала субтитра на предшествующую тишину/музыку)
     // -ml 150 -sow: в whisper.cpp -ml измеряется в байтах UTF-8 (150 байт = ~75 русских букв) + разбиение строго по целым словам (-sow)
     // -pp: вывод процентов прогресса
     let command = command
@@ -822,6 +956,7 @@ pub async fn transcribe_audio(
             "-l", "auto",
             "-mc", "0",
             "-et", "2.2",
+            "-wt", "0.01",
             "-ml", "150",
             "-sow",
             "-pp",

@@ -173,36 +173,36 @@ export const CATALOG_MODELS: ModelInfo[] = [
     exists: false,
     local_path: ''
   },
-  // Vision AI (<= 2B + mmproj projector)
-  {
-    id: 'qwen-vl-2b',
-    name: 'Qwen2-VL 2B Vision (Флагман + mmproj)',
-    filename: 'Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
-    url: 'https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/Qwen2-VL-2B-Instruct-Q4_K_M.gguf',
-    size_mb: 1520,
-    description: 'Флагманский визуальный ИИ для видео и аниме: глубокий анализ кадров, персонажей, эмоций и динамики. Включает проектор mmproj (2.36 ГБ комплект).',
-    category: 'vision',
-    params: '2B VL + mmproj',
-    exists: false,
-    local_path: '',
-    mmproj_filename: 'mmproj-Qwen2-VL-2B-Instruct-f16.gguf',
-    mmproj_url: 'https://huggingface.co/bartowski/Qwen2-VL-2B-Instruct-GGUF/resolve/main/mmproj-Qwen2-VL-2B-Instruct-f16.gguf',
-    mmproj_size_mb: 847
-  },
+  // Vision AI (Совместимые с llama-vision / llava-cli модели + проектор mmproj)
   {
     id: 'moondream2',
-    name: 'Moondream 2 Vision (Быстрая и легкая)',
-    filename: 'moondream2-text-model.gguf',
-    url: 'https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-text-model.gguf',
-    size_mb: 780,
-    description: 'Сверхлегкая визуальная нейросеть для слабых ПК: быстрое сканирование ключевых кадров без нагрузки на ОЗУ и GPU (1.63 ГБ комплект с mmproj).',
+    name: 'Moondream 2 Vision Q4_K (Быстрая + mmproj)',
+    filename: 'moondream2-q4_k.gguf',
+    url: 'https://huggingface.co/salivosa/moondream2-gguf/resolve/main/moondream2-q4_k.gguf',
+    size_mb: 877,
+    description: 'Быстрая и легкая Vision-нейросеть (архитектура Phi-2 + CLIP), нативно совместимая с llama-vision: сканирует кадры видео без перегрузки ПК (1.74 ГБ комплект с mmproj).',
     category: 'vision',
     params: '1.8B + mmproj',
     exists: false,
     local_path: '',
     mmproj_filename: 'moondream2-mmproj-f16.gguf',
-    mmproj_url: 'https://huggingface.co/vikhyatk/moondream2/resolve/9776ec4856f71d5dd14d9de1503c80a2b5e2a25f/moondream2-mmproj-f16.gguf',
-    mmproj_size_mb: 850
+    mmproj_url: 'https://huggingface.co/salivosa/moondream2-gguf/resolve/main/moondream2-mmproj-f16.gguf',
+    mmproj_size_mb: 868
+  },
+  {
+    id: 'llava-phi-3-mini',
+    name: 'LLaVA Phi-3 Mini Vision INT4 (Флагман Pro + mmproj)',
+    filename: 'llava-phi-3-mini-int4.gguf',
+    url: 'https://huggingface.co/xtuner/llava-phi-3-mini-gguf/resolve/main/llava-phi-3-mini-int4.gguf',
+    size_mb: 2211,
+    description: 'Флагманская мультимодальная модель LLaVA (XTuner Phi-3 Mini + CLIP): высокая точность распознавания сцен, эмоций персонажей и экшена (2.79 ГБ комплект с mmproj).',
+    category: 'vision',
+    params: '3.8B INT4 + mmproj',
+    exists: false,
+    local_path: '',
+    mmproj_filename: 'llava-phi-3-mini-mmproj-f16.gguf',
+    mmproj_url: 'https://huggingface.co/xtuner/llava-phi-3-mini-gguf/resolve/main/llava-phi-3-mini-mmproj-f16.gguf',
+    mmproj_size_mb: 579
   }
 ];
 
@@ -251,6 +251,7 @@ const createModelsStore = () => {
       const pipeState = get(pipelineStore);
       const installedWhisper = models.filter(m => m.category === 'whisper' && m.exists);
       const installedLlm = models.filter(m => m.category === 'llm' && m.exists);
+      const installedVision = models.filter(m => m.category === 'vision' && m.exists);
 
       if (installedWhisper.length > 0) {
         const currentAsr = pipeState.config.asr_model_path || '';
@@ -268,6 +269,17 @@ const createModelsStore = () => {
           const bestLlm = installedLlm[installedLlm.length - 1];
           pipelineStore.updateConfig({ text_model_name: bestLlm.filename });
         }
+      }
+
+      const currentVision = pipeState.config.vision_model_path || '';
+      if (installedVision.length > 0) {
+        const currentVisionInstalled = installedVision.some(m => currentVision.includes(m.filename));
+        if (!currentVisionInstalled) {
+          const bestVision = installedVision[installedVision.length - 1];
+          pipelineStore.updateConfig({ vision_model_path: `models/${bestVision.filename}` });
+        }
+      } else if (currentVision.toLowerCase().includes('qwen')) {
+        pipelineStore.updateConfig({ vision_model_path: 'models/moondream2-q4_k.gguf' });
       }
 
       // Подписываемся на прогресс скачивания

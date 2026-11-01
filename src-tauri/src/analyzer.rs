@@ -62,12 +62,25 @@ pub async fn analyze_video(
     // Если модели нет, нет проектора mmproj или sidecar не установлен — сразу запускаем двухфакторный алгоритм (FFmpeg Scene Detect + Audio Energy)
     if vision_pair.is_none() || !has_vision_sidecar {
         if vision_pair.is_none() {
-            crate::logger::emit_log(
-                &app_handle,
-                "Analyzer",
-                "info",
-                "Vision-модель или сопутствующий проектор mmproj не найдены в папке models. Запуск двухфакторного анализа (FFmpeg Scene Detect + Audio Energy)...",
-            );
+            let pref_str = model_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            if pref_str.contains("qwen2-vl") || pref_str.contains("qwen-vl") {
+                crate::logger::emit_log(
+                    &app_handle,
+                    "Analyzer",
+                    "warn",
+                    "Модель Qwen2-VL использует архитектуру 'qwen2vl', несовместимую с движком llama-vision (llava-cli). Скачайте в Менеджере ИИ-Моделей совместимую Vision-модель 'Moondream 2 Vision' или 'LLaVA Phi-3 Mini'. Переключение на двухфакторный анализ сцен...",
+                );
+            } else {
+                crate::logger::emit_log(
+                    &app_handle,
+                    "Analyzer",
+                    "info",
+                    "Vision-модель или сопутствующий проектор mmproj не найдены в папке models. Запуск двухфакторного анализа (FFmpeg Scene Detect + Audio Energy)...",
+                );
+            }
         } else {
             crate::logger::emit_log(
                 &app_handle,
@@ -85,7 +98,7 @@ pub async fn analyze_video(
         "Analyzer",
         "info",
         &format!(
-            "Обнаружена Vision-модель: '{}' с проектором '{}'. Запуск визуального анализа кадров...",
+            "Обнаружена совместимая Vision-модель: '{}' с проектором '{}'. Запуск визуального анализа кадров...",
             resolved_model.file_name().unwrap_or_default().to_string_lossy(),
             resolved_mmproj.file_name().unwrap_or_default().to_string_lossy()
         ),
@@ -196,7 +209,7 @@ pub async fn analyze_video(
     }
 
     let mut candidates = Vec::new();
-    let prompt = "Опиши этот кадр из видео. Оцени эмоциональную и динамическую напряженность сцены от 0.0 до 1.0. Верни ответ ТОЛЬКО в формате JSON: {\"description\": \"краткое описание сцены\", \"intensity\": 0.8, \"actions\": [\"действие1\"]}";
+    let prompt = "Respond ONLY in valid JSON format: {\"description\": \"short scene description\", \"intensity\": 0.85, \"actions\": [\"action\"]}. Rate visual excitement and emotional intensity of this video frame from 0.0 to 1.0.";
 
     // 3. Анализ кадров (максимум до 10 самых показательных)
     let sample_step = (total_frames / 10).max(1) as usize;
@@ -232,7 +245,7 @@ pub async fn analyze_video(
                     "-ngl", "99",
                     "--temp", "0.1",
                     "-c", "2048",
-                    "-n", "128",
+                    "-n", "96",
                 ]),
             Err(_) => break,
         };

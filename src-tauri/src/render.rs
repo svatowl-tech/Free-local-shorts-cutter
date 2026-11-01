@@ -46,46 +46,78 @@ fn to_ass_color(color: &str) -> String {
 }
 
 /// Вырезает и сдвигает по времени субтитры для конкретного клипа `[start_sec, start_sec + duration_sec]`.
-/// Поскольку FFmpeg при быстром поиске `-ss <start_sec> -i <video>` сбрасывает таймкоды выходного потока в `0.0 .. duration_sec`,
-/// индивидуальный `.srt` со сдвинутыми таймкодами гарантирует 100% точную синхронизацию речи и титров в каждом клипе!
+/// Дополнительно контролирует естественную длительность каждой фразы внутри клипа и исключает наслоение соседних реплик,
+/// чтобы субтитры появлялись строго в момент произнесения фразы и исчезали сразу после её завершения.
 async fn create_clip_srt(
     full_srt_path: &Path,
     start_sec: f64,
     duration_sec: f64,
 ) -> Option<PathBuf> {
     let content = tokio::fs::read_to_string(full_srt_path).await.ok()?;
-    let all_fragments = crate::text_analyzer::parse_srt(&content);
+    let raw_fragments = crate::text_analyzer::parse_srt(&content);
+    let (all_fragments, _) = crate::whisper::tighten_subtitle_timestamps(raw_fragments);
     let end_sec = start_sec + duration_sec;
 
-    let mut clip_cues = String::new();
-    let mut cue_idx = 1usize;
+    let mut selected: Vec<crate::text_analyzer::SubtitleFragment> = Vec::new();
 
     for frag in all_fragments {
-        if frag.end <= start_sec + 0.05 || frag.start >= end_sec - 0.05 {
+        if frag.end <= start_sec + 0.08 || frag.start >= end_sec - 0.08 {
             continue;
         }
         if crate::whisper::is_whisper_hallucination(&frag.text) {
             continue;
         }
 
-        let rel_start = (frag.start - start_sec).max(0.0);
-        let rel_end = (frag.end - start_sec).min(duration_sec);
-        if rel_end - rel_start < 0.15 {
+        let mut rel_start = (frag.start - start_sec).max(0.0);
+        let mut rel_end = (frag.end - start_sec).min(duration_sec);
+        let cue_dur = rel_end - rel_start;
+        if cue_dur < 0.22 {
             continue;
         }
 
-        clip_cues.push_str(&format!(
-            "{}\n{} --> {}\n{}\n\n",
-            cue_idx,
-            crate::whisper::format_srt_timestamp(rel_start),
-            crate::whisper::format_srt_timestamp(rel_end),
-            frag.text.trim()
-        ));
-        cue_idx += 1;
+        // Контроль максимальной длительности удержания одного титра на экране по длине фразы
+        let char_count = frag.text.chars().filter(|c| !c.is_whitespace()).count().max(1);
+        let word_count = frag.text.split_whitespace().count().max(1);
+        let max_hold_dur = ((char_count as f64) / 11.5)
+            .max((word_count as f64) * 0.42)
+            .clamp(1.10, 5.20);
+
+        if cue_dur > max_hold_dur {
+            rel_end = (rel_start + max_hold_dur).min(duration_sec);
+        }
+
+        // Гарантируем чистый зазор минимум 50 мс после предыдущего титра, чтобы реплики не слипались
+        if let Some(prev) = selected.last_mut() {
+            if rel_start < prev.end + 0.04 {
+                if prev.end - prev.start > 0.70 {
+                    prev.end = (rel_start - 0.04).max(prev.start + 0.45);
+                }
+                rel_start = rel_start.max(prev.end + 0.04);
+            }
+        }
+
+        if rel_end - rel_start >= 0.22 {
+            selected.push(crate::text_analyzer::SubtitleFragment {
+                start: rel_start,
+                end: rel_end,
+                text: frag.text.trim().to_string(),
+            });
+        }
     }
 
-    if cue_idx == 1 {
+    if selected.is_empty() {
         return None;
+    }
+
+    let mut clip_cues = String::new();
+    for (idx, cue) in selected.iter().enumerate() {
+        clip_cues.push_str(&format!(
+            "{}\n{} --> {}\n{}\n\n",
+            idx + 1,
+            crate::whisper::format_srt_timestamp(cue.start),
+            crate::whisper::format_srt_timestamp(cue.end),
+            cue.text
+        ));
     }
 
     let ts = SystemTime::now()
@@ -119,14 +151,16 @@ pub async fn render_clip(
     
     let shell = app_handle.shell();
     
-    // Формируем аргументы для FFmpeg
+    // Формируем аргументы для FFmpeg (-accurate_seek + -avoid_negative_ts make_zero для идеальной синхронизации аудио, видео и фильтра subtitles)
     let mut args = vec![
         "-hide_banner".to_string(),
         "-nostdin".to_string(),
         "-y".to_string(),
+        "-accurate_seek".to_string(),
         "-ss".to_string(), format!("{:.3}", start_sec),
         "-i".to_string(), video_path.to_string_lossy().to_string(),
         "-t".to_string(), format!("{:.3}", duration_sec),
+        "-avoid_negative_ts".to_string(), "make_zero".to_string(),
     ];
 
     let mut vf_filters = vec![];

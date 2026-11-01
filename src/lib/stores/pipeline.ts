@@ -62,7 +62,7 @@ const DEFAULT_CONFIG: PipelineConfig = {
   max_clips_count: 10,
   vertical_format: true,
   asr_model_path: 'models/ggml-base.bin',
-  vision_model_path: 'models/qwen-vl-2b.gguf',
+  vision_model_path: 'models/moondream2-q4_k.gguf',
   text_engine: 'llama',
   text_model_name: 'qwen2.5-3b-instruct-q4_k_m.gguf',
   ollama_url: 'http://localhost:11434',
