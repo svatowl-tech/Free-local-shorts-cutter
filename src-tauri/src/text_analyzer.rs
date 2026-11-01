@@ -806,7 +806,7 @@ pub async fn analyze_text_with_llm(
     fragments: &[SubtitleFragment],
     config: &TextAnalysisConfig,
     app_handle: &AppHandle,
-    cancel_rx: Receiver<()>,
+    mut cancel_rx: Receiver<()>,
 ) -> AppResult<Vec<f64>> {
     if fragments.is_empty() {
         return Ok(Vec::new());
