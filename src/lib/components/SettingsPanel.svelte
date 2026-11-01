@@ -60,17 +60,12 @@
     if (cfg.openai_model) openaiModel = cfg.openai_model;
 
     if (cfg.openai_profile_id && savedOpenAiProfiles.some(p => p.id === cfg.openai_profile_id)) {
-      selectOpenAiProfile(cfg.openai_profile_id, false);
+      selectOpenAiProfile(cfg.openai_profile_id, true);
     } else if (savedOpenAiProfiles.length > 0) {
       const matched = savedOpenAiProfiles.find(
         p => p.base_url === openaiBaseUrl && p.api_key === openaiApiKey
       ) || savedOpenAiProfiles[0];
-      selectedProfileId = matched.id;
-      profileName = matched.name;
-      fetchedModels = matched.available_models || [];
-      if (!openaiApiKey && matched.api_key) {
-        selectOpenAiProfile(matched.id, false);
-      }
+      selectOpenAiProfile(matched.id, true);
     }
   }
 
@@ -314,6 +309,33 @@
 
   function handleTextEngineChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
+    if (value === 'openai') {
+      const activeProf = savedOpenAiProfiles.find(p => p.id === selectedProfileId) || savedOpenAiProfiles[0];
+      if (activeProf) {
+        selectedProfileId = activeProf.id;
+        profileName = activeProf.name;
+        openaiBaseUrl = activeProf.base_url;
+        openaiApiKey = activeProf.api_key;
+        openaiModel = activeProf.model;
+        fetchedModels = activeProf.available_models || [];
+        pipelineStore.updateConfig({
+          text_engine: 'openai',
+          openai_profile_id: activeProf.id,
+          openai_base_url: activeProf.base_url,
+          openai_api_key: activeProf.api_key,
+          openai_model: activeProf.model
+        });
+        return;
+      } else {
+        pipelineStore.updateConfig({
+          text_engine: 'openai',
+          openai_base_url: openaiBaseUrl.trim() || 'https://api.openai.com/v1',
+          openai_api_key: openaiApiKey.trim(),
+          openai_model: openaiModel.trim() || 'gpt-4o-mini'
+        });
+        return;
+      }
+    }
     pipelineStore.updateConfig({ text_engine: value });
   }
 
@@ -412,21 +434,21 @@
         <div class="flex justify-between items-baseline">
           <span class="label-mono text-[#e2e2e4]">Количество клипов</span>
           <span class="font-mono text-[#5865f2] text-xs font-semibold">
-            до {$pipelineStore.config.max_clips_count ?? 10} шт.
+            {($pipelineStore.config.max_clips_count ?? 10) === 0 ? 'Авто (все яркие моменты)' : `до ${$pipelineStore.config.max_clips_count ?? 10} шт.`}
           </span>
         </div>
         <input 
           type="range" 
-          min="1" 
-          max="30" 
+          min="0" 
+          max="50" 
           step="1" 
           value={$pipelineStore.config.max_clips_count ?? 10}
           on:input={handleMaxClipsChange}
           disabled={$pipelineStore.status === 'running'}
         />
         <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-          <span>1–3 (Только главные)</span>
-          <span>30 (Все подходящие)</span>
+          <span>0 (Авто / без лимита)</span>
+          <span>50 (Максимум)</span>
         </div>
       </div>
 

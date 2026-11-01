@@ -147,6 +147,48 @@ pub async fn run_pipeline(
                     config.text_model_name.clone()
                 };
 
+                let mut openai_base_url = config
+                    .openai_base_url
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+                let mut openai_api_key = config.openai_api_key.clone().unwrap_or_default();
+                let mut openai_model_name = effective_model_name;
+
+                // Защитный слой: если выбран OpenAI API, но ключ пустой или остался дефолтный адрес api.openai.com,
+                // автоматически подгружаем сохраненный пользователем профиль (например PlusVibe) из openai_profiles.json
+                if config.text_engine == "openai" && (openai_api_key.trim().is_empty() || openai_base_url.contains("api.openai.com")) {
+                    let profiles_path = crate::commands::resolve_openai_profiles_path(&app_handle);
+                    if profiles_path.exists() {
+                        if let Ok(content) = std::fs::read_to_string(&profiles_path) {
+                            if let Ok(profiles) = serde_json::from_str::<Vec<crate::commands::OpenAiProfile>>(&content) {
+                                let target_prof = if let Some(ref prof_id) = config.openai_profile_id {
+                                    profiles.iter().find(|p| p.id == *prof_id && !p.api_key.trim().is_empty())
+                                } else {
+                                    None
+                                }.or_else(|| profiles.iter().find(|p| !p.api_key.trim().is_empty()));
+
+                                if let Some(prof) = target_prof {
+                                    crate::logger::emit_log(
+                                        &app_handle,
+                                        "LLM",
+                                        "info",
+                                        &format!(
+                                            "Автоматически подключен сохраненный профиль OpenAI API '{}' (сервер: {}, модель: {}) из хранилища настроек",
+                                            prof.name, prof.base_url, prof.model
+                                        ),
+                                    );
+                                    openai_base_url = prof.base_url.clone();
+                                    openai_api_key = prof.api_key.clone();
+                                    if !prof.model.trim().is_empty() {
+                                        openai_model_name = prof.model.clone();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 let text_config = crate::text_analyzer::TextAnalysisConfig {
                     engine: match config.text_engine.as_str() {
                         "openai" => crate::text_analyzer::TextEngine::OpenAi,
@@ -155,14 +197,10 @@ pub async fn run_pipeline(
                         "builtin" => crate::text_analyzer::TextEngine::Builtin,
                         _ => crate::text_analyzer::TextEngine::Builtin,
                     },
-                    model_name: effective_model_name,
+                    model_name: openai_model_name,
                     ollama_url: config.ollama_url.clone(),
-                    openai_base_url: config
-                        .openai_base_url
-                        .clone()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
-                    openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+                    openai_base_url,
+                    openai_api_key,
                 };
 
                 let scores = match crate::text_analyzer::analyze_text_with_llm(
@@ -251,16 +289,20 @@ pub async fn run_pipeline(
     // Вместо жесткой привязки к 15.0 секундам задаем гибкий коридор длительности (например, от 10 до 20 секунд при цели 15с),
     // чтобы каждый ролик начинался ровно с начала первой фразы и заканчивался ровно после завершения последней фразы!
     let min_dur = (target_dur - 5.0).max(5.0).min(video_duration);
-    let max_dur = (target_dur + 5.0).max(min_dur + 4.0).min(video_duration);
-    let max_clips = config.max_clips_count.unwrap_or(10).clamp(1, 50);
+    let (is_auto_clips, max_clips_limit) = match config.max_clips_count {
+        Some(0) => (true, 60usize),
+        Some(n) => (false, n.clamp(1, 100)),
+        None => (false, 10usize),
+    };
 
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
         "info",
         &format!(
-            "Адаптивный подбор границ клипов по цельным фразам: целевая {:.0}с (гибкий диапазон {:.0}с – {:.0}с, лимит: до {} клипов)",
-            target_dur, min_dur, max_dur, max_clips
+            "Адаптивный подбор границ клипов по цельным фразам: целевая {:.0}с (гибкий диапазон {:.0}с – {:.0}с, лимит: {})",
+            target_dur, min_dur, max_dur,
+            if is_auto_clips { "Авто (все качественные сцены)".to_string() } else { format!("до {} клипов", max_clips_limit) }
         ),
     );
 
@@ -372,7 +414,7 @@ pub async fn run_pipeline(
                 .map(|(i, _)| (i, text_scores.get(i).copied().unwrap_or(0.5)))
                 .collect();
             frag_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (idx, _) in frag_with_scores.iter().copied().take(max_clips * 4) {
+            for (idx, _) in frag_with_scores.iter().copied().take(max_clips_limit * 4) {
                 if let Some(cand) = build_complete_phrase_window(
                     &fragments,
                     &text_scores,
@@ -392,7 +434,7 @@ pub async fn run_pipeline(
             // Если даже строгий построитель диалоговых окон (build_complete_phrase_window) отфильтровал все окна
             // (например, при редких одиночных репликах с длинными паузами), строим аккуратные окна вокруг лучших реплик!
             if candidate_intervals.is_empty() {
-                for (idx, sc) in frag_with_scores.into_iter().take(max_clips * 3) {
+                for (idx, sc) in frag_with_scores.into_iter().take(max_clips_limit * 3) {
                     let f = &fragments[idx];
                     if f.start < intro_skip || f.start >= outro_limit {
                         continue;
@@ -422,7 +464,7 @@ pub async fn run_pipeline(
         }
 
         if candidate_intervals.is_empty() && !scenes.is_empty() {
-            for scn in scenes.iter().take(max_clips * 2) {
+            for scn in scenes.iter().take(max_clips_limit * 2) {
                 let start = (scn.timestamp_sec - 1.0).max(intro_skip).min((video_duration - target_dur).max(0.0));
                 let end = (start + target_dur).min(video_duration);
                 if end - start >= 3.0 {
@@ -468,7 +510,10 @@ pub async fn run_pipeline(
         if !too_close_or_overlaps {
             selected_intervals.push(candidate);
         }
-        if selected_intervals.len() >= max_clips {
+        if !is_auto_clips && selected_intervals.len() >= max_clips_limit {
+            break;
+        }
+        if is_auto_clips && selected_intervals.len() >= 60 {
             break;
         }
     }
@@ -485,7 +530,11 @@ pub async fn run_pipeline(
         &app_handle,
         "Pipeline",
         "info",
-        &format!("[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} качественных клипов (10–20с, лимит: до {}) для таймлайна", suggested_fragments.len(), max_clips),
+        &format!(
+            "[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} качественных клипов (10–20с, {}) для таймлайна",
+            suggested_fragments.len(),
+            if is_auto_clips { "режим: Авто (все лучшие сцены)".to_string() } else { format!("лимит: до {}", max_clips_limit) }
+        ),
     );
     for (i, (start, end, score, first_txt, last_txt)) in selected_intervals.iter().enumerate() {
         crate::logger::emit_log(

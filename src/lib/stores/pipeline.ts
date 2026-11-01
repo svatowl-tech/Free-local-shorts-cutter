@@ -818,6 +818,30 @@ const createPipelineStore = () => {
           'render-progress'
         );
 
+        // Защитная проверка для OpenAI API: гарантируем отправку сохраненного API-ключа и URL
+        if (currentState.config.text_engine === 'openai') {
+          if (!currentState.config.openai_api_key || currentState.config.openai_base_url === 'https://api.openai.com/v1' || !currentState.config.openai_base_url) {
+            try {
+              const raw = typeof window !== 'undefined' ? window.localStorage.getItem('vcp_openai_profiles_v1') : null;
+              if (raw) {
+                const profiles = JSON.parse(raw);
+                if (Array.isArray(profiles) && profiles.length > 0) {
+                  const prof = profiles.find((p: any) => p.id === currentState.config.openai_profile_id) || profiles[0];
+                  if (prof && prof.api_key) {
+                    currentState.config.openai_profile_id = prof.id;
+                    currentState.config.openai_base_url = prof.base_url;
+                    currentState.config.openai_api_key = prof.api_key;
+                    currentState.config.openai_model = prof.model;
+                    addLog(`Подгружен сохраненный профиль OpenAI '${prof.name}' (${prof.base_url})`, 'IPC', 'info');
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('Не удалось прочитать локальные профили OpenAI:', e);
+            }
+          }
+        }
+
         addLog(`Отправка IPC-запроса start_pipeline для файла: ${currentState.video.path}`, 'IPC', 'info');
 
         // Запускаем сам пайплайн

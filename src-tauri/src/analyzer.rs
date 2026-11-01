@@ -101,7 +101,8 @@ pub async fn analyze_video(
         ),
     );
 
-    // Выбираем до 6 самых перспективных сцен с равномерным охватом всей длительности видео (начало, середина, кульминация)
+    // Адаптивный отбор ключевых сцен для глубокого нейросетевого Vision AI (Moondream2 / LLaVA).
+    // Количество кадров масштабируется от длительности видео: от 4 для коротких роликов до 12-16 для длинных серий
     let mut ranked_indices: Vec<usize> = (0..base_scenes.len()).collect();
     ranked_indices.sort_by(|&a, &b| {
         base_scenes[b]
@@ -111,8 +112,28 @@ pub async fn analyze_video(
     });
 
     let max_ts = base_scenes.iter().map(|s| s.timestamp_sec).fold(180.0_f64, f64::max);
-    let min_vision_spacing = (max_ts / 7.5).clamp(45.0, 170.0);
-    let mut top_indices: Vec<usize> = Vec::with_capacity(6);
+    let target_vision_count = if max_ts < 180.0 {
+        4.min(base_scenes.len())
+    } else if max_ts < 600.0 {
+        6.min(base_scenes.len())
+    } else if max_ts < 1200.0 {
+        8.min(base_scenes.len())
+    } else {
+        12.min(base_scenes.len())
+    }.max(3);
+
+    let min_vision_spacing = (max_ts / (target_vision_count as f64 + 1.2)).clamp(25.0, 130.0);
+    let mut top_indices: Vec<usize> = Vec::with_capacity(target_vision_count);
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Analyzer",
+        "info",
+        &format!(
+            "Адаптивный отбор {} ключевых кадров для Vision AI (длительность: {:.0}с, доступно {} сцен-кандидатов, шаг {:.0}с)",
+            target_vision_count, max_ts, base_scenes.len(), min_vision_spacing
+        ),
+    );
 
     for &idx in &ranked_indices {
         let ts = base_scenes[idx].timestamp_sec;
@@ -121,16 +142,16 @@ pub async fn analyze_video(
             .all(|&sel| (base_scenes[sel].timestamp_sec - ts).abs() >= min_vision_spacing)
         {
             top_indices.push(idx);
-            if top_indices.len() >= 6 {
+            if top_indices.len() >= target_vision_count {
                 break;
             }
         }
     }
-    if top_indices.len() < 6 {
+    if top_indices.len() < target_vision_count {
         for &idx in &ranked_indices {
             if !top_indices.contains(&idx) {
                 top_indices.push(idx);
-                if top_indices.len() >= 6 {
+                if top_indices.len() >= target_vision_count {
                     break;
                 }
             }
