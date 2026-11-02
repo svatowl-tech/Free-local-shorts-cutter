@@ -200,8 +200,99 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     false
 }
 
+/// Исправляет слипшиеся слова, характерные для огрехов токенизации Whisper на русском дубляже
+pub fn fix_common_whisper_glued_words(text: &str) -> String {
+    let glued_patterns: &[(&str, &str)] = &[
+        ("недостаточносил", "недостаточно сил"),
+        ("недостаточновремени", "недостаточно времени"),
+        ("недостаточносредств", "недостаточно средств"),
+        ("несмог", "не смог"),
+        ("несмогла", "не смогла"),
+        ("несмогли", "не смогли"),
+        ("немогу", "не могу"),
+        ("неможет", "не может"),
+        ("неможем", "не можем"),
+        ("немогут", "не могут"),
+        ("незнаю", "не знаю"),
+        ("незнает", "не знает"),
+        ("такжекак", "так же как"),
+        ("досихпор", "до сих пор"),
+        ("втожевремя", "в то же время"),
+        ("вконцеконцов", "в конце концов"),
+        ("покрайнеймере", "по крайней мере"),
+        ("другдруга", "друг друга"),
+        ("другдругу", "друг другу"),
+        ("другсдругом", "друг с другом"),
+        ("тожесамое", "то же самое"),
+        ("всееще", "всё ещё"),
+        ("всёеще", "всё ещё"),
+        ("ничегоне", "ничего не"),
+        ("никогдане", "никогда не"),
+    ];
+
+    let mut result = text.to_string();
+    for &(glued, fixed) in glued_patterns {
+        let lower = result.to_lowercase();
+        if let Some(pos) = lower.find(glued) {
+            let is_capitalized = result[pos..].chars().next().map_or(false, |c| c.is_uppercase());
+            let replacement = if is_capitalized {
+                let mut chars = fixed.chars();
+                match chars.next() {
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    None => fixed.to_string(),
+                }
+            } else {
+                fixed.to_string()
+            };
+            result = result[..pos].to_string() + &replacement + &result[pos + glued.len()..];
+        }
+    }
+    result
+}
+
+/// Устраняет артефакты заикания / вдоха Whisper с висячей запятой перед словом (например «Г, госпожа Бреслий!» -> «Госпожа Бреслий!»)
+pub fn fix_whisper_stutters(text: &str) -> String {
+    let mut words: Vec<String> = text.split_whitespace().map(|w| w.to_string()).collect();
+    if words.len() < 2 {
+        return text.to_string();
+    }
+
+    let mut changed = false;
+    let mut i = 0;
+    while i + 1 < words.len() {
+        let w1 = &words[i];
+        let w2 = &words[i + 1];
+
+        // Случай одиночной буквы с запятой: «Г,», «Д,», «Я,», «М,»
+        if (w1.len() <= 4 && w1.chars().count() == 2) && w1.ends_with(',') {
+            let letter1 = w1.chars().next().unwrap_or(' ');
+            let letter2 = w2.chars().find(|c| c.is_alphabetic()).unwrap_or(' ');
+
+            if letter1.is_alphabetic() && letter1.to_lowercase().to_string() == letter2.to_lowercase().to_string() {
+                if letter1.is_uppercase() && !w2.is_empty() {
+                    let mut chars = w2.chars();
+                    if let Some(first) = chars.next() {
+                        words[i + 1] = first.to_uppercase().collect::<String>() + chars.as_str();
+                    }
+                }
+                words.remove(i);
+                changed = true;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    if changed {
+        words.join(" ")
+    } else {
+        text.to_string()
+    }
+}
+
 /// Очищает растянутые циклические гласные и слоги Whisper (например «Ооооооо...tragenа» или 20x «Ха-ха-ха...»),
-/// а также сжимает зацикленные повторы одного и того же слова внутри одной реплики (например «я иду, иду, иду, иду...» x18)
+/// сжимает зацикленные повторы одного и того же слова внутри одной реплики (например «я иду, иду, иду, иду...» x18),
+/// а также исправляет слипшиеся слова и артефакты заикания.
 pub fn clean_stretched_text(text: &str) -> String {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -292,11 +383,23 @@ pub fn clean_stretched_text(text: &str) -> String {
                 rebuilt.pop();
                 rebuilt.push('!');
             }
-            return rebuilt;
+            compressed = rebuilt;
         }
     }
 
-    compressed
+    // 4. Нормализация избыточных точек и артефактов пунктуации
+    let mut normalized = compressed
+        .replace(".....", "...")
+        .replace("....", "...")
+        .replace(",.", ".")
+        .replace(",!", "!")
+        .replace(",?", "?");
+
+    // 5. Устраняем артефакты заикания («Г, госпожа» -> «Госпожа»)
+    normalized = fix_whisper_stutters(&normalized);
+
+    // 6. Исправляем слипшиеся слова («недостаточносил» -> «недостаточно сил»)
+    fix_common_whisper_glued_words(&normalized)
 }
 
 /// Проверяет, содержит ли существующий SRT-файл зацикленные галлюцинации от старых сборок

@@ -762,8 +762,8 @@ fn build_complete_phrase_window(
             }
 
             let dur = post_roll - pre_roll;
-            // Допускаем гибкое адаптивное расширение до +3.8с сверх max_dur для завершения красивого панчлайна/мысли
-            let max_ceiling = max_dur + 3.8;
+            // Допускаем аккуратное адаптивное расширение до +1.2с сверх max_dur для завершения красивого панчлайна/мысли
+            let max_ceiling = max_dur + 1.2;
             if dur > max_ceiling {
                 break;
             }
@@ -791,7 +791,7 @@ fn build_complete_phrase_window(
                 }
 
                 // 2. Сильный штраф за обрыв на слабой реплике («- Да уж.», «- Ясно.», «Прости за ожидание...», «Значит, ты и есть та самая дочка...»),
-                // чтобы алгоритм продолжал окно еще на 2–4 секунды (до 18–22с) и захватывал финальный панчлайн собеседника!
+                // чтобы алгоритм продолжал окно еще на 2–3 секунды и захватывал финальный панчлайн собеседника!
                 if is_weak_end {
                     b_quality -= 1.45;
                 }
@@ -809,14 +809,14 @@ fn build_complete_phrase_window(
                     b_quality -= 0.45;
                 }
 
-                // 5. Небольшой бонус за насыщенность диалога (чтобы полноценная сцена 16–21с с ярким панчлайном выигрывала у сухого 10с обрывка)
+                // 5. Небольшой бонус за насыщенность диалога (чтобы полноценная сцена с ярким панчлайном выигрывала у сухого обрывка)
                 let end_cue_score = text_scores.get(end_idx).copied().unwrap_or(0.45);
                 if end_cue_score >= 0.68 && !is_weak_end {
                     b_quality += 0.25;
                 }
 
-                // Мягкое предпочтение в коридоре 10..22с без жесткого притягивания к 15с
-                let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.18;
+                // Четкое центрирование вокруг целевой длительности target_dur (15с: типично 13с–17с, максимум ~20с)
+                let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.70;
                 b_quality -= dist_penalty;
 
                 if best_choice.as_ref().map_or(true, |prev| b_quality > prev.4) {
@@ -859,7 +859,7 @@ fn build_complete_phrase_window(
 
     let (end_idx, clip_start, clip_end, is_clean_end) = chosen?;
     let clip_dur = clip_end - clip_start;
-    if clip_dur < min_dur * 0.9 || clip_dur > max_dur + 3.9 {
+    if clip_dur < min_dur * 0.9 || clip_dur > max_dur + 1.5 {
         return None;
     }
 

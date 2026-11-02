@@ -127,8 +127,8 @@ pub async fn analyze_video(
         "llama-cli"
     };
 
-    // Нативный VQA-промпт для Moondream 2 и LLaVA (без слова "video", чтобы модель не срабатывала на отказ генерации видео)
-    let vqa_prompt = "\n\nQuestion: Describe the characters, their expressions, and the action in this image in one short sentence.\n\nAnswer:";
+    // Нативный лаконичный VQA-промпт для Moondream 2 и LLaVA (нейтральное описание визуального содержимого кадра)
+    let vqa_prompt = "\n\nQuestion: Describe what is visible in this frame in one concise sentence.\n\nAnswer:";
     let total_vision = top_indices.len() as u32;
     let mut enriched_count = 0usize;
 
@@ -272,6 +272,16 @@ pub async fn analyze_video(
                             current_frame, total_vision, scene_ts, desc, old_int, new_int
                         ),
                     );
+                } else {
+                    crate::logger::emit_log(
+                        &app_handle,
+                        "Analyzer",
+                        "debug",
+                        &format!(
+                            "Vision AI [кадр {}/{} @ {:.1}с]: ответ модели отфильтрован как нерелевантный/отказ («{}»)",
+                            current_frame, total_vision, scene_ts, out.trim().replace(['\r', '\n'], " ")
+                        ),
+                    );
                 }
             }
         }
@@ -333,6 +343,13 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         clean = clean[ans_pos + 7..].trim().to_string();
     }
 
+    // Очищаем префиксы персонажей вроде 'ASSISTANT: ', 'CHILD: ', 'USER: '
+    for prefix in ["ASSISTANT:", "CHILD:", "USER:", "BOT:", "SYSTEM:"] {
+        if let Some(pos) = clean.find(prefix) {
+            clean = clean[pos + prefix.len()..].trim().to_string();
+        }
+    }
+
     // Если модель выдала шаблонный отказ про видео, но в конце описала сам кадр ("...It is a still image of a skull...")
     for marker in [
         "It is a still image of ",
@@ -346,8 +363,30 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         }
     }
 
+    let clean = clean.trim().trim_matches(['"', '\'', '`', ' ']).to_string();
     let lower = clean.to_lowercase();
-    if clean.len() < 6 || lower == "i am an ai assistant." || lower.starts_with("i cannot ") {
+    if clean.len() < 6 {
+        return None;
+    }
+
+    // 3. Строгий фильтр отказов, галлюцинаций и шаблонных ответов VQA-моделей
+    let refusal_signatures = [
+        "i'm sorry", "i am sorry", "sorry, but", "sorry, i",
+        "can't help", "cannot help", "can't assist", "cannot assist",
+        "not a real assistant", "computer generated", "i am an ai", "as an ai",
+        "i am a language model", "as a language model",
+        "don't know what to do", "do not know what to do",
+        "i cannot ", "i can't ", "unable to ", "i am unable",
+        "i don't have access", "i do not have access",
+        "as an assistant", "just a computer",
+    ];
+
+    if refusal_signatures.iter().any(|&sig| lower.contains(sig)) {
+        return None;
+    }
+
+    // Защита от зацикливаний повтора («sorry, sorry...» или «child: child:»)
+    if lower.matches("sorry").count() > 1 || lower.matches("assistant").count() > 1 {
         return None;
     }
 
@@ -464,12 +503,9 @@ async fn run_two_factor_scene_analysis(
             0.0
         };
 
-        // 3. Защита от перекоса в сторону заставки/опенинга (первые 95с и последние 90с в длинных видео > 10 мин)
-        let pos_ratio = (scene_t / duration).clamp(0.0, 1.0);
-        let narrative_factor = if duration > 600.0 && (scene_t < 95.0 || scene_t > duration - 90.0) {
-            0.85
-        } else if pos_ratio >= 0.25 && pos_ratio <= 0.90 {
-            1.02
+        // 3. Защита от перекоса в сторону начальной заставки и конечных титров в длинных видео > 10 мин
+        let narrative_factor = if duration > 600.0 && (scene_t < 60.0 || scene_t > duration - 60.0) {
+            0.88
         } else {
             1.0
         };
@@ -511,14 +547,15 @@ async fn run_two_factor_scene_analysis(
     // В. Сортируем по весу и устраняем скученность (адаптивный шаг для равномерного охвата всего видео)
     candidate_scenes.sort_by(|a, b| b.intensity.partial_cmp(&a.intensity).unwrap_or(std::cmp::Ordering::Equal));
 
-    let min_scene_dist = (duration / 22.0).clamp(15.0, 55.0);
+    let min_scene_dist = (duration / 35.0).clamp(15.0, 42.0);
+    let target_scene_limit = (duration / 65.0).clamp(15.0, 30.0).round() as usize;
     let mut filtered_scenes = Vec::new();
     for sc in candidate_scenes {
         let too_close = filtered_scenes.iter().any(|f: &SceneCandidate| (f.timestamp_sec - sc.timestamp_sec).abs() < min_scene_dist);
         if !too_close {
             filtered_scenes.push(sc);
         }
-        if filtered_scenes.len() >= 15 {
+        if filtered_scenes.len() >= target_scene_limit {
             break;
         }
     }
