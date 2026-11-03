@@ -48,9 +48,22 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     // Одиночные звуковые ремарки КАПСОМ или без скобок
     let exact_tags = [
         "музыка",
+        "звучит музыка",
+        "музыка звучит",
+        "играет музыка",
         "аплодисменты",
         "смех",
+        "смеется",
+        "плачет",
         "вздох",
+        "вздыхает",
+        "кашель",
+        "кашляет",
+        "зевает",
+        "храпит",
+        "рычит",
+        "шипит",
+        "кричит",
         "звук",
         "шум",
         "тишина",
@@ -86,6 +99,8 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     let patterns = [
         "[музыка]",
         "(музыка)",
+        "(звучит музыка)",
+        "[звучит музыка]",
         "[music]",
         "(music)",
         "[аплодисменты]",
@@ -149,12 +164,32 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "позитивный позитивный",
         "speaking russian",
         "speaking foreign",
+        "шови, ма",
+        "хай, баку",
+        "циклсовалею",
+        "кинофотезе",
+        "смей за сентябрье",
     ];
 
     for pat in &patterns {
         if lower.contains(pat) {
             return true;
         }
+    }
+
+    // Фонетическая транслитерация японского/иностранного вокала опенинга и эндинга кириллицей
+    // (например «Шови, ма, хай, баку, и сейса, то-то вага-то, мураши, са, и демур, ги-се,»):
+    // характеризуется обилием запятых (>= 5) между короткими слогами и дефисными псевдословами («то-то», «вага-то», «ги-се»)
+    let comma_count = lower.matches(',').count();
+    let hyphen_words = lower
+        .split_whitespace()
+        .filter(|w| {
+            let trimmed_w = w.trim_matches([',', '.', '!', '?', '-', '—']);
+            trimmed_w.contains('-') && trimmed_w.chars().count() <= 8
+        })
+        .count();
+    if (comma_count >= 5 && hyphen_words >= 2) || comma_count >= 7 {
+        return true;
     }
 
     // Шаблонные титры песен вида «Исполнитель - "Название"» на музыке опенинга/эндинга
@@ -200,7 +235,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     false
 }
 
-/// Исправляет слипшиеся слова, характерные для огрехов токенизации Whisper на русском дубляже
+/// Исправляет слипшиеся слова и устойчивые фонетические искажения Whisper на русском дубляже
 pub fn fix_common_whisper_glued_words(text: &str) -> String {
     let glued_patterns: &[(&str, &str)] = &[
         ("недостаточносил", "недостаточно сил"),
@@ -228,6 +263,11 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("всёеще", "всё ещё"),
         ("ничегоне", "ничего не"),
         ("никогдане", "никогда не"),
+        ("оберез лейтенант сфотографируй", "обер-лейтенант фон Дегуршаф"),
+        ("оберез лейтенант фон дегуршав", "обер-лейтенант фон Дегуршаф"),
+        ("оберез лейтенант", "обер-лейтенант"),
+        ("я полевая командир", "я полевой командир"),
+        ("какие доказательки", "какие доказательства"),
     ];
 
     let mut result = text.to_string();
@@ -250,7 +290,8 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
     result
 }
 
-/// Устраняет артефакты заикания / вдоха Whisper с висячей запятой перед словом (например «Г, госпожа Бреслий!» -> «Госпожа Бреслий!»)
+/// Устраняет артефакты заикания / вдоха Whisper с висячей запятой или многоточием перед словом
+/// (например «Г, госпожа Бреслий!» -> «Госпожа Бреслий!», «В… Воды?» -> «Воды?»)
 pub fn fix_whisper_stutters(text: &str) -> String {
     let mut words: Vec<String> = text.split_whitespace().map(|w| w.to_string()).collect();
     if words.len() < 2 {
@@ -263,12 +304,20 @@ pub fn fix_whisper_stutters(text: &str) -> String {
         let w1 = &words[i];
         let w2 = &words[i + 1];
 
-        // Случай одиночной буквы с запятой: «Г,», «Д,», «Я,», «М,»
-        if (w1.len() <= 4 && w1.chars().count() == 2) && w1.ends_with(',') {
-            let letter1 = w1.chars().next().unwrap_or(' ');
+        let w1_trimmed = w1.trim_start_matches(['-', '—', '«', '"']);
+        let w1_alpha: String = w1_trimmed.chars().take_while(|c| c.is_alphabetic()).collect();
+        let w1_punct = &w1_trimmed[w1_alpha.len()..];
+
+        // Случай одиночной буквы с запятой, точкой или многоточием: «Г,», «В…», «П...»
+        if w1_alpha.chars().count() == 1
+            && matches!(w1_punct, "," | "…" | "..." | ".." | ".")
+        {
+            let letter1 = w1_alpha.chars().next().unwrap_or(' ');
             let letter2 = w2.chars().find(|c| c.is_alphabetic()).unwrap_or(' ');
 
-            if letter1.is_alphabetic() && letter1.to_lowercase().to_string() == letter2.to_lowercase().to_string() {
+            if letter1.is_alphabetic()
+                && letter1.to_lowercase().to_string() == letter2.to_lowercase().to_string()
+            {
                 if letter1.is_uppercase() && !w2.is_empty() {
                     let mut chars = w2.chars();
                     if let Some(first) = chars.next() {
@@ -871,11 +920,13 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
 /// Убирает многострочные зацикленные повторы Whisper:
 /// 1) Блочные повторы ABAB / ABCABC из 2..=6 строк подряд (например, когда 5 реплик диалога повторяются дважды подряд).
 /// 2) Слитные и дробные эхо-повторы, когда Whisper объединяет предыдущие 2–3 короткие реплики в одну строку-дубликат
-///    или наоборот дробит только что сказанную длинную фразу на повторяющиеся половинки («Афицеры Чикава вступил в бой с кардиналом. Полная готовность!» -> «Офицеры Чикава вступил в бой с кардиналом!» + «Полная готовность!»).
+///    или наоборот дробит только что сказанную длинную фразу на повторяющиеся половинки.
+/// 3) Одиночные эхо-повторы через 1–2 короткие реплики (шаблоны A-B-A и A-B-C-A в пределах 16 секунд).
+/// 4) Нахлест начала строки на хвост предыдущих 1–2 реплик («маленькую хитрость. Виноват. А что за хитрость?» -> «А что за хитрость?»).
 fn deduplicate_multiline_loops(
-    fragments: Vec<crate::text_analyzer::SubtitleFragment>,
+    mut fragments: Vec<crate::text_analyzer::SubtitleFragment>,
 ) -> Vec<crate::text_analyzer::SubtitleFragment> {
-    if fragments.len() < 4 {
+    if fragments.len() < 2 {
         return fragments;
     }
 
@@ -905,7 +956,7 @@ fn deduplicate_multiline_loops(
         false
     }
 
-    let norms: Vec<String> = fragments.iter().map(|f| norm_alpha(&f.text)).collect();
+    let mut norms: Vec<String> = fragments.iter().map(|f| norm_alpha(&f.text)).collect();
     let mut out: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(fragments.len());
     let mut out_norms: Vec<String> = Vec::with_capacity(fragments.len());
 
@@ -938,21 +989,99 @@ fn deduplicate_multiline_loops(
             continue;
         }
 
-        // 2. Проверяем слитный или дробный эхо-повтор относительно последних 1..=3 принятых реплик
+        // 2. Срезаем эхо-нахлест в начале текущей реплики, если она начинается с повтора хвоста предыдущих 1–2 реплик
+        // (например «маленькую хитрость. Виноват. А что за хитрость?» -> «А что за хитрость?»,
+        //  «командиров. Какие доказательства вы имеете?» -> «Какие доказательства вы имеете?»)
+        if !out_norms.is_empty() && (fragments[i].start - out.last().unwrap().end) <= 6.0 {
+            let lookback_n = out_norms.len().min(2);
+            let recent_prev = out_norms[out_norms.len() - lookback_n..].join(" ");
+            let recent_prev_words: Vec<&str> = recent_prev.split_whitespace().collect();
+
+            if !recent_prev_words.is_empty() {
+                let raw_txt = fragments[i].text.trim().to_string();
+                let mut best_remainder: Option<String> = None;
+
+                for (byte_idx, ch) in raw_txt.char_indices() {
+                    if matches!(ch, '.' | '!' | '?') {
+                        let split_pos = byte_idx + ch.len_utf8();
+                        let prefix_part = raw_txt[..split_pos].trim();
+                        let remainder_part = raw_txt[split_pos..].trim();
+                        if remainder_part.is_empty() {
+                            continue;
+                        }
+                        let prefix_norm = norm_alpha(prefix_part);
+                        let prefix_words: Vec<&str> = prefix_norm.split_whitespace().collect();
+                        let rem_words = norm_alpha(remainder_part).split_whitespace().count();
+
+                        if !prefix_words.is_empty()
+                            && prefix_words.len() <= 6
+                            && rem_words >= 2
+                            && prefix_words
+                                .iter()
+                                .all(|&pw| recent_prev_words.iter().any(|&rw| words_match_fuzzy(pw, rw)))
+                        {
+                            best_remainder = Some(remainder_part.to_string());
+                        }
+                    }
+                }
+
+                if let Some(clean_rem) = best_remainder {
+                    fragments[i].text = clean_rem;
+                    norms[i] = norm_alpha(&fragments[i].text);
+                }
+            }
+        }
+
+        // 3. Проверяем слитный, дробный или чередующийся (A-B-A / A-B-C-A) эхо-повтор относительно последних 1..=3 принятых реплик
         let curr_words: Vec<&str> = norms[i].split_whitespace().collect();
         if curr_words.len() >= 2 && !out_norms.is_empty() {
             let mut is_echo = false;
 
-            // А) Дробный эхо-повтор: текущая строка (из >= 2 слов) целиком входит в предыдущую более длинную реплику
-            // (например «Офицеры Чикава вступил в бой с кардиналом!» или «Полная готовность!» сразу после «Афицеры Чикава вступил в бой с кардиналом. Полная готовность!»)
-            let last_prev_words: Vec<&str> = out_norms.last().unwrap().split_whitespace().collect();
-            if last_prev_words.len() >= curr_words.len() && last_prev_words.len() >= 4 {
-                let matched = curr_words
-                    .iter()
-                    .filter(|&&cw| last_prev_words.iter().any(|&pw| words_match_fuzzy(cw, pw)))
-                    .count();
-                if matched == curr_words.len() {
-                    is_echo = true;
+            // А) Повтор строки (или её дробного осколка) относительно любой из последних 1..=3 реплик в окне 16 секунд
+            let max_lookback = out_norms.len().min(3);
+            for d in 1..=max_lookback {
+                let prev_idx = out_norms.len() - d;
+                let time_gap = (fragments[i].start - out[prev_idx].end).max(0.0);
+                if time_gap > 16.0 {
+                    continue;
+                }
+                let prev_words: Vec<&str> = out_norms[prev_idx].split_whitespace().collect();
+                if prev_words.is_empty() {
+                    continue;
+                }
+
+                // Точный или нечеткий повтор целой реплики через 0–2 промежуточные вставки (A-B-A / A-B-C-A)
+                if curr_words.len() >= 3 && prev_words.len() >= 3 {
+                    let matched = curr_words
+                        .iter()
+                        .filter(|&&cw| prev_words.iter().any(|&pw| words_match_fuzzy(cw, pw)))
+                        .count();
+                    let min_len = curr_words.len().min(prev_words.len());
+                    if norms[i] == out_norms[prev_idx]
+                        || (min_len >= 4 && matched * 5 >= min_len * 4)
+                    {
+                        // Если новая версия реплики более полная (например на 2+ слова длиннее), обновляем текст первой реплики
+                        if curr_words.len() >= prev_words.len() + 2 {
+                            out[prev_idx].text = fragments[i].text.clone();
+                            out_norms[prev_idx] = norms[i].clone();
+                        }
+                        is_echo = true;
+                        break;
+                    }
+                }
+
+                // Дробный эхо-повтор: текущая короткая/средняя строка входит в одну из последних 2 более длинных реплик
+                if d <= 2 && prev_words.len() >= curr_words.len() && prev_words.len() >= 4 {
+                    let matched = curr_words
+                        .iter()
+                        .filter(|&&cw| prev_words.iter().any(|&pw| words_match_fuzzy(cw, pw)))
+                        .count();
+                    if matched == curr_words.len()
+                        || (curr_words.len() >= 4 && matched * 5 >= curr_words.len() * 4)
+                    {
+                        is_echo = true;
+                        break;
+                    }
                 }
             }
 

@@ -11,7 +11,7 @@ pub enum AppError {
     #[error("Системная ошибка ввода-вывода: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Ошибка при работе с FFmpeg/Whisper Sidecar: {0}")]
+    #[error("{0}")]
     Pipeline(String),
 }
 

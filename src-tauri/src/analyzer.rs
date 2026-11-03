@@ -379,15 +379,44 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         "i cannot ", "i can't ", "unable to ", "i am unable",
         "i don't have access", "i do not have access",
         "as an assistant", "just a computer",
+        "i don't want", "i do not want", "go to the party",
+        "guest:", "host:", "speaker:",
     ];
 
     if refusal_signatures.iter().any(|&sig| lower.contains(sig)) {
         return None;
     }
 
-    // Защита от зацикливаний повтора («sorry, sorry...» или «child: child:»)
+    // Отсекаем ответы, целиком заключенные в круглые или квадратные скобки (например «(holding headphones)»),
+    // либо начинающиеся со сценической ремарки эмоции в скобках («(angry) I don't...», «(sad) ...»)
+    if (clean.starts_with('(') && clean.ends_with(')'))
+        || (clean.starts_with('[') && clean.ends_with(']'))
+        || lower.starts_with("(angry)")
+        || lower.starts_with("(sad)")
+        || lower.starts_with("(happy)")
+        || lower.starts_with("(laugh")
+        || lower.starts_with("(cry")
+        || lower.starts_with("(holding")
+    {
+        return None;
+    }
+
+    // Защита от зацикливаний повтора («sorry, sorry...», «child: child:» или «THE GRAFFITI" (THE GRAFFITI) GRAFFITI: ...»)
     if lower.matches("sorry").count() > 1 || lower.matches("assistant").count() > 1 {
         return None;
+    }
+
+    let alpha_words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| w.len() >= 4 && !matches!(*w, "with" | "that" | "from" | "this" | "they" | "have" | "wearing" | "background"))
+        .collect();
+    if !alpha_words.is_empty() {
+        for &w in &alpha_words {
+            let count = alpha_words.iter().filter(|&&x| x == w).count();
+            if count >= 3 && count * 2 >= alpha_words.len() {
+                return None;
+            }
+        }
     }
 
     // Оцениваем визуальную насыщенность по ключевым признакам экшена, эмоций и крупных планов персонажей

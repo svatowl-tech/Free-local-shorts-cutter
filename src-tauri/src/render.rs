@@ -362,11 +362,21 @@ pub async fn render_clip(
 }
 
 #[derive(Clone, Debug)]
+struct FaceCandidate {
+    center_ratio: f64,
+    base_score: f64,
+    speaker_activity: f64,
+    scale_weight: f64,
+}
+
+#[derive(Clone, Debug)]
 struct FrameFocusSample {
     rel_time: f64,
     center_ratio: f64,
     confidence: f64,
     hist: [f64; 12],
+    candidates: Vec<FaceCandidate>,
+    dual_group_ratio: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -377,12 +387,15 @@ struct CameraSegment {
     end_ratio: f64,
 }
 
-/// Smart Face & Character Tracking v2 (динамическое внутриклиповое слежение за лицами и переключение ракурсов):
-/// 1) За один быстрый проход FFmpeg извлекает серию кадров 240x135 с шагом 0.5 сек (2 FPS) по всей длине клипа.
-/// 2) В каждом кадре 2D-детектор ищет компактные кластеры головы/лица (реалистичная кожа + аниме-кожа + микроконтраст глаз/волос + силуэт персонажа),
-///    отсекая плоские фоновые засветы, небо и взрывы.
-/// 3) При резкой смене ракурса/камеры внутри клипа мгновенно переключает окно 9:16 на новое лицо,
-///    а при плавном движении персонажа — плавно ведет виртуальную камеру вслед за ним.
+/// Smart Face & Character Tracking v3 (многоцелевое слежение с защитой от путаницы при 2+ лицах в кадре):
+/// 1) Извлекает серию кадров 240x135 с шагом 0.5 сек (2 FPS) по всей длине клипа.
+/// 2) В каждом кадре через 2D Non-Maximum Suppression (NMS) находит до 4 независимых лиц/голов персонажей
+///    и вычисляет для каждого лица межкадровую активность мимики/рта (Active Speaker Detection).
+/// 3) Если 2 лица стоят достаточно близко (`|x1 - x2| <= 0.20`), так что оба целиком помещаются в окно 9:16 (ширина 31.6%),
+///    берет оба лица в единый комфортный двухместный кадр.
+/// 4) Если в кадре 2 и более разнесенных лиц (`|x1 - x2| > 0.20`), НЕ усредняет их координаты в пустоту между ними
+///    и НЕ прыгает между ними каждые 0.5с: фиксируется на говорящем/доминирующем персонаже ракурса (с гистерезисом)
+///    и переключается только при устойчивой смене говорящего (>= 1.5с) или реальной склейке камеры.
 async fn build_dynamic_face_crop_expr(
     video_path: &PathBuf,
     start_sec: f64,
@@ -442,6 +455,7 @@ async fn build_dynamic_face_crop_expr(
     }
 
     let mut samples: Vec<FrameFocusSample> = Vec::new();
+    let mut prev_cell_luma: Option<Vec<f64>> = None;
     let max_frames = (scan_dur * sample_fps).ceil() as usize + 2;
 
     for idx in 1..=max_frames {
@@ -450,7 +464,10 @@ async fn build_dynamic_face_crop_expr(
             break;
         };
         let rel_time = ((idx - 1) as f64) / sample_fps;
-        if let Some(sample) = analyze_bmp_frame_2d(&bytes, 240, 135, rel_time) {
+        if let Some((sample, curr_luma)) =
+            analyze_bmp_frame_2d(&bytes, 240, 135, rel_time, prev_cell_luma.as_deref())
+        {
+            prev_cell_luma = Some(curr_luma);
             samples.push(sample);
         }
     }
@@ -461,10 +478,19 @@ async fn build_dynamic_face_crop_expr(
         return (default_expr, "центр кадра 50.0% (дефолт)".to_string());
     }
 
+    let multi_face_frames = samples.iter().filter(|s| s.candidates.len() >= 2).count();
+    let max_faces_seen = samples.iter().map(|s| s.candidates.len()).max().unwrap_or(1);
+
     let segments = segment_and_smooth_camera_track(&samples, duration_sec);
     if segments.is_empty() {
         return (default_expr, "центр кадра 50.0% (дефолт)".to_string());
     }
+
+    let multi_face_note = if multi_face_frames >= 2 {
+        format!(", анти-дребезг: до {} лиц в кадре", max_faces_seen)
+    } else {
+        String::new()
+    };
 
     let is_single_static = segments.len() == 1
         && (segments[0].start_ratio - segments[0].end_ratio).abs() < 0.025;
@@ -476,8 +502,9 @@ async fn build_dynamic_face_crop_expr(
             r
         );
         let summary = format!(
-            "стабильный фокус на лице {:.1}% ширины кадра (1 ракурс)",
-            r * 100.0
+            "стабильный фокус на лице {:.1}% ширины кадра (1 ракурс{})",
+            r * 100.0,
+            multi_face_note
         );
         return (expr, summary);
     }
@@ -511,26 +538,27 @@ async fn build_dynamic_face_crop_expr(
         .collect();
 
     let summary = format!(
-        "динамическое слежение за лицами ({} ракурс(а): [{}])",
+        "динамическое слежение за лицами ({} ракурс(а){}: [{}])",
         segments.len(),
+        multi_face_note,
         seg_descriptions.join(", ")
     );
 
     (full_expr, summary)
 }
 
-/// 2D-анализатор кадра 240x135 (BMP BGR24):
-/// Вместо простого суммирования столбцов строит 2D-сетку (48x27 ячеек по 5x5 пикселей) и ищет
-/// компактную область головы/лица, где одновременно присутствуют:
-/// - тон кожи (реалистичный YCbCr/RGB или аниме-персиковый/слоновая кость);
-/// - внутренний микроконтраст глаз/бровей/ресниц/рта и контур волос вокруг головы;
-/// - изоляция головы от фона (чтобы широкие стены, небо и взрывы не перетягивали фокус).
+/// 2D-анализатор кадра 240x135 (BMP BGR24) с поддержкой нескольких лиц в кадре и детекцией активного говорящего:
+/// - Находит все независимые кандидаты голов/лиц через 2D Non-Maximum Suppression (NMS, шаг >= 14% ширины кадра).
+/// - Для каждого лица уточняет собственный локальный центр в узком радиусе ±8.5%, чтобы второе лицо рядом не перетягивало центр в пустоту между ними.
+/// - По разнице яркости с предыдущим кадром в нижней половине рамки лица (область рта/челюсти и мимики) за вычетом общего движения фона
+///   определяет `speaker_activity` — кто именно из персонажей сейчас говорит или активно двигается.
 fn analyze_bmp_frame_2d(
     bytes: &[u8],
     w: usize,
     h: usize,
     rel_time: f64,
-) -> Option<FrameFocusSample> {
+    prev_cell_luma: Option<&[f64]>,
+) -> Option<(FrameFocusSample, Vec<f64>)> {
     if bytes.len() < 54 {
         return None;
     }
@@ -582,20 +610,19 @@ fn analyze_bmp_frame_2d(
     let mut grid_skin = vec![0.0_f64; gw * gh];
     let mut grid_eye = vec![0.0_f64; gw * gh];
     let mut grid_edge = vec![0.0_f64; gw * gh];
+    let mut grid_luma = vec![0.0_f64; gw * gh];
 
-    for gy in 1..(gh - 1) {
+    for gy in 0..gh {
         let py0 = gy * ch;
         let y_norm = (py0 as f64) / (h as f64);
-        if !(0.05..=0.82).contains(&y_norm) {
-            continue;
-        }
 
-        for gx in 1..(gw - 1) {
+        for gx in 0..gw {
             let px0 = gx * cw;
             let mut skin_pixels = 0.0_f64;
             let mut dark_pixels = 0.0_f64;
             let mut sclera_pixels = 0.0_f64;
             let mut edge_sum = 0.0_f64;
+            let mut luma_sum = 0.0_f64;
             let mut luma_min = 255.0_f64;
             let mut luma_max = 0.0_f64;
 
@@ -604,6 +631,7 @@ fn analyze_bmp_frame_2d(
                     let x = px0 + dx;
                     let y = py0 + dy;
                     let (r, g, b, luma) = get_pixel(x, y);
+                    luma_sum += luma;
                     luma_min = luma_min.min(luma);
                     luma_max = luma_max.max(luma);
 
@@ -659,6 +687,16 @@ fn analyze_bmp_frame_2d(
             }
 
             let cell_area = (cw * ch) as f64;
+            let cell_idx = gy * gw + gx;
+            grid_luma[cell_idx] = luma_sum / cell_area;
+
+            if !(1..(gh - 1)).contains(&gy)
+                || !(1..(gw - 1)).contains(&gx)
+                || !(0.05..=0.82).contains(&y_norm)
+            {
+                continue;
+            }
+
             let skin_frac = skin_pixels / cell_area;
             let local_contrast = luma_max - luma_min;
             let avg_edge = edge_sum / cell_area;
@@ -671,7 +709,6 @@ fn analyze_bmp_frame_2d(
                 0.25
             };
 
-            let cell_idx = gy * gw + gx;
             grid_skin[cell_idx] = skin_frac * head_y_prior;
 
             // Признак глаз/черт лица: резкий переход темных ресниц/зрачка и светлого белка/блика/кожи
@@ -688,6 +725,21 @@ fn analyze_bmp_frame_2d(
         }
     }
 
+    // Вычисляем карту межкадрового изменения яркости (для детекции движения губ/челюсти говорящего персонажа)
+    let mut grid_motion = vec![0.0_f64; gw * gh];
+    let mut median_bg_motion = 0.0_f64;
+    if let Some(prev_l) = prev_cell_luma {
+        if prev_l.len() == gw * gh {
+            let mut sum_m = 0.0_f64;
+            for idx in 0..(gw * gh) {
+                let diff = (grid_luma[idx] - prev_l[idx]).abs();
+                grid_motion[idx] = diff;
+                sum_m += diff;
+            }
+            median_bg_motion = sum_m / ((gw * gh) as f64);
+        }
+    }
+
     // Если весь кадр залит теплым цветом (взрыв, закат, пыль), штрафуем глобальный цвет кожи и опираемся на черты глаз/контуры
     let total_skin_cells = grid_skin.iter().filter(|&&v| v > 0.35).count() as f64;
     let global_skin_flood_penalty = if total_skin_cells > (gw * gh) as f64 * 0.42 {
@@ -698,12 +750,12 @@ fn analyze_bmp_frame_2d(
         1.0
     };
 
-    // 3. Многомасштабный 2D-поиск головы персонажа (крупный план 9x8, средний план 6x6, общий план 4x5 ячеек)
-    let box_scales: [(usize, usize); 3] = [(9, 8), (6, 6), (4, 5)];
-    let mut best_face_x_ratio = 0.5_f64;
-    let mut best_face_score = 0.0_f64;
+    // 3. Многомасштабный 2D-поиск ВСЕХ кандидатов лиц в кадре:
+    // (крупный план 9x8 имеет приоритет перед фоновыми мелкими лицами 4x5)
+    let box_scales: [(usize, usize, f64); 3] = [(9, 8, 1.18), (6, 6, 1.05), (4, 5, 0.90)];
+    let mut raw_boxes: Vec<(usize, usize, usize, usize, f64, f64, f64)> = Vec::new(); // (gx, gy, bw, bh, center_x, score, scale_w)
 
-    for &(bw, bh) in &box_scales {
+    for &(bw, bh, scale_weight) in &box_scales {
         let max_gy = (gh * 68 / 100).saturating_sub(bh).max(2);
         for gy in 1..=max_gy {
             for gx in 1..=(gw.saturating_sub(bw + 1)) {
@@ -725,7 +777,7 @@ fn analyze_bmp_frame_2d(
                 let eye_density = eye_sum / box_cells;
                 let edge_density = edge_sum / box_cells;
 
-                // Проверяем окружение слева и справа от рамки головы (настоящее лицо ограничено прической/фоном, а не тянется на всю стену)
+                // Проверяем окружение слева и справа от рамки головы (настоящее лицо ограничено прической/фоном)
                 let mut surround_skin = 0.0_f64;
                 let mut surround_cnt = 0.0_f64;
                 for by in gy..(gy + bh) {
@@ -745,11 +797,22 @@ fn analyze_bmp_frame_2d(
                 };
                 let isolation_bonus = (skin_density - surround_density * 0.65).max(0.0);
 
+                // Верхняя половина рамки должна иметь более выраженный контраст глаз/бровей, чем пустая щека
+                let mut upper_eye_sum = 0.0_f64;
+                let mid_by = gy + (bh / 2).max(1);
+                for by in gy..mid_by {
+                    for bx in gx..(gx + bw) {
+                        upper_eye_sum += grid_eye[by * gw + bx];
+                    }
+                }
+                let upper_eye_density = upper_eye_sum / (((mid_by - gy) * bw).max(1) as f64);
+
                 let face_score = if skin_density > 0.13 && (eye_density > 0.07 || edge_density > 0.11) {
                     (skin_density * 2.5 + isolation_bonus * 1.9)
-                        * (1.0 + eye_density * 2.3 + edge_density * 0.9)
+                        * (1.0 + eye_density * 2.1 + upper_eye_density * 0.6 + edge_density * 0.85)
+                        * scale_weight
                 } else {
-                    edge_density * 0.55 + eye_density * 0.70
+                    (edge_density * 0.50 + eye_density * 0.65) * scale_weight
                 };
 
                 let center_gx = (gx as f64 + (bw as f64) * 0.5) / (gw as f64);
@@ -760,51 +823,345 @@ fn analyze_bmp_frame_2d(
                 };
 
                 let score = face_score * edge_guard;
-                if score > best_face_score {
-                    best_face_score = score;
-                    best_face_x_ratio = center_gx;
+                if score > 0.18 {
+                    raw_boxes.push((gx, gy, bw, bh, center_gx, score, scale_weight));
                 }
             }
         }
     }
 
-    // 4. Уточняем центр головы внутри найденного окна шириной ±14% кадра
-    let half_span = 0.14_f64;
-    let mut num = 0.0_f64;
-    let mut den = 0.0_f64;
-    for gx in 1..(gw - 1) {
-        let x_r = (gx as f64 + 0.5) / (gw as f64);
-        if (x_r - best_face_x_ratio).abs() <= half_span {
-            let mut col_w = 0.0_f64;
-            for gy in 2..(gh * 65 / 100) {
-                let idx = gy * gw + gx;
-                col_w += grid_skin[idx] * global_skin_flood_penalty * 2.0
-                    + grid_eye[idx] * 2.6
-                    + grid_edge[idx] * 0.6;
+    // Сортируем найденные рамки по убыванию уверенности и выполняем горизонтальный Non-Maximum Suppression (NMS),
+    // чтобы получить до 4 независимых лиц в кадре (минимальная дистанция между центрами двух разных лиц >= 14% ширины кадра)
+    raw_boxes.sort_by(|a, b| b.5.partial_cmp(&a.5).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut candidates: Vec<FaceCandidate> = Vec::with_capacity(4);
+    for &(gx, gy, bw, bh, raw_cx, score, scale_weight) in &raw_boxes {
+        if candidates
+            .iter()
+            .any(|c| (c.center_ratio - raw_cx).abs() < 0.145)
+        {
+            continue;
+        }
+
+        // Уточняем центр конкретного лица строго в пределах его собственной ширины (±8.0% кадра),
+        // чтобы соседнее второе лицо НЕ смещало центр тяжести в пустое пространство между персонажами!
+        let local_span = 0.080_f64;
+        let gy_min = gy.saturating_sub(1);
+        let gy_max = (gy + bh + 1).min(gh - 1);
+        let mut num = 0.0_f64;
+        let mut den = 0.0_f64;
+        for col_x in 1..(gw - 1) {
+            let x_r = (col_x as f64 + 0.5) / (gw as f64);
+            if (x_r - raw_cx).abs() <= local_span {
+                let mut col_w = 0.0_f64;
+                for row_y in gy_min..gy_max {
+                    let idx = row_y * gw + col_x;
+                    col_w += grid_skin[idx] * global_skin_flood_penalty * 2.0
+                        + grid_eye[idx] * 2.6
+                        + grid_edge[idx] * 0.6;
+                }
+                num += x_r * col_w;
+                den += col_w;
             }
-            num += x_r * col_w;
-            den += col_w;
+        }
+
+        let refined_cx = if den > 0.1 {
+            (raw_cx * 0.60 + (num / den) * 0.40).clamp(0.16, 0.84)
+        } else {
+            raw_cx.clamp(0.16, 0.84)
+        };
+
+        // Оцениваем активность мимики/рта (`speaker_activity`) внутри рамки лица (с акцентом на нижние 65% лица — губы/челюсть)
+        let mut mouth_motion_sum = 0.0_f64;
+        let mut mouth_cells = 0.0_f64;
+        let mouth_y_start = gy + (bh / 3);
+        for by in mouth_y_start..(gy + bh) {
+            for bx in gx..(gx + bw) {
+                let idx = by * gw + bx;
+                // Вычитаем фоновый сдвиг камеры, чтобы панорамирование не путалось с движением губ
+                let net_motion = (grid_motion[idx] - median_bg_motion * 0.85).max(0.0);
+                mouth_motion_sum += net_motion;
+                mouth_cells += 1.0;
+            }
+        }
+        let avg_mouth_motion = if mouth_cells > 0.0 {
+            mouth_motion_sum / mouth_cells
+        } else {
+            0.0
+        };
+        // В аниме и живой речи открывание/закрывание рта дает локальный перепад яркости ~3..18 единиц в ячейке
+        let speaker_activity = ((avg_mouth_motion - 1.2).max(0.0) / 10.5).clamp(0.0, 1.0);
+
+        candidates.push(FaceCandidate {
+            center_ratio: refined_cx,
+            base_score: score,
+            speaker_activity,
+            scale_weight,
+        });
+
+        if candidates.len() >= 4 {
+            break;
         }
     }
 
-    let refined_ratio = if den > 0.1 {
-        (best_face_x_ratio * 0.55 + (num / den) * 0.45).clamp(0.16, 0.84)
+    // Проверяем, есть ли в кадре 2 выраженных лица, которые стоят достаточно близко друг к другу (`|x1 - x2| <= 0.20`),
+    // чтобы ОБА лица целиком помещались в вертикальное окно 9:16 (шириной 31.6% от 16:9 кадра) без обрезки краев
+    let mut dual_group_ratio: Option<f64> = None;
+    if candidates.len() >= 2 {
+        let c1 = &candidates[0];
+        let c2 = &candidates[1];
+        let dist = (c1.center_ratio - c2.center_ratio).abs();
+        if c2.base_score >= c1.base_score * 0.58 && dist <= 0.205 {
+            let w1 = c1.base_score * (1.0 + c1.speaker_activity * 0.4);
+            let w2 = c2.base_score * (1.0 + c2.speaker_activity * 0.4);
+            let mid = ((c1.center_ratio * w1 + c2.center_ratio * w2) / (w1 + w2).max(0.01))
+                .clamp(0.16, 0.84);
+            dual_group_ratio = Some(mid);
+        }
+    }
+
+    let (primary_ratio, confidence) = if let Some(first) = candidates.first() {
+        (first.center_ratio, (first.base_score / 1.2).clamp(0.05, 1.0))
     } else {
-        best_face_x_ratio.clamp(0.16, 0.84)
+        (0.50, 0.05)
     };
 
-    let confidence = (best_face_score / 1.2).clamp(0.05, 1.0);
-
-    Some(FrameFocusSample {
-        rel_time,
-        center_ratio: refined_ratio,
-        confidence,
-        hist,
-    })
+    Some((
+        FrameFocusSample {
+            rel_time,
+            center_ratio: primary_ratio,
+            confidence,
+            hist,
+            candidates,
+            dual_group_ratio,
+        },
+        grid_luma,
+    ))
 }
 
-/// Разбивает временную шкалу клипа на ракурсы (сцены между склейками камеры),
-/// стабилизирует позицию внутри каждого ракурса и строит плавное панорамирование при движении персонажа.
+/// Внутри одного ракурса (между склейками камеры) выбирает стабильную траекторию лица при наличии 2 и более персонажей:
+/// - Если два персонажа стоят близко (`dual_group_ratio`), держит обоих в кадре 9:16.
+/// - Если в кадре 2+ разнесенных лица (`|x1 - x2| > 0.20`), группирует кандидатов в горизонтальные треки персонажей,
+///   вычисляет говорящего по `base_score + speaker_activity` и блокирует перескоки между лицами каждые 0.5с!
+/// - Если ракурс длинный (>= 3.5с) и второй персонаж начинает активно говорить во второй половине сцены (>= 3 кадра подряд),
+///   делит ракурс на 2 чистых под-сегмента (перевод камеры с первого говорящего на второго) без усреднения в пустоту между ними.
+fn resolve_multiface_shot_segments(
+    slice: &[FrameFocusSample],
+    start_t: f64,
+    end_t: f64,
+) -> Vec<CameraSegment> {
+    if slice.is_empty() || end_t <= start_t + 0.05 {
+        return Vec::new();
+    }
+
+    // 1. Проверяем, стоят ли 2 персонажа достаточно близко для комфортного двухместного кадра в большинстве сэмплов ракурса
+    let dual_samples: Vec<(f64, f64)> = slice
+        .iter()
+        .filter_map(|s| s.dual_group_ratio.map(|r| (r, s.confidence.max(0.1))))
+        .collect();
+    if dual_samples.len() * 2 >= slice.len() && !dual_samples.is_empty() {
+        let num: f64 = dual_samples.iter().map(|(r, w)| r * w).sum();
+        let den: f64 = dual_samples.iter().map(|(_, w)| *w).sum();
+        let group_ratio = (num / den.max(0.01)).clamp(0.16, 0.84);
+        return vec![CameraSegment {
+            start_t,
+            end_t,
+            start_ratio: group_ratio,
+            end_ratio: group_ratio,
+        }];
+    }
+
+    // 2. Кластеризуем все обнаруженные лица внутри этого ракурса по горизонтальным позициям (трекам персонажей)
+    // Каждый кластер: (mean_x, total_focus_power, hit_frames)
+    let mut clusters: Vec<(f64, f64, usize)> = Vec::new();
+    for s in slice {
+        for (rank, cand) in s.candidates.iter().enumerate() {
+            // Учитываем базовую четкость лица, крупность плана и активность мимики/рта (говорящий персонаж получает сильный приоритет!)
+            let rank_factor = if rank == 0 { 1.0 } else if rank == 1 { 0.88 } else { 0.72 };
+            let power = cand.base_score
+                * rank_factor
+                * cand.scale_weight
+                * (1.0 + cand.speaker_activity * 1.65);
+
+            if let Some(cl) = clusters
+                .iter_mut()
+                .find(|c| (c.0 - cand.center_ratio).abs() < 0.14)
+            {
+                let new_w = cl.1 + power;
+                if new_w > 0.0 {
+                    cl.0 = (cl.0 * cl.1 + cand.center_ratio * power) / new_w;
+                }
+                cl.1 = new_w;
+                cl.2 += 1;
+            } else {
+                clusters.push((cand.center_ratio, power, 1));
+            }
+        }
+    }
+
+    if clusters.is_empty() {
+        return vec![CameraSegment {
+            start_t,
+            end_t,
+            start_ratio: 0.50,
+            end_ratio: 0.50,
+        }];
+    }
+
+    clusters.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let primary_cluster_x = clusters[0].0;
+
+    // 3. Если в ракурсе есть 2 конкурирующих разнесенных лица (например левый собеседник ~28% и правый ~72%)
+    // и ракурс длится >= 3.5с (7+ сэмплов), проверяем, нет ли устойчивой смены говорящего между первой и второй половиной ракурса
+    if clusters.len() >= 2 && slice.len() >= 7 {
+        let secondary_cluster_x = clusters[1].0;
+        let cluster_dist = (primary_cluster_x - secondary_cluster_x).abs();
+
+        if cluster_dist >= 0.20 && clusters[1].1 >= clusters[0].1 * 0.45 && clusters[1].2 >= 3 {
+            // Для каждого кадра ракурса определяем, кто из двух персонажей доминирует/говорит (0 = первый, 1 = второй)
+            let mut frame_winner: Vec<usize> = Vec::with_capacity(slice.len());
+            let mut current_speaker = 0_usize;
+
+            for (f_idx, s) in slice.iter().enumerate() {
+                let mut score_0 = 0.0_f64;
+                let mut score_1 = 0.0_f64;
+
+                for cand in &s.candidates {
+                    let s_val = cand.base_score * (1.0 + cand.speaker_activity * 1.95);
+                    if (cand.center_ratio - primary_cluster_x).abs() < 0.15 {
+                        score_0 = score_0.max(s_val);
+                    }
+                    if (cand.center_ratio - secondary_cluster_x).abs() < 0.15 {
+                        score_1 = score_1.max(s_val);
+                    }
+                }
+
+                if f_idx == 0 {
+                    current_speaker = if score_1 > score_0 * 1.08 { 1 } else { 0 };
+                } else {
+                    // Гистерезис удержания (+25% бонус текущему персонажу), чтобы не прыгать от случайного моргания
+                    if current_speaker == 0 && score_1 > score_0 * 1.25 {
+                        current_speaker = 1;
+                    } else if current_speaker == 1 && score_0 > score_1 * 1.25 {
+                        current_speaker = 0;
+                    }
+                }
+                frame_winner.push(current_speaker);
+            }
+
+            // Проверяем, произошел ли ОДИН чистый переход говорящего (например 3+ кадра первый, затем 3+ кадра второй)
+            let mid_start = 3;
+            let mid_end = slice.len().saturating_sub(3);
+            let mut best_split: Option<(usize, usize, usize)> = None; // (split_idx, first_spk, second_spk)
+
+            for split in mid_start..=mid_end {
+                let left_0 = frame_winner[..split].iter().filter(|&&w| w == 0).count();
+                let left_1 = split - left_0;
+                let right_total = slice.len() - split;
+                let right_0 = frame_winner[split..].iter().filter(|&&w| w == 0).count();
+                let right_1 = right_total - right_0;
+
+                if left_0 * 4 >= split * 3 && right_1 * 4 >= right_total * 3 {
+                    best_split = Some((split, 0, 1));
+                    break;
+                }
+                if left_1 * 4 >= split * 3 && right_0 * 4 >= right_total * 3 {
+                    best_split = Some((split, 1, 0));
+                    break;
+                }
+            }
+
+            if let Some((split_idx, spk_a, spk_b)) = best_split {
+                let target_a = if spk_a == 0 { primary_cluster_x } else { secondary_cluster_x };
+                let target_b = if spk_b == 0 { primary_cluster_x } else { secondary_cluster_x };
+                let split_t = slice[split_idx].rel_time.clamp(start_t + 1.5, end_t - 1.5);
+
+                return vec![
+                    CameraSegment {
+                        start_t,
+                        end_t: split_t,
+                        start_ratio: target_a.clamp(0.16, 0.84),
+                        end_ratio: target_a.clamp(0.16, 0.84),
+                    },
+                    CameraSegment {
+                        start_t: split_t,
+                        end_t,
+                        start_ratio: target_b.clamp(0.16, 0.84),
+                        end_ratio: target_b.clamp(0.16, 0.84),
+                    },
+                ];
+            }
+        }
+    }
+
+    // 4. Фиксируемся строго на основном/говорящем треке ракурса (`primary_cluster_x`),
+    // отбирая из каждого кадра ТОЛЬКО кандидата, принадлежащего этому персонажу (исключает усреднение двух разных лиц!)
+    let mut track_points: Vec<(f64, f64, f64)> = Vec::with_capacity(slice.len()); // (rel_time, ratio, weight)
+    let mut running_x = primary_cluster_x;
+
+    for s in slice {
+        if let Some(matched) = s
+            .candidates
+            .iter()
+            .filter(|c| (c.center_ratio - running_x).abs() < 0.16)
+            .min_by(|a, b| {
+                let da = (a.center_ratio - running_x).abs();
+                let db = (b.center_ratio - running_x).abs();
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+        {
+            let w = (matched.base_score * (1.0 + matched.speaker_activity * 1.2)).max(0.10);
+            running_x = running_x * 0.65 + matched.center_ratio * 0.35;
+            track_points.push((s.rel_time, matched.center_ratio, w));
+        }
+    }
+
+    if track_points.is_empty() {
+        let r = primary_cluster_x.clamp(0.16, 0.84);
+        return vec![CameraSegment {
+            start_t,
+            end_t,
+            start_ratio: r,
+            end_ratio: r,
+        }];
+    }
+
+    let weighted_num: f64 = track_points.iter().map(|(_, r, w)| r * w).sum();
+    let weighted_den: f64 = track_points.iter().map(|(_, _, w)| *w).sum();
+    let mean_ratio = (weighted_num / weighted_den.max(0.01)).clamp(0.16, 0.84);
+
+    // Если персонаж действительно плавно идет/смещается в кадре (4+ точки одного и того же трека) — строим плавное ведение камеры
+    if track_points.len() >= 4 {
+        let mid = track_points.len() / 2;
+        let first_half = &track_points[..mid];
+        let second_half = &track_points[mid..];
+
+        let avg_first = first_half.iter().map(|(_, r, w)| r * w).sum::<f64>()
+            / first_half.iter().map(|(_, _, w)| *w).sum::<f64>().max(0.01);
+        let avg_second = second_half.iter().map(|(_, r, w)| r * w).sum::<f64>()
+            / second_half.iter().map(|(_, _, w)| *w).sum::<f64>().max(0.01);
+
+        if (avg_second - avg_first).abs() > 0.085 {
+            return vec![CameraSegment {
+                start_t,
+                end_t,
+                start_ratio: avg_first.clamp(0.16, 0.84),
+                end_ratio: avg_second.clamp(0.16, 0.84),
+            }];
+        }
+    }
+
+    vec![CameraSegment {
+        start_t,
+        end_t,
+        start_ratio: mean_ratio,
+        end_ratio: mean_ratio,
+    }]
+}
+
+/// Разбивает временную шкалу клипа на ракурсы (сцены между реальными склейками камеры),
+/// выбирает говорящего/основного персонажа в каждом ракурсе без перескоков между 2+ лицами
+/// и строит кинематографичную траекторию виртуальной камеры 9:16.
 fn segment_and_smooth_camera_track(
     samples: &[FrameFocusSample],
     duration_sec: f64,
@@ -827,13 +1184,16 @@ fn segment_and_smooth_camera_track(
             .map(|(a, b)| (a - b).abs())
             .sum();
 
-        let pos_jump = (curr.center_ratio - prev.center_ratio).abs();
-        let both_confident = prev.confidence > 0.20 && curr.confidence > 0.20;
+        // Проверяем, сохранилось ли лицо в той же точке кадра (если да, то даже при вспышке света ракурс не менялся)
+        let has_continuous_face = curr.candidates.iter().any(|c_now| {
+            prev.candidates
+                .iter()
+                .any(|c_prev| (c_now.center_ratio - c_prev.center_ratio).abs() < 0.11)
+        });
 
-        // Детектируем смену ракурса камеры ИЛИ перескок фокуса на другого говорящего персонажа
-        let is_camera_cut = hist_l1 > 0.30
-            || (hist_l1 > 0.17 && pos_jump > 0.11)
-            || (both_confident && pos_jump > 0.15);
+        // ВАЖНО: Смену ракурса определяем по реальной визуальной склейке кадра (`hist_l1`),
+        // а НЕ по простому скачку `center_ratio`, чтобы при 2 лицах в одном статичном плане не нарезать ложные склейки!
+        let is_camera_cut = hist_l1 > 0.30 || (hist_l1 > 0.19 && !has_continuous_face);
 
         if is_camera_cut {
             shot_ranges.push((shot_start, i - 1));
@@ -854,68 +1214,11 @@ fn segment_and_smooth_camera_track(
             (slice.last().unwrap().rel_time + sample_step).min(duration_sec)
         };
 
-        if end_t <= start_t + 0.05 {
-            continue;
-        }
-
-        let mut weighted_num = 0.0_f64;
-        let mut weighted_den = 0.0_f64;
-        for s in slice {
-            let w = s.confidence.max(0.08);
-            weighted_num += s.center_ratio * w;
-            weighted_den += w;
-        }
-        let mean_ratio = if weighted_den > 0.0 {
-            (weighted_num / weighted_den).clamp(0.16, 0.84)
-        } else {
-            0.5
-        };
-
-        // Если ракурс длится >= 2 секунд (4+ сэмпла) и персонаж плавно смещается по кадру — строим плавный панорамный трекинг
-        if slice.len() >= 4 {
-            let mid = slice.len() / 2;
-            let first_half = &slice[..mid];
-            let second_half = &slice[mid..];
-
-            let avg_first = first_half
-                .iter()
-                .map(|s| s.center_ratio * s.confidence)
-                .sum::<f64>()
-                / first_half
-                    .iter()
-                    .map(|s| s.confidence)
-                    .sum::<f64>()
-                    .max(0.01);
-            let avg_second = second_half
-                .iter()
-                .map(|s| s.center_ratio * s.confidence)
-                .sum::<f64>()
-                / second_half
-                    .iter()
-                    .map(|s| s.confidence)
-                    .sum::<f64>()
-                    .max(0.01);
-
-            if (avg_second - avg_first).abs() > 0.085 {
-                raw_segments.push(CameraSegment {
-                    start_t,
-                    end_t,
-                    start_ratio: avg_first.clamp(0.16, 0.84),
-                    end_ratio: avg_second.clamp(0.16, 0.84),
-                });
-                continue;
-            }
-        }
-
-        raw_segments.push(CameraSegment {
-            start_t,
-            end_t,
-            start_ratio: mean_ratio,
-            end_ratio: mean_ratio,
-        });
+        let resolved = resolve_multiface_shot_segments(slice, start_t, end_t);
+        raw_segments.extend(resolved);
     }
 
-    // Поглощаем микро-скачки и объединяем соседние ракурсы с близкой позицией (< 8.5% ширины, так как лицо и так в кадре 9:16)
+    // Поглощаем микро-скачки и объединяем соседние ракурсы с близкой позицией (< 8.8% ширины, так как лицо и так в кадре 9:16)
     if raw_segments.len() >= 2 {
         let mut cleaned: Vec<CameraSegment> = Vec::with_capacity(raw_segments.len());
         for seg in raw_segments {
@@ -923,11 +1226,13 @@ fn segment_and_smooth_camera_track(
             if let Some(prev) = cleaned.last_mut() {
                 let close_to_prev = (seg.start_ratio - prev.end_ratio).abs() < 0.088
                     && (seg.end_ratio - prev.end_ratio).abs() < 0.088;
-                // Исключаем дерганые перебивки короче 1.2с (вспышки, удары) и ракурсы, не отличающиеся заметно по положению
+                // Исключаем дерганые перебивки короче 1.2с и ракурсы, не отличающиеся заметно по положению.
+                // КРИТИЧЕСКОЕ ПРАВИЛО: усредняем позицию ТОЛЬКО если `close_to_prev == true`,
+                // чтобы короткая перебивка на другое лицо не сдвигала основную камеру в пустоту между двумя лицами!
                 if close_to_prev || seg_dur < 1.20 {
-                    let w_prev = (prev.end_t - prev.start_t).max(0.1);
-                    let w_curr = seg_dur;
-                    if seg_dur >= 0.50 {
+                    if close_to_prev && seg_dur >= 0.50 {
+                        let w_prev = (prev.end_t - prev.start_t).max(0.1);
+                        let w_curr = seg_dur;
                         let blended = (prev.end_ratio * w_prev + seg.end_ratio * w_curr) / (w_prev + w_curr);
                         prev.end_ratio = blended.clamp(0.16, 0.84);
                     }

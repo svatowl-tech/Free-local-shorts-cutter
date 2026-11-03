@@ -960,7 +960,7 @@ pub async fn analyze_text_with_llm(
         );
 
         let client = Client::builder()
-            .timeout(Duration::from_secs(120))
+            .timeout(Duration::from_secs(45))
             .build()
             .unwrap_or_default();
 
@@ -993,8 +993,25 @@ pub async fn analyze_text_with_llm(
             for attempt in 1..=2 {
                 match run_openai(&client, config, &prompt, app_handle).await {
                     Ok(res) => {
-                        result_opt = Some(res);
-                        break;
+                        if parse_json_array(&res, chunk.len()).is_some() {
+                            result_opt = Some(res);
+                            break;
+                        } else if attempt < 2 {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "warn",
+                                &format!(
+                                    "Пакет {}/{}: неполный ответ OpenAI API ({} симв.), повторный запрос через 1.5 сек...",
+                                    batch_idx + 1,
+                                    total_batches,
+                                    res.len()
+                                ),
+                            );
+                            tokio::time::sleep(Duration::from_millis(1500)).await;
+                        } else {
+                            result_opt = Some(res);
+                        }
                     }
                     Err(e) => {
                         if attempt < 2 {
@@ -1655,6 +1672,27 @@ pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -
             });
 
         if int_dur_neighbors >= 4 && (has_music_gap_nearby || has_latin_nearby) {
+            return true;
+        }
+    }
+
+    // 3. Детектор фонетического мусора японского/иностранного эндинга в последних 90 секундах 20+-минутной серии:
+    // когда после удаления тегов (Звучит музыка) остаются одиночные короткие псевдофразы, окруженные длинными музыкальными паузами (>= 6.5с)
+    let total_track_end = fragments.last().map(|last| last.end).unwrap_or(0.0);
+    if total_track_end >= 1200.0 && f.start >= total_track_end - 95.0 {
+        let gap_before = if idx > 0 {
+            (f.start - fragments[idx - 1].end).max(0.0)
+        } else {
+            0.0
+        };
+        let gap_after = if idx + 1 < fragments.len() {
+            (fragments[idx + 1].start - f.end).max(0.0)
+        } else {
+            10.0
+        };
+        let lower_t = text.to_lowercase();
+        let comma_count = lower_t.matches(',').count();
+        if gap_before >= 6.5 && gap_after >= 6.5 && (comma_count >= 3 || text.split_whitespace().count() <= 4) {
             return true;
         }
     }

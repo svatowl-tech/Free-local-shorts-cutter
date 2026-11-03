@@ -505,6 +505,17 @@ pub async fn run_pipeline(
 
     let mut selected_intervals: Vec<(f64, f64, f64, String, String)> = Vec::new();
     for candidate in candidate_intervals {
+        // В режиме «Авто» после набора первых 8 ключевых сцен отсекаем слабые фоновые/финальные окна (рейтинг < 0.64,
+        // а в последних 85 секундах 20+-минутной серии на титрах/эндинге — < 0.72)
+        if is_auto_clips && selected_intervals.len() >= 8 {
+            if candidate.2 < 0.64 {
+                continue;
+            }
+            if video_duration >= 1200.0 && candidate.0 >= video_duration - 85.0 && candidate.2 < 0.72 {
+                continue;
+            }
+        }
+
         let too_close_or_overlaps = selected_intervals.iter().any(|sel| {
             candidate.0 < (sel.1 + min_gap) && candidate.1 > (sel.0 - min_gap)
         });
@@ -743,12 +754,14 @@ fn build_complete_phrase_window(
             if end_idx > s_idx {
                 let gap = (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0);
                 let prev_dur = fragments[end_idx - 1].end - pre_roll;
-                // Если между репликами длинная пауза (> 3.2с, например удаленная музыкальная вставка между сценами)
-                // и мы уже набрали минимальную длительность — закрываем окно до смены сцены!
-                if gap > 3.2 && prev_dur >= min_dur * 0.9 {
+                // Если мы еще на самом минимуме длительности (< 12.2с), допускаем драматичную паузу до 4.3с
+                // (чтобы не обрезать кульминацию после эмоционального возгласа, как в «Немедленно закрой свой рот... Какой бы ни была цена...»).
+                // Когда уже набрано >= 12.2с, закрываем сцену при паузе > 3.2с.
+                let max_bridge_gap = if prev_dur < 12.2 { 4.3 } else { 3.2 };
+                if gap > max_bridge_gap && prev_dur >= min_dur * 0.9 {
                     break;
                 }
-                if gap >= 1.85 {
+                if gap >= 2.2 {
                     crossed_scene_transition = true;
                 }
             }
@@ -804,15 +817,21 @@ fn build_complete_phrase_window(
                     b_quality -= 0.22;
                 }
 
-                // 4. Штраф за склейку двух разных сцен через музыкальную паузу >= 1.85с
+                // 4. Штраф за склейку двух разных сцен через длинную паузу >= 2.2с
                 if crossed_scene_transition {
-                    b_quality -= 0.45;
+                    b_quality -= 0.40;
                 }
 
                 // 5. Небольшой бонус за насыщенность диалога (чтобы полноценная сцена с ярким панчлайном выигрывала у сухого обрывка)
                 let end_cue_score = text_scores.get(end_idx).copied().unwrap_or(0.45);
                 if end_cue_score >= 0.68 && !is_weak_end {
                     b_quality += 0.25;
+                }
+
+                // 6. Бонус «золотой середины» (12.5с..=17.8с вокруг 15с), чтобы алгоритм не обрывал клип
+                // на первой же короткой фразе в 10.0–10.6с, если следом органично помещается следующее предложение!
+                if dur >= 12.5 && dur <= 17.8 {
+                    b_quality += 0.42;
                 }
 
                 // Четкое центрирование вокруг целевой длительности target_dur (15с: типично 13с–17с, максимум ~20с)
