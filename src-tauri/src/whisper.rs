@@ -995,12 +995,13 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     // гарантирует, что 3-частные разрывы («отныне буду» + «квартироваться» + «здесь.») и подтяжка таймкодов
     // полностью завершаются за первый же вызов `sanitize_srt_file`, а повторное чтение кэша при экспорте дает 0 изменений!
     for _pass in 0..3 {
+        let prev_len = clean_fragments.len();
         let (tightened_frags, t_cnt) = tighten_subtitle_timestamps(clean_fragments);
         let (repaired_frags, s_cnt) = repair_split_words_and_orphans(tightened_frags);
         let dedup_frags = deduplicate_multiline_loops(repaired_frags);
         total_tightened_cues += t_cnt;
         total_stitched_words += s_cnt;
-        let len_changed = dedup_frags.len() != clean_fragments.len();
+        let len_changed = dedup_frags.len() != prev_len;
         clean_fragments = dedup_frags;
         if t_cnt == 0 && s_cnt == 0 && !len_changed {
             break;
