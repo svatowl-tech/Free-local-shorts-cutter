@@ -36,16 +36,17 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
 
     let lower = trimmed.to_lowercase().replace('ё', "е");
 
-    // Отсекаем технические теги музыки и фонового шума вида [музыка], (музыка), ♪ и т.д.
+    // Отсекаем технические теги музыки и фонового шума вида [музыка], (музыка), *музыка*, ♪ и т.д.
     if (lower.starts_with('[') && lower.ends_with(']'))
         || (lower.starts_with('(') && lower.ends_with(')'))
+        || (lower.starts_with('*') && lower.ends_with('*'))
         || lower.contains('♪')
         || lower.contains('♫')
     {
         return true;
     }
 
-    // Одиночные звуковые ремарки КАПСОМ или без скобок
+    // Одиночные звуковые ремарки КАПСОМ, со звездочками или без скобок
     let exact_tags = [
         "музыка",
         "звучит музыка",
@@ -64,6 +65,8 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "рычит",
         "шипит",
         "кричит",
+        "поет",
+        "поёт",
         "звук",
         "шум",
         "тишина",
@@ -91,7 +94,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "песня",
         "what is this",
     ];
-    let clean_exact = lower.trim_matches(['.', '!', '?', '-', '—', ' ']);
+    let clean_exact = lower.trim_matches(['.', '!', '?', ',', '-', '—', '*', '"', '\'', '«', '»', ' ']);
     if exact_tags.contains(&clean_exact) {
         return true;
     }
@@ -99,8 +102,10 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     let patterns = [
         "[музыка]",
         "(музыка)",
+        "*музыка*",
         "(звучит музыка)",
         "[звучит музыка]",
+        "*звучит музыка*",
         "[music]",
         "(music)",
         "[аплодисменты]",
@@ -110,6 +115,8 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "(поёт)",
         "[поет]",
         "[поёт]",
+        "*поет*",
+        "*поёт*",
         "песня всхлип",
         "редактор субтитров",
         "корректор а.",
@@ -140,6 +147,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "играет музыка",
         "лирическая музыка",
         "веселая музыка",
+        "печальная музыка",
         "грустная музыка",
         "напряженная музыка",
         "драматичная музыка",
@@ -165,6 +173,7 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "speaking russian",
         "speaking foreign",
         "шови, ма",
+        "шови, мол",
         "хай, баку",
         "циклсовалею",
         "кинофотезе",
@@ -173,6 +182,32 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
 
     for pat in &patterns {
         if lower.contains(pat) {
+            return true;
+        }
+    }
+
+    // Детектор вокальных зацикливаний из однобуквенных/двухбуквенных гласных и междометий на песнях
+    // (например «а, а, а, а, а, а...», «Возьмите несколько двоих, а, а, а, а, а, а, а...»)
+    let alpha_tokens: Vec<String> = lower
+        .split_whitespace()
+        .map(|w| w.chars().filter(|c| c.is_alphabetic()).collect::<String>())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if alpha_tokens.len() >= 2 {
+        let short_vowel_tokens = alpha_tokens
+            .iter()
+            .filter(|w| {
+                matches!(
+                    w.as_str(),
+                    "а" | "о" | "у" | "э" | "и" | "ы" | "я" | "е" | "м" | "н" | "аа" | "оо" | "ах" | "ох" | "эх"
+                )
+            })
+            .count();
+        // Если строка целиком состоит из «а, а» / «а, а, а» (например после сжатия цикла) или содержит >= 5 таких повторов
+        if short_vowel_tokens >= 5
+            || (alpha_tokens.len() >= 2 && short_vowel_tokens == alpha_tokens.len())
+            || (alpha_tokens.len() >= 3 && short_vowel_tokens + 1 >= alpha_tokens.len() && alpha_tokens.last().map_or(false, |w| w == "я"))
+        {
             return true;
         }
     }
@@ -265,26 +300,45 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("никогдане", "никогда не"),
         ("оберез лейтенант сфотографируй", "обер-лейтенант фон Дегуршаф"),
         ("оберез лейтенант фон дегуршав", "обер-лейтенант фон Дегуршаф"),
+        ("оберс лейтенант фонди гуршав", "обер-лейтенант фон Дегуршаф"),
+        ("тефон дегуршав", "фон Дегуршаф"),
+        ("фонди гуршав", "фон Дегуршаф"),
+        ("дегушав", "Дегуршаф"),
+        ("госпожаобес лейтенант", "госпожа обер-лейтенант"),
+        ("убер с лейтенанфан югер", "оберст-лейтенант фон Угар"),
+        ("оберс лейтенант фун югер", "оберст-лейтенант фон Угар"),
         ("оберез лейтенант", "обер-лейтенант"),
+        ("оберс лейтенант", "обер-лейтенант"),
+        ("обер с лейтенант", "обер-лейтенант"),
+        ("образ, лейтенант", "обер-лейтенант"),
         ("я полевая командир", "я полевой командир"),
         ("какие доказательки", "какие доказательства"),
+        ("к стадии... желению мирной переговоры", "к сожалению, мирные переговоры"),
+        ("к стадии... желению", "к сожалению,"),
+        ("желению мирной переговоры", "к сожалению, мирные переговоры"),
+        ("к стадии...", "кстати..."),
+        ("квот сюда", "вот сюда"),
+        ("военная докприна", "военная доктрина"),
+        ("запушечное мясо", "за пушечное мясо"),
     ];
 
     let mut result = text.to_string();
     for &(glued, fixed) in glued_patterns {
-        let lower = result.to_lowercase();
+        let lower = result.to_lowercase().replace('ё', "е");
         if let Some(pos) = lower.find(glued) {
-            let is_capitalized = result[pos..].chars().next().map_or(false, |c| c.is_uppercase());
-            let replacement = if is_capitalized {
-                let mut chars = fixed.chars();
-                match chars.next() {
-                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                    None => fixed.to_string(),
-                }
-            } else {
-                fixed.to_string()
-            };
-            result = result[..pos].to_string() + &replacement + &result[pos + glued.len()..];
+            if pos <= result.len() && pos + glued.len() <= result.len() {
+                let is_capitalized = result[pos..].chars().next().map_or(false, |c| c.is_uppercase());
+                let replacement = if is_capitalized {
+                    let mut chars = fixed.chars();
+                    match chars.next() {
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                        None => fixed.to_string(),
+                    }
+                } else {
+                    fixed.to_string()
+                };
+                result = result[..pos].to_string() + &replacement + &result[pos + glued.len()..];
+            }
         }
     }
     result
@@ -415,7 +469,9 @@ pub fn clean_stretched_text(text: &str) -> String {
                 .to_lowercase();
             if !norm.is_empty() && norm == last_norm {
                 word_run += 1;
-                if word_run >= 3 {
+                // Для однобуквенных гласных («а, а, а, а...») отсекаем уже со 2-го повтора, для обычных слов — с 3-го
+                let max_allowed = if norm.chars().count() == 1 { 1 } else { 2 };
+                if word_run > max_allowed {
                     had_word_loop = true;
                     continue;
                 }
@@ -589,6 +645,28 @@ fn repair_split_words_and_orphans(
         if let Some(prev) = out.last_mut() {
             let gap = (frag.start - prev.end).max(0.0);
 
+            // 0. Специальная склейка разорванного вводного оборота «К стадии...» + «Желению мирной переговоры...» -> «К сожалению, мирные переговоры...»
+            let prev_low = prev.text.trim().to_lowercase();
+            let curr_low = curr_text.to_lowercase();
+            if gap <= 0.30
+                && (prev_low == "к стадии..." || prev_low == "кстати..." || prev_low == "к стадии")
+                && (curr_low.starts_with("желению ") || curr_low.starts_with("к сожалению"))
+            {
+                let rest = if curr_low.starts_with("желению ") {
+                    &curr_text["желению ".len()..]
+                } else {
+                    curr_text.as_str()
+                };
+                prev.text = if curr_low.starts_with("желению ") {
+                    fix_common_whisper_glued_words(&format!("К сожалению, {}", rest.trim_start()))
+                } else {
+                    fix_common_whisper_glued_words(&curr_text)
+                };
+                prev.end = prev.end.max(frag.end);
+                repaired_count += 1;
+                continue;
+            }
+
             // 1. Если новая строка начинается с оторванного знака препинания (`.`, `!`, `?`, `,`, `;`, `:`, `…`)
             if let Some(first_ch) = curr_text.chars().next() {
                 if matches!(first_ch, '.' | '!' | '?' | ',' | ';' | ':' | '…') && gap <= 0.35 {
@@ -700,7 +778,7 @@ fn repair_split_words_and_orphans(
                     && ((starts_lower && curr_words <= 3 && curr_chars <= 24 && curr_dur <= 1.6)
                         || (curr_words == 1 && curr_chars <= 14 && curr_dur <= 1.0 && gap <= 0.08));
 
-                if is_short_orphan_tail && (prev.text.chars().count() + 1 + curr_chars) <= 95 {
+                if is_short_orphan_tail && (prev.text.chars().count() + 1 + curr_chars) <= 105 {
                     prev.text.push(' ');
                     prev.text.push_str(&curr_text);
                     prev.end = prev.end.max(frag.end);
@@ -720,10 +798,13 @@ fn repair_split_words_and_orphans(
     (out, repaired_count)
 }
 
-/// Строго идемпотентная подтяжка аномально растянутых таймкодов Whisper:
-/// - Исправляет ТОЛЬКО сегменты, где Whisper растянул таймкод через длинную паузу/музыку/экшен
-///   (например, одно слово «Быстрый!» или «Рэну!» на 8 секунд или фраза на 12–28 секунд),
-///   НЕ урезая живые драматичные паузы обычных реплик (2.5–6.0 сек).
+/// Двунаправленная идемпотентная подтяжка аномально растянутых таймкодов Whisper:
+/// - В `whisper.cpp` растяжка таймкода (`actual_dur > max_valid_dur`) возникает в двух случаях:
+///   1) **Тишина ПЕРЕД фразой** (смена сцены): `orig_start` прилип к концу предыдущей сцены, а сама фраза произносится в конце интервала,
+///      вплотную стыкуясь со следующей репликой (`raw_bounds[i + 1].0 - orig_end <= 0.15с`, например первая половина фразы переходит во вторую).
+///      В этом случае конец фразы `orig_end` фиксирован точно, а `start` подтягивается вперед к `(orig_end - spoken_dur)`!
+///   2) **Тишина/музыка ПОСЛЕ фразы**: после `orig_end` идет пауза или удаленный музыкальный тег (`gap_to_next > 0.15с`).
+///      В этом случае начало фразы `orig_start` фиксировано, а `end` подтягивается назад к `(orig_start + spoken_dur)`!
 /// - Повторный вызов на уже очищенном SRT гарантированно дает `tightened_count == 0` (100% идемпотентность).
 pub fn tighten_subtitle_timestamps(
     mut fragments: Vec<crate::text_analyzer::SubtitleFragment>,
@@ -766,16 +847,46 @@ pub fn tighten_subtitle_timestamps(
 
         tightened_count += 1;
 
-        // В Whisper.cpp начало фразы (orig_start) всегда привязано к моменту произнесения реплики,
-        // а растяжка происходит из-за тишины/музыки ПОСЛЕ фразы!
-        // Поэтому фиксируем начало строго по факту произнесения, а конец ограничиваем естественной длительностью речи:
         let prev_new_end = if i > 0 { fragments[i - 1].end } else { 0.0 };
-        let new_start = orig_start.max(prev_new_end + 0.05);
-        let target_end = new_start + spoken_dur;
-        let new_end = target_end.min(orig_end).max(new_start + 0.60);
+        let touches_next_cue = if i + 1 < len {
+            (raw_bounds[i + 1].0 - orig_end).abs() <= 0.15
+        } else {
+            false
+        };
+        let continues_into_next = if i + 1 < len {
+            !crate::text_analyzer::has_terminal_punctuation(&fragments[i].text)
+                || fragments[i + 1]
+                    .text
+                    .trim()
+                    .chars()
+                    .next()
+                    .map_or(false, |c| c.is_lowercase())
+        } else {
+            false
+        };
+        let prev_sentence_closed = if i > 0 {
+            crate::text_analyzer::has_terminal_punctuation(&fragments[i - 1].text)
+        } else {
+            true
+        };
 
-        fragments[i].start = new_start;
-        fragments[i].end = new_end;
+        // Если конец реплики вплотную упирается в начало следующей реплики (особенно когда предложение продолжается в `i + 1`
+        // или предыдущее предложение `i - 1` было завершено), значит тишина была ПЕРЕД этой репликой — сдвигаем `start` вперед к `orig_end - spoken_dur`!
+        if touches_next_cue && (continues_into_next || prev_sentence_closed) {
+            let new_end = orig_end;
+            let new_start = (new_end - spoken_dur)
+                .max(orig_start)
+                .max(prev_new_end + 0.05)
+                .min(new_end - 0.60);
+            fragments[i].start = new_start;
+            fragments[i].end = new_end;
+        } else {
+            let new_start = orig_start.max(prev_new_end + 0.05);
+            let target_end = new_start + spoken_dur;
+            let new_end = target_end.min(orig_end).max(new_start + 0.60);
+            fragments[i].start = new_start;
+            fragments[i].end = new_end;
+        }
     }
 
     (fragments, tightened_count)
@@ -876,18 +987,31 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
         }
     }
 
-    let clean_fragments = deduplicate_multiline_loops(clean_fragments);
-    let before_stitch_len = clean_fragments.len();
-    let (clean_fragments, stitched_words) = repair_split_words_and_orphans(clean_fragments);
-    // Повторный прогон дедупликации ПОСЛЕ склейки полуслов гарантирует 100% идемпотентность при повторном чтении SRT из кэша!
-    let clean_fragments = deduplicate_multiline_loops(clean_fragments);
-    let post_stitch_dedup = before_stitch_len
-        .saturating_sub(stitched_words)
-        .saturating_sub(clean_fragments.len());
-    let removed = raw_count.saturating_sub(before_stitch_len) + post_stitch_dedup;
-    let (clean_fragments, tightened_cues) = tighten_subtitle_timestamps(clean_fragments);
+    let mut clean_fragments = deduplicate_multiline_loops(clean_fragments);
+    let mut total_stitched_words = 0usize;
+    let mut total_tightened_cues = 0usize;
 
-    if removed > 0 || stitched_words > 0 || tightened_cues > 0 {
+    // Многопроходная конвергенция (до достижения неподвижной точки):
+    // гарантирует, что 3-частные разрывы («отныне буду» + «квартироваться» + «здесь.») и подтяжка таймкодов
+    // полностью завершаются за первый же вызов `sanitize_srt_file`, а повторное чтение кэша при экспорте дает 0 изменений!
+    for _pass in 0..3 {
+        let (tightened_frags, t_cnt) = tighten_subtitle_timestamps(clean_fragments);
+        let (repaired_frags, s_cnt) = repair_split_words_and_orphans(tightened_frags);
+        let dedup_frags = deduplicate_multiline_loops(repaired_frags);
+        total_tightened_cues += t_cnt;
+        total_stitched_words += s_cnt;
+        let len_changed = dedup_frags.len() != clean_fragments.len();
+        clean_fragments = dedup_frags;
+        if t_cnt == 0 && s_cnt == 0 && !len_changed {
+            break;
+        }
+    }
+
+    let removed = raw_count
+        .saturating_sub(clean_fragments.len())
+        .saturating_sub(total_stitched_words);
+
+    if removed > 0 || total_stitched_words > 0 || total_tightened_cues > 0 {
         crate::logger::emit_log(
             app_handle,
             "Whisper",
@@ -895,25 +1019,26 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
             &format!(
                 "Очистка и синхронизация субтитров: удалено {} мусорных/дублирующихся строк, склеено {} полуслов/фраз, подтянуто {} растянутых таймкодов, итого {} точных реплик.",
                 removed,
-                stitched_words,
-                tightened_cues,
+                total_stitched_words,
+                total_tightened_cues,
                 clean_fragments.len()
             ),
         );
+
+        let mut out = String::new();
+        for (idx, frag) in clean_fragments.iter().enumerate() {
+            out.push_str(&format!(
+                "{}\n{} --> {}\n{}\n\n",
+                idx + 1,
+                format_srt_timestamp(frag.start),
+                format_srt_timestamp(frag.end),
+                frag.text.trim()
+            ));
+        }
+
+        tokio::fs::write(srt_path, out).await.map_err(AppError::Io)?;
     }
 
-    let mut out = String::new();
-    for (idx, frag) in clean_fragments.iter().enumerate() {
-        out.push_str(&format!(
-            "{}\n{} --> {}\n{}\n\n",
-            idx + 1,
-            format_srt_timestamp(frag.start),
-            format_srt_timestamp(frag.end),
-            frag.text.trim()
-        ));
-    }
-
-    tokio::fs::write(srt_path, out).await.map_err(AppError::Io)?;
     Ok(clean_fragments.len())
 }
 

@@ -185,24 +185,34 @@ pub async fn render_clips_from_fragments(
         cancel_rx.resubscribe(),
     ).await?;
 
-    // 2. Рендеринг клипов в 9:16 с наложением синхронизированных субтитров
+    // 2. Рендеринг клипов с учетом выбранного формата (9:16 или 16:9) и наложением синхронизированных субтитров
+    let format_label = if config.vertical_format { "9:16" } else { "16:9" };
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
         percent: 50.0, 
-        stage: "Подготовка к нарезке Reels (9:16 + Субтитры)...".to_string() 
+        stage: format!("Подготовка к нарезке клипов ({} + Субтитры)...", format_label)
     });
 
-    // Для Reels активируем вертикальный формат 9:16
     let render_config = crate::render::RenderConfig {
-        vertical_format: true,
+        vertical_format: config.vertical_format,
         subtitle_style: config.subtitle_style.clone(),
         hw_accel: true,
     };
 
-    // Создаем структурированную директорию проекта и папку «Готовые клипы»
+    // Определяем директорию сохранения: пользовательская папка (если задана явно) или структурированная папка проекта
     let file_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
     let video_parent = video_buf.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let project_dir = video_parent.join(format!("{}_Проект", file_stem));
-    let clips_dir = project_dir.join("Готовые клипы");
+    let default_clips_dir = video_parent.join(format!("{}_Проект", file_stem)).join("Готовые клипы");
+    let clips_dir = match config.output_dir.as_deref().map(str::trim) {
+        Some(custom) if !custom.is_empty() && custom != "output_cuts/" && custom != "output_cuts" => {
+            let custom_path = PathBuf::from(custom);
+            if custom_path.is_absolute() {
+                custom_path
+            } else {
+                video_parent.join(custom_path)
+            }
+        }
+        _ => default_clips_dir,
+    };
     let _ = tokio::fs::create_dir_all(&clips_dir).await;
 
     crate::logger::emit_log(
@@ -219,7 +229,7 @@ pub async fn render_clips_from_fragments(
         let pct = 50.0 + ((i as f64 + 1.0) / total_fragments as f64) * 48.0;
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
             percent: pct, 
-            stage: format!("Рендеринг Reels {} из {} (9:16)...", i + 1, fragments.len()) 
+            stage: format!("Рендеринг клипа {} из {} ({})...", i + 1, fragments.len(), format_label) 
         });
 
         let start_sec = frag.start;
@@ -410,6 +420,13 @@ pub async fn open_folder(
             .spawn()
             .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось открыть файловый менеджер (xdg-open): {}", e)))?;
     }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        log::info!(
+            "Платформа не поддерживает десктопный файловый менеджер, возвращаем путь: {}",
+            existing_dir.display()
+        );
+    }
 
     Ok(existing_dir.to_string_lossy().to_string())
 }
@@ -443,11 +460,17 @@ pub async fn get_openai_profiles(app: AppHandle) -> AppResult<Vec<OpenAiProfile>
         return Ok(Vec::new());
     }
     match tokio::fs::read_to_string(&path).await {
-        Ok(content) => {
-            let profiles: Vec<OpenAiProfile> = serde_json::from_str(&content).unwrap_or_default();
-            Ok(profiles)
+        Ok(content) => match serde_json::from_str::<Vec<OpenAiProfile>>(&content) {
+            Ok(profiles) => Ok(profiles),
+            Err(e) => {
+                log::warn!("Не удалось десериализовать профили OpenAI из {:?}: {}", path, e);
+                Ok(Vec::new())
+            }
+        },
+        Err(e) => {
+            log::warn!("Не удалось прочитать файл профилей OpenAI {:?}: {}", path, e);
+            Ok(Vec::new())
         }
-        Err(_) => Ok(Vec::new()),
     }
 }
 

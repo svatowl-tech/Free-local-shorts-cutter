@@ -10,6 +10,7 @@ import {
   type ModelDownloadProgressPayload 
 } from '../ipc';
 import { pipelineStore } from './pipeline';
+import { isTauriRuntime, joinRelativePath, formatErrorMessage } from '../utils/path';
 
 export interface ModelDownloadState {
   progress: number; // 0 to 100
@@ -220,11 +221,11 @@ const createModelsStore = () => {
 
   const selectModel = (model: ModelInfo) => {
     if (model.category === 'whisper') {
-      pipelineStore.updateConfig({ asr_model_path: `models/${model.filename}` });
+      pipelineStore.updateConfig({ asr_model_path: joinRelativePath('models', model.filename) });
     } else if (model.category === 'llm') {
       pipelineStore.updateConfig({ text_engine: 'llama', text_model_name: model.filename });
     } else if (model.category === 'vision') {
-      pipelineStore.updateConfig({ vision_model_path: `models/${model.filename}` });
+      pipelineStore.updateConfig({ vision_model_path: joinRelativePath('models', model.filename) });
     }
   };
 
@@ -232,7 +233,7 @@ const createModelsStore = () => {
   const init = async () => {
     update(s => ({ ...s, loading: true, error: null }));
     
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+    const isTauri = isTauriRuntime();
 
     if (!isTauri) {
       update(s => ({
@@ -298,7 +299,7 @@ const createModelsStore = () => {
 
             const nextModels = s.models.map(m => {
               if (m.id === payload.model_id && payload.status === 'completed') {
-                const updated = { ...m, exists: true, local_path: m.local_path || `models/${m.filename}` };
+                const updated = { ...m, exists: true, local_path: m.local_path || joinRelativePath('models', m.filename) };
                 completedModel = updated;
                 return updated;
               }
@@ -317,18 +318,20 @@ const createModelsStore = () => {
             // Обновляем точный локальный путь с бэкенда
             getModelsStatus().then((fresh) => {
               update(s => ({ ...s, models: fresh }));
-            }).catch(() => {});
+            }).catch((err: unknown) => {
+              console.warn('Не удалось обновить статус моделей после скачивания:', formatErrorMessage(err));
+            });
           }
         });
       }
-    } catch (err: any) {
-      update(s => ({ ...s, loading: false, error: err.message || String(err) }));
+    } catch (err: unknown) {
+      update(s => ({ ...s, loading: false, error: formatErrorMessage(err) }));
     }
   };
 
   // Метод для старта скачивания
   const startDownload = async (modelId: string) => {
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+    const isTauri = isTauriRuntime();
 
     if (!isTauri) {
       // В режиме браузерного превью симулируем быструю загрузку для проверки UI
@@ -374,7 +377,7 @@ const createModelsStore = () => {
       }));
 
       await downloadModel(modelId);
-    } catch (err: any) {
+    } catch (err: unknown) {
       update(s => ({
         ...s,
         downloads: {
@@ -386,19 +389,19 @@ const createModelsStore = () => {
             status: 'failed'
           }
         },
-        error: err.message || String(err)
+        error: formatErrorMessage(err)
       }));
     }
   };
 
   // Отмена активной загрузки
   const cancelDownload = async (modelId: string) => {
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+    const isTauri = isTauriRuntime();
     if (isTauri) {
       try {
         await ipcCancelModelDownload(modelId);
-      } catch (err: any) {
-        console.warn('Ошибка отмены загрузки:', err);
+      } catch (err: unknown) {
+        console.warn('Ошибка отмены загрузки:', formatErrorMessage(err));
       }
     }
     update(s => {
@@ -410,7 +413,7 @@ const createModelsStore = () => {
 
   // Удаление скачанной модели с диска и переключение активной модели при необходимости
   const removeModel = async (modelId: string) => {
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+    const isTauri = isTauriRuntime();
     const currentState = get(store);
     const targetModel = currentState.models.find(m => m.id === modelId);
 
@@ -472,14 +475,14 @@ const createModelsStore = () => {
         const fresh = await getModelsStatus();
         update(s => ({ ...s, models: fresh }));
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       update(s => {
         const nextDeleting = { ...s.deleting };
         delete nextDeleting[modelId];
         return {
           ...s,
           deleting: nextDeleting,
-          error: err.message || String(err)
+          error: formatErrorMessage(err)
         };
       });
     }

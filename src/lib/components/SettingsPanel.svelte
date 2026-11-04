@@ -2,16 +2,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { pipelineStore } from '../stores/pipeline';
-  import { fragmentsStore } from '../stores/fragments';
+  import { fragmentsStore, type Fragment } from '../stores/fragments';
   import { modelsStore } from '../stores/models';
   import { getOpenAiProfiles, saveOpenAiProfiles, fetchOpenAiModels, type OpenAiProfile } from '../ipc';
+  import { isTauriRuntime, joinRelativePath, formatErrorMessage } from '../utils/path';
   import { ChevronDown, ChevronUp } from '@lucide/svelte';
 
   export let onOpenModelManager: () => void = () => {};
 
   let showAdvanced = false;
 
-  const OPENAI_PROFILES_STORAGE_KEY = 'vcp_openai_profiles_v1';
   let savedOpenAiProfiles: OpenAiProfile[] = [];
   let selectedProfileId = '';
   let profileName = 'OpenAI';
@@ -31,28 +31,12 @@
     : fetchedModels;
 
   async function initOpenAiProfiles() {
-    let localList: OpenAiProfile[] = [];
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        const raw = window.localStorage.getItem(OPENAI_PROFILES_STORAGE_KEY);
-        if (raw) {
-          localList = JSON.parse(raw);
-        }
-      } catch {}
-    }
-
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-    if (isTauri) {
+    if (isTauriRuntime()) {
       const diskList = await getOpenAiProfiles();
       if (diskList && diskList.length > 0) {
-        const mergedMap = new Map<string, OpenAiProfile>();
-        for (const p of localList) mergedMap.set(p.id, p);
-        for (const p of diskList) mergedMap.set(p.id, p);
-        localList = Array.from(mergedMap.values());
+        savedOpenAiProfiles = diskList;
       }
     }
-
-    savedOpenAiProfiles = localList;
 
     const cfg = $pipelineStore.config;
     if (cfg.openai_base_url) openaiBaseUrl = cfg.openai_base_url;
@@ -71,16 +55,14 @@
 
   async function persistProfilesList(list: OpenAiProfile[]) {
     savedOpenAiProfiles = list;
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
-        window.localStorage.setItem(OPENAI_PROFILES_STORAGE_KEY, JSON.stringify(list));
-      } catch {}
-    }
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-    if (isTauri) {
+    if (isTauriRuntime()) {
       try {
         await saveOpenAiProfiles(list);
-      } catch {}
+      } catch (err: unknown) {
+        const msg = formatErrorMessage(err);
+        console.warn('Ошибка сохранения профилей OpenAI на диск:', msg);
+        fetchModelsError = `Ошибка сохранения профиля: ${msg}`;
+      }
     }
   }
 
@@ -173,8 +155,8 @@
       } else {
         fetchModelsError = 'Сервер не вернул ни одной модели';
       }
-    } catch (err: any) {
-      const msg = typeof err === 'string' ? err : err?.message || String(err);
+    } catch (err: unknown) {
+      const msg = formatErrorMessage(err);
       fetchModelsError = msg.replace(/^Error:\s*/i, '');
     } finally {
       isFetchingModels = false;
@@ -354,8 +336,8 @@
   }
 
   function exportClips() {
-    let currentFragments: any[] = [];
-    fragmentsStore.subscribe(f => currentFragments = f)();
+    let currentFragments: Fragment[] = [];
+    fragmentsStore.subscribe(f => (currentFragments = f))();
     pipelineStore.exportAndRenderClips(currentFragments);
   }
 
@@ -548,7 +530,7 @@
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
             >
               {#each whisperModels as wm}
-                <option value={`models/${wm.filename}`}>
+                <option value={joinRelativePath('models', wm.filename)}>
                   {wm.exists ? '✓ ' : ''}{wm.name} ({wm.size_mb} МБ){wm.exists ? ' [Скачана]' : ' [Не скачана]'}
                 </option>
               {/each}
@@ -755,7 +737,7 @@
                 <input
                   id="openai_api_key"
                   type={showApiKey ? 'text' : 'password'}
-                  placeholder="sk-..."
+                  placeholder="Введите API-ключ..."
                   bind:value={openaiApiKey}
                   on:input={syncOpenAiFieldsToStore}
                   disabled={$pipelineStore.status === 'running'}
@@ -869,7 +851,7 @@
             >
               <option value="">Авто / Двухфакторный анализ (FFmpeg сцены + аудио)</option>
               {#each visionModels as vm}
-                <option value={`models/${vm.filename}`}>
+                <option value={joinRelativePath('models', vm.filename)}>
                   {vm.exists ? '✓ ' : ''}{vm.name} ({vm.params}){vm.exists ? ' [Скачана]' : ' [Не скачана]'}
                 </option>
               {/each}

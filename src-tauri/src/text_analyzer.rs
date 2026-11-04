@@ -51,7 +51,7 @@ pub struct TextAnalysisConfig {
     pub model_name: String,       // for LlamaCli: path to ".gguf" or name, for Ollama: "qwen2.5:1.5b", for OpenAi: "gpt-4o-mini"
     pub ollama_url: String,       // e.g. "http://localhost:11434"
     pub openai_base_url: String,  // e.g. "https://api.openai.com/v1"
-    pub openai_api_key: String,   // e.g. "sk-..."
+    pub openai_api_key: String,   // Bearer token / API key
 }
 
 /// Функция парсинга SRT
@@ -484,9 +484,11 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         return true;
     }
 
-    // 5. Короткий вопрос-переспрос из 1–3 слов («Ловушек?», «Создатель?», «А почему?», «Капитан?») или одиночный возглас из 1 слова («Быстрый!»),
-    // если за ним сразу следует основная фраза (< 2.0с)
+    // 5. Короткий вопрос-переспрос из 1–3 слов («Ловушек?», «Создатель?», «А почему?», «Капитан?»),
+    // одиночный возглас из 1 слова («Быстрый!»), либо короткая эмоциональная подводка-восклицание («Какая мерзость!», «Как, как, так и вышло!», «Вот засада!»),
+    // если за ней сразу без паузы следует основная панчлайн-реплика того же персонажа
     if idx + 1 < fragments.len() {
+        let next_trimmed = fragments[idx + 1].text.trim();
         let gap_next = (fragments[idx + 1].start - curr.end).max(0.0);
         if word_count <= 3 && raw_trimmed.ends_with('?') && gap_next < 2.0 {
             return true;
@@ -495,6 +497,20 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
             return true;
         }
         if word_count <= 2 && gap_next < 0.35 && !raw_trimmed.contains('!') {
+            return true;
+        }
+        if word_count <= 5
+            && raw_trimmed.ends_with('!')
+            && gap_next <= 0.30
+            && !next_trimmed.starts_with('-')
+            && !next_trimmed.starts_with('—')
+            && (clean.starts_with("какая ")
+                || clean.starts_with("какой ")
+                || clean.starts_with("как, как")
+                || clean.starts_with("как так")
+                || clean.starts_with("вот засад")
+                || clean.starts_with("да вы "))
+        {
             return true;
         }
     }
@@ -649,7 +665,7 @@ pub async fn analyze_with_llama_cli(
     );
 
     let mut all_scores = Vec::with_capacity(fragments.len());
-    let batch_size = 35;
+    let batch_size = 25;
     let total_batches = (fragments.len() + batch_size - 1) / batch_size;
     let mut use_gpu = true;
     let mut gpu_succeeded_once = false;
@@ -1195,8 +1211,8 @@ fn build_prompt(fragments: &[SubtitleFragment]) -> String {
 Оцени каждую из {} реплик от 0.0 до 1.0:\n\
 1. 0.75-0.95: законченные эмоциональные, яркие фразы ([START]...[END]).\n\
 2. 0.25-0.50: обрывки и полуфразы ([CONT] или [INCOMPLETE]).\n\
-3. Выведи ТОЛЬКО валидный JSON-массив из {} чисел в диапазоне 0.0-1.0 без текста и комментариев.\n\
-Пример: [0.85, 0.40, 0.72]\n\n\
+3. Выведи ТОЛЬКО валидный JSON-массив ровно из {} чисел в диапазоне 0.0-1.0 без текста и комментариев.\n\
+Пример формата: [0.82, 0.45]\n\n\
 Реплики:\n{}\n\n\
 JSON:[",
         fragments.len(),
@@ -1381,9 +1397,9 @@ async fn run_llama_cli(
         .unwrap_or(4)
         .to_string();
 
-    // Динамический лимит токенов пропорционально размеру пакета (на последнем неполном пакете из 25 реплик
-    // избыточный лимит 384 заставлял модель дописывать комментарии после закрывающей скобки `]`)
-    let max_tokens = (expected_count * 8 + 28).clamp(64, 300).to_string();
+    // Динамический лимит токенов пропорционально размеру пакета + стоп-токен `]`
+    // для мгновенного завершения генерации сразу после закрытия JSON-массива
+    let max_tokens = (expected_count * 7 + 18).clamp(32, 240).to_string();
 
     let mut cmd = sidecar_command
         .env("PATH", crate::logger::build_sidecar_env_path(app_handle));
@@ -1405,6 +1421,7 @@ async fn run_llama_cli(
         "-ngl", ngl_val,
         "-t", &threads,
         "-n", &max_tokens,
+        "-r", "]",
         "--temp", "0.1",
         "--repeat-penalty", "1.15",
         "--no-display-prompt",
@@ -1554,7 +1571,12 @@ fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
                 return None;
             }
         }
-        Some(nums.into_iter().map(|x| x.clamp(0.05, 0.96)).collect())
+        Some(
+            nums.into_iter()
+                .take(expected_len)
+                .map(|x| x.clamp(0.05, 0.96))
+                .collect(),
+        )
     };
 
     // 1. Полноценный JSON-массив в квадратных скобках (берем ПЕРВУЮ закрывающую скобку `]` после `[`,

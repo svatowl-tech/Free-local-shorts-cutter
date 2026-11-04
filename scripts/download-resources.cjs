@@ -267,9 +267,19 @@ async function downloadPreinstalledModels() {
 // Загрузка и подготовка бинарников Sidecar
 async function downloadSidecars() {
     console.log('\n--- 2. Проверка и подготовка sidecar бинарников в src-tauri/resources ---');
+    const isMobile = target.includes('android') || target.includes('ios');
+
     for (const sc of sidecars) {
         const outName = `${sc.name}-${target}${ext}`;
         const outPath = path.join(resourcesDir, outName);
+
+        if (isMobile) {
+            if (!fs.existsSync(outPath)) {
+                fs.writeFileSync(outPath, `# Mobile sidecar stub for ${sc.name}\n`);
+            }
+            console.log(`✓ Создан мобильный stub-ресурс: ${outName}`);
+            continue;
+        }
 
         if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1024) {
             console.log(`✓ Бинарник ${outName} уже существует. Пропуск.`);
@@ -311,7 +321,7 @@ async function downloadSidecars() {
         if (!srcBin) {
             let searchMasks = [sc.binName];
             if (sc.name === 'llama-vision') {
-                searchMasks = ['minicpm', 'minicopic', 'llava', 'llama-cli', 'main'];
+                searchMasks = ['llava-cli', 'minicpm', 'minicopic', 'llava', 'llama-cli', 'main'];
             } else if (sc.name === 'whisper') {
                 searchMasks = ['main', 'whisper', 'whisper-cli'];
             } else if (sc.name === 'llama-cli') {
@@ -366,7 +376,9 @@ async function run() {
 
     try {
         fs.rmSync(tempDir, { recursive: true, force: true });
-    } catch (e) {}
+    } catch (err) {
+        console.warn('Предупреждение при очистке временной папки:', err.message);
+    }
 
     console.log('\n======================================================');
     console.log('✅ ВСЕ МОДЕЛИ И БИНАРНИКИ УСПЕШНО ПОДГОТОВЛЕНЫ К СБОРКЕ!');

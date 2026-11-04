@@ -823,7 +823,7 @@ fn analyze_bmp_frame_2d(
                 };
 
                 let score = face_score * edge_guard;
-                if score > 0.18 {
+                if score > 0.30 {
                     raw_boxes.push((gx, gy, bw, bh, center_gx, score, scale_weight));
                 }
             }
@@ -836,6 +836,13 @@ fn analyze_bmp_frame_2d(
 
     let mut candidates: Vec<FaceCandidate> = Vec::with_capacity(4);
     for &(gx, gy, bw, bh, raw_cx, score, scale_weight) in &raw_boxes {
+        // Второстепенные кандидаты должны обладать достаточной выраженностью (>= 44% от главного лица),
+        // чтобы случайный контраст фона не создавал ложные 3–4 лица в каждом кадре
+        if let Some(first) = candidates.first() {
+            if score < first.base_score * 0.44 {
+                break;
+            }
+        }
         if candidates
             .iter()
             .any(|c| (c.center_ratio - raw_cx).abs() < 0.145)
@@ -1248,6 +1255,19 @@ fn segment_and_smooth_camera_track(
         if cleaned.len() >= 2 && (cleaned[0].end_t - cleaned[0].start_t) < 1.20 {
             cleaned[1].start_t = 0.0;
             cleaned.remove(0);
+        }
+
+        // Если самый последний микро-сегмент в конце клипа короче 1.4с — поглощаем его в предыдущий ракурс,
+        // чтобы камера не совершала резкий скачок за секунду до окончания ролика
+        if cleaned.len() >= 2 {
+            let last_idx = cleaned.len() - 1;
+            if (cleaned[last_idx].end_t - cleaned[last_idx].start_t) < 1.40 {
+                let end_t = cleaned[last_idx].end_t;
+                cleaned.pop();
+                if let Some(prev) = cleaned.last_mut() {
+                    prev.end_t = end_t;
+                }
+            }
         }
 
         raw_segments = cleaned;

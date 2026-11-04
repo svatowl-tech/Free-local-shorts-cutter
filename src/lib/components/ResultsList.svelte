@@ -2,9 +2,10 @@
 <script lang="ts">
   import { pipelineStore } from '../stores/pipeline';
   import { convertFileSrc } from '@tauri-apps/api/core';
+  import { isTauriRuntime, getFileName, getParentDir } from '../utils/path';
   import { FolderInput, FolderOpen, ArrowLeft, Play, Pause, X, Copy, Check } from '@lucide/svelte';
 
-  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+  const isTauri = isTauriRuntime();
 
   let activePreviewClip: string | null = null;
   let activePreviewSrc: string = '';
@@ -14,9 +15,9 @@
   $: defaultExportFolder = (() => {
     const firstClip = $pipelineStore.clips[0];
     if (firstClip) {
-      const lastSlash = Math.max(firstClip.lastIndexOf('/'), firstClip.lastIndexOf('\\'));
-      if (lastSlash > 0) {
-        return firstClip.substring(0, lastSlash);
+      const parent = getParentDir(firstClip);
+      if (parent) {
+        return parent;
       }
     }
     return $pipelineStore.config.output_dir || 'Готовые клипы';
@@ -132,7 +133,7 @@
 
   <!-- Встроенный плеер предпросмотра выбранного готового ролика -->
   {#if activePreviewClip && activePreviewSrc}
-    {@const activeName = activePreviewClip.split(/[/\\]/).pop() || 'clip.mp4'}
+    {@const activeName = getFileName(activePreviewClip, 'clip.mp4')}
     <div class="p-4 bg-[#0c0c0e] border border-[#5865f2]/60 rounded-[4px] flex flex-col gap-3 shadow-xl">
       <div class="flex items-center justify-between border-b border-[rgba(226,226,224,0.1)] pb-2.5">
         <div class="flex items-center gap-2 min-w-0">
@@ -178,7 +179,7 @@
 
     <div class="space-y-2">
       {#each $pipelineStore.clips as clip, index}
-        {@const clipName = clip.split(/[/\\]/).pop() || `clip_${index + 1}.mp4`}
+        {@const clipName = getFileName(clip, `clip_${index + 1}.mp4`)}
         {@const isPreviewing = activePreviewClip === clip}
         <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
         <div

@@ -11,9 +11,15 @@ fn main() {
     let temp_download_dir = Path::new("target/downloads");
 
     // Создаем нужные папки
-    fs::create_dir_all(resources_dir).unwrap();
-    fs::create_dir_all(models_dir).unwrap();
-    fs::create_dir_all(temp_download_dir).unwrap();
+    if let Err(e) = fs::create_dir_all(resources_dir) {
+        panic!("Не удалось создать папку resources: {}", e);
+    }
+    if let Err(e) = fs::create_dir_all(models_dir) {
+        panic!("Не удалось создать папку models: {}", e);
+    }
+    if let Err(e) = fs::create_dir_all(temp_download_dir) {
+        panic!("Не удалось создать папку target/downloads: {}", e);
+    }
 
     // Создаем плейсхолдер в models/ и resources/, чтобы glob в tauri.conf.json никогда не падал
     let placeholder_path = models_dir.join("placeholder.txt");
@@ -30,60 +36,105 @@ fn main() {
     let target = std::env::var("TARGET").unwrap_or_else(|_| "x86_64-pc-windows-msvc".to_string());
     println!("cargo:warning=Сборка под целевую платформу: {}", target);
 
-    // Доступные расширения бинарников
-    let ext = if target.contains("windows") { ".exe" } else { "" };
-
-    // JSON-подобный список ресурсов с правильными URL-адресами в зависимости от платформы
     let is_windows = target.contains("windows");
-    
-    // Ссылки на архивы
-    let (ffmpeg_url, whisper_url, llama_url) = if is_windows {
+    let is_mac = target.contains("apple-darwin");
+    let is_mobile = target.contains("android") || target.contains("ios");
+    let ext = if is_windows { ".exe" } else { "" };
+
+    let sidecar_names = ["ffmpeg", "ffprobe", "whisper", "llama-vision", "llama-cli"];
+
+    // Для мобильных таргетов (Android / iOS) создаем легкие заглушки sidecar-файлов без скачивания десктопных архивов
+    if is_mobile {
+        println!(
+            "cargo:warning=Мобильная целевая платформа ({}): создание кроссплатформенных stub-ресурсов без десктопных бинарников.",
+            target
+        );
+        for sidecar_name in &sidecar_names {
+            let sidecar_filename = format!("{}-{}{}", sidecar_name, target, ext);
+            let sidecar_fullname = resources_dir.join(&sidecar_filename);
+            if !sidecar_fullname.exists() {
+                let _ = fs::write(
+                    &sidecar_fullname,
+                    format!("# Mobile sidecar stub for {}\n", sidecar_name),
+                );
+            }
+        }
+        tauri_build::build();
+        return;
+    }
+
+    // Ссылки на архивы, синхронизированные с scripts/download-resources.cjs
+    let (ffmpeg_url, ffprobe_url, whisper_url, llama_url) = if is_windows {
+        let ff = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip";
         (
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-            "https://github.com/ggml-org/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip",
-            "https://github.com/ggml-org/llama.cpp/releases/download/b3500/llama-b3500-bin-win-cuda-cu12.2.0-x64.zip"
+            ff,
+            ff,
+            "https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip",
+            "https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip",
+        )
+    } else if is_mac {
+        let is_arm64 = target.contains("aarch64");
+        (
+            "https://evermeet.cx/ffmpeg/getrelease/zip",
+            "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip",
+            if is_arm64 {
+                "https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-arm64.zip"
+            } else {
+                "https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-x64.zip"
+            },
+            if is_arm64 {
+                "https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-arm64.zip"
+            } else {
+                "https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-x64.zip"
+            },
         )
     } else {
-        // Fallback-ссылки под Linux для контейнера или кросс-компиляции
+        let ff = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz";
         (
-            "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
-            "https://github.com/ggml-org/whisper.cpp/releases/download/v1.5.4/whisper-v1.5.4-bin-ubuntu-x64.zip",
-            "https://github.com/ggml-org/llama.cpp/releases/download/b3500/llama-b3500-bin-ubuntu-x64.zip"
+            ff,
+            ff,
+            "https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip",
+            "https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-ubuntu-x64.zip",
         )
     };
 
     // Опишем структуру: (имя sidecar, имя файла внутри архива, URL архива, имя архивного файла)
-    // sidecar имя будет <col1>-<target><ext>
     let sidecars = vec![
         (
-            "ffmpeg", 
-            if is_windows { "ffmpeg.exe" } else { "ffmpeg" }, 
-            ffmpeg_url, 
-            if is_windows { "ffmpeg.zip" } else { "ffmpeg.tar.xz" }
+            "ffmpeg",
+            if is_windows { "ffmpeg.exe" } else { "ffmpeg" },
+            ffmpeg_url,
+            if is_windows || is_mac { "ffmpeg.zip" } else { "ffmpeg.tar.xz" },
         ),
         (
-            "ffprobe", 
-            if is_windows { "ffprobe.exe" } else { "ffprobe" }, 
-            ffmpeg_url, 
-            if is_windows { "ffmpeg.zip" } else { "ffmpeg.tar.xz" }
+            "ffprobe",
+            if is_windows { "ffprobe.exe" } else { "ffprobe" },
+            ffprobe_url,
+            if is_windows {
+                "ffmpeg.zip"
+            } else if is_mac {
+                "ffprobe.zip"
+            } else {
+                "ffmpeg.tar.xz"
+            },
         ),
         (
-            "whisper", 
-            if is_windows { "main.exe" } else { "main" }, 
-            whisper_url, 
-            "whisper.zip"
+            "whisper",
+            if is_windows { "main.exe" } else { "main" },
+            whisper_url,
+            "whisper.zip",
         ),
         (
-            "llama-vision", 
-            if is_windows { "llama-llava-cli.exe" } else { "llama-llava-cli" }, 
-            llama_url, 
-            "llama.zip"
+            "llama-vision",
+            if is_windows { "llama-llava-cli.exe" } else { "llama-llava-cli" },
+            llama_url,
+            "llama.zip",
         ),
         (
-            "llama-cli", 
-            if is_windows { "llama-cli.exe" } else { "llama-cli" }, 
-            llama_url, 
-            "llama.zip"
+            "llama-cli",
+            if is_windows { "llama-cli.exe" } else { "llama-cli" },
+            llama_url,
+            "llama.zip",
         ),
     ];
 
@@ -100,7 +151,7 @@ fn main() {
 
         // Путь скачанного архива
         let archive_path = temp_download_dir.join(archive_file_name);
-        
+
         // Скачиваем архив, если еще нет
         if !archive_path.exists() {
             if let Err(e) = download_file(archive_url, &archive_path) {
@@ -120,31 +171,46 @@ fn main() {
         if let Some(src_bin_path) = find_file_recursive(&extract_dir, target_bin_file) {
             // Копируем бинарник в финальный resources sidecar
             if let Err(e) = fs::copy(&src_bin_path, &sidecar_fullname) {
-                panic!("Не удалось скопировать бинарник {:?} -> {:?}: {}", src_bin_path, sidecar_fullname, e);
+                panic!(
+                    "Не удалось скопировать бинарник {:?} -> {:?}: {}",
+                    src_bin_path, sidecar_fullname, e
+                );
             }
-            println!("cargo:warning=Успешно извлечён и подготовлен sidecar {}", sidecar_filename);
+            println!(
+                "cargo:warning=Успешно извлечён и подготовлен sidecar {}",
+                sidecar_filename
+            );
         } else {
             // Если точное имя не найдено, поищем любое частичное совпадение
-            // Например для llama-vision вместо llama-llava-cli поищем любое *llava-cli* или *cli*
-            let fallback_name = match sidecar_name {
-                "llama-vision" => "llava-cli",
-                "whisper" => "whisper-cli",
-                _ => target_bin_file,
+            let fallback_masks: &[&str] = match sidecar_name {
+                "llama-vision" => &["llava-cli", "minicpm", "minicopic", "llama-cli", "main"],
+                "whisper" => &["whisper-cli", "whisper", "main"],
+                "llama-cli" => &["llama-cli", "main"],
+                _ => &[target_bin_file],
             };
 
             let mut found = false;
-            if let Some(src_bin_path) = find_file_partial(&extract_dir, fallback_name) {
-                if let Err(e) = fs::copy(&src_bin_path, &sidecar_fullname) {
-                    panic!("Не удалось скопировать fallback-бинарник {:?} -> {:?}: {}", src_bin_path, sidecar_fullname, e);
+            for mask in fallback_masks {
+                if let Some(src_bin_path) = find_file_partial(&extract_dir, mask) {
+                    if let Err(e) = fs::copy(&src_bin_path, &sidecar_fullname) {
+                        panic!(
+                            "Не удалось скопировать fallback-бинарник {:?} -> {:?}: {}",
+                            src_bin_path, sidecar_fullname, e
+                        );
+                    }
+                    println!(
+                        "cargo:warning=Успешно подготовлен fallback-sidecar {} из {:?}",
+                        sidecar_filename, src_bin_path
+                    );
+                    found = true;
+                    break;
                 }
-                println!("cargo:warning=Успешно подготовлен fallback-sidecar {} из {:?}", sidecar_filename, src_bin_path);
-                found = true;
             }
 
             if !found {
                 panic!(
-                    "Критическая ошибка: бинарный файл '{}' (или маска '{}') не найден в распакованном архиве {:?}", 
-                    target_bin_file, fallback_name, extract_dir
+                    "Критическая ошибка: бинарный файл '{}' не найден в распакованном архиве {:?}",
+                    target_bin_file, extract_dir
                 );
             }
         }
@@ -162,34 +228,43 @@ fn main() {
 
 fn download_file(url: &str, dest: &Path) -> Result<(), String> {
     println!("cargo:warning=Скачивание архива: {} -> {:?}", url, dest);
-    
-    // Сначала пробуем использовать системный curl
+
+    // Сначала пробуем использовать системный curl с передачей OsStr без unwrap()
     let output = Command::new("curl")
-        .args(&["-L", "-f", "-S", "-o", dest.to_str().unwrap(), url])
+        .arg("-L")
+        .arg("-f")
+        .arg("-S")
+        .arg("-o")
+        .arg(dest.as_os_str())
+        .arg(url)
         .output();
-    
-    match output {
-        Ok(out) if out.status.success() => return Ok(()),
-        _ => {}
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            return Ok(());
+        }
     }
 
-    // Для Windows запускаем PowerShell в качестве мощного резервного инструмента
+    // Для Windows запускаем PowerShell в качестве резервного инструмента
     if cfg!(target_os = "windows") {
+        let dest_lossy = dest.to_string_lossy();
         let ps_cmd = format!(
             "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
-            url,
-            dest.to_str().unwrap()
+            url, dest_lossy
         );
         let output = Command::new("powershell")
-            .args(&["-NoProfile", "-Command", &ps_cmd])
+            .args(["-NoProfile", "-Command", &ps_cmd])
             .output();
-        
+
         match output {
             Ok(out) => {
                 if out.status.success() {
                     return Ok(());
                 } else {
-                    return Err(format!("PowerShell failed: {}", String::from_utf8_lossy(&out.stderr)));
+                    return Err(format!(
+                        "PowerShell failed: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ));
                 }
             }
             Err(e) => return Err(format!("Failed to execute PowerShell: {}", e)),
@@ -200,21 +275,28 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
 }
 
 fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
-    println!("cargo:warning=Распаковка архива: {:?} -> {:?}", archive_path, dest_dir);
+    println!(
+        "cargo:warning=Распаковка архива: {:?} -> {:?}",
+        archive_path, dest_dir
+    );
     fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
 
-    let is_zip = archive_path.extension().and_then(|s| s.to_str()) == Some("zip");
+    let is_zip = archive_path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("zip"))
+        .unwrap_or(false);
 
     if is_zip {
         // На Windows пробуем PowerShell Expand-Archive
         if cfg!(target_os = "windows") {
             let ps_cmd = format!(
                 "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                archive_path.to_str().unwrap(),
-                dest_dir.to_str().unwrap()
+                archive_path.to_string_lossy(),
+                dest_dir.to_string_lossy()
             );
             let output = Command::new("powershell")
-                .args(&["-NoProfile", "-Command", &ps_cmd])
+                .args(["-NoProfile", "-Command", &ps_cmd])
                 .output();
 
             if let Ok(out) = output {
@@ -226,7 +308,10 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
 
         // Пробуем универсальный tar -xf
         let output = Command::new("tar")
-            .args(&["-xf", archive_path.to_str().unwrap(), "-C", dest_dir.to_str().unwrap()])
+            .arg("-xf")
+            .arg(archive_path.as_os_str())
+            .arg("-C")
+            .arg(dest_dir.as_os_str())
             .output();
 
         if let Ok(out) = output {
@@ -235,24 +320,37 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
             }
         }
 
-        // Пробуем unzip для zip под Linux/Unix
+        // Пробуем unzip для zip под Linux/macOS/Unix
         let output = Command::new("unzip")
-            .args(&["-q", archive_path.to_str().unwrap(), "-d", dest_dir.to_str().unwrap()])
+            .arg("-q")
+            .arg("-o")
+            .arg(archive_path.as_os_str())
+            .arg("-d")
+            .arg(dest_dir.as_os_str())
             .output();
 
-        match output {
-            Ok(out) if out.status.success() => return Ok(()),
-            _ => {}
+        if let Ok(out) = output {
+            if out.status.success() {
+                return Ok(());
+            }
         }
     } else {
         // Для .tar.gz или .tar.xz
         let output = Command::new("tar")
-            .args(&["-xf", archive_path.to_str().unwrap(), "-C", dest_dir.to_str().unwrap()])
+            .arg("-xf")
+            .arg(archive_path.as_os_str())
+            .arg("-C")
+            .arg(dest_dir.as_os_str())
             .output();
 
         match output {
             Ok(out) if out.status.success() => return Ok(()),
-            Ok(out) => return Err(format!("tar failed: {}", String::from_utf8_lossy(&out.stderr))),
+            Ok(out) => {
+                return Err(format!(
+                    "tar failed: {}",
+                    String::from_utf8_lossy(&out.stderr)
+                ))
+            }
             Err(e) => return Err(format!("failed to run tar command: {}", e)),
         }
     }

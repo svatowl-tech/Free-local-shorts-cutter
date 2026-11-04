@@ -128,7 +128,7 @@ pub async fn analyze_video(
     };
 
     // Нативный лаконичный VQA-промпт для Moondream 2 и LLaVA (нейтральное описание визуального содержимого кадра)
-    let vqa_prompt = "\n\nQuestion: Describe what is visible in this frame in one concise sentence.\n\nAnswer:";
+    let vqa_prompt = "\n\nQuestion: Describe this image briefly.\n\nAnswer:";
     let total_vision = top_indices.len() as u32;
     let mut enriched_count = 0usize;
 
@@ -363,9 +363,34 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         }
     }
 
-    let clean = clean.trim().trim_matches(['"', '\'', '`', ' ']).to_string();
+    let clean = clean
+        .trim()
+        .trim_matches(['"', '\'', '`', ' '])
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     let lower = clean.to_lowercase();
-    if clean.len() < 6 {
+    if clean.len() < 8 {
+        return None;
+    }
+
+    // Отсекаем капслок-галлюцинации и псевдо-субтитры вроде «DADDISH THIEF" PIT: "UNDERMANDED GENRES»
+    let alpha_total = clean.chars().filter(|c| c.is_alphabetic()).count();
+    let upper_total = clean.chars().filter(|c| c.is_uppercase()).count();
+    if alpha_total < 6 || (upper_total * 100 / alpha_total.max(1)) > 40 {
+        return None;
+    }
+    if clean.contains('"')
+        || clean.contains("PIT:")
+        || clean.contains("MAN:")
+        || clean.contains("WOMAN:")
+        || clean.contains("GIRL:")
+        || clean.contains("BOY:")
+        || clean.contains("SOLDIER:")
+        || clean.contains("VOICE:")
+        || clean.contains("TITLE:")
+        || clean.contains("TEXT:")
+    {
         return None;
     }
 
@@ -380,7 +405,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         "i don't have access", "i do not have access",
         "as an assistant", "just a computer",
         "i don't want", "i do not want", "go to the party",
-        "guest:", "host:", "speaker:",
+        "guest:", "host:", "speaker:", "undermanded", "daddish",
     ];
 
     if refusal_signatures.iter().any(|&sig| lower.contains(sig)) {
@@ -406,8 +431,14 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         return None;
     }
 
-    let alpha_words: Vec<&str> = lower
+    let all_words: Vec<&str> = lower
         .split(|c: char| !c.is_alphabetic())
+        .filter(|w| !w.is_empty())
+        .collect();
+
+    let alpha_words: Vec<&str> = all_words
+        .iter()
+        .copied()
         .filter(|w| w.len() >= 4 && !matches!(*w, "with" | "that" | "from" | "this" | "they" | "have" | "wearing" | "background"))
         .collect();
     if !alpha_words.is_empty() {
@@ -419,19 +450,47 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         }
     }
 
-    // Оцениваем визуальную насыщенность по ключевым признакам экшена, эмоций и крупных планов персонажей
+    // Проверяем, что в ответе есть хотя бы одно реальное визуальное существительное или глагол описания кадра
+    let valid_visual_vocab = [
+        "image", "scene", "frame", "shot", "person", "people", "character", "characters",
+        "man", "men", "woman", "women", "girl", "boy", "soldier", "soldiers", "officer",
+        "face", "eyes", "hair", "mouth", "hand", "hands", "uniform", "suit", "shirt",
+        "coat", "jacket", "hat", "helmet", "cap", "glasses", "goggles", "room", "wall",
+        "table", "desk", "chair", "window", "door", "map", "sky", "cloud", "clouds",
+        "field", "tree", "trees", "forest", "building", "street", "train", "car", "plane",
+        "aircraft", "weapon", "gun", "rifle", "sword", "fire", "smoke", "explosion",
+        "light", "dark", "background", "foreground", "standing", "stands", "sitting",
+        "sits", "looking", "looks", "wearing", "wears", "holding", "holds", "walking",
+        "walks", "running", "runs", "marching", "march", "talking", "speaks", "speaking",
+        "smiling", "smiles", "smile", "smoking", "saluting", "leaps", "jumping", "flying",
+        "anime", "cartoon", "animated", "illustration",
+    ];
+    if !all_words.iter().any(|w| valid_visual_vocab.contains(w)) {
+        return None;
+    }
+
+    // Оцениваем визуальную насыщенность строго по ЦЕЛЫМ словам (чтобы "undermanded" не давало ложное совпадение с "man")
     let high_energy_terms = [
-        "fight", "battle", "attack", "explosion", "fire", "glow", "energy", "weapon", "sword",
-        "gun", "rifle", "blood", "monster", "kaiju", "skull", "scream", "angry", "shock",
-        "intense", "dramatic", "action", "running", "jumping", "laser", "lightning", "smoke",
+        "fight", "fighting", "battle", "attack", "explosion", "fire", "glow", "glowing",
+        "energy", "weapon", "sword", "gun", "rifle", "blood", "monster", "kaiju", "skull",
+        "scream", "screaming", "angry", "shock", "shocked", "intense", "dramatic", "action",
+        "running", "runs", "jumping", "leaps", "laser", "lightning", "smoke", "marching",
     ];
     let character_terms = [
-        "character", "person", "man", "woman", "girl", "boy", "soldier", "uniform", "face",
-        "eyes", "expression", "looking", "holding", "standing", "talking", "close-up", "anime",
+        "character", "person", "man", "men", "woman", "women", "girl", "boy", "soldier",
+        "soldiers", "officer", "uniform", "face", "eyes", "expression", "looking", "looks",
+        "holding", "holds", "standing", "stands", "sitting", "sits", "talking", "speaking",
+        "smiling", "anime",
     ];
 
-    let action_hits = high_energy_terms.iter().filter(|&&w| lower.contains(w)).count();
-    let char_hits = character_terms.iter().filter(|&&w| lower.contains(w)).count();
+    let action_hits = high_energy_terms
+        .iter()
+        .filter(|&&w| all_words.contains(&w))
+        .count();
+    let char_hits = character_terms
+        .iter()
+        .filter(|&&w| all_words.contains(&w))
+        .count();
 
     let mut bonus: f64 = 0.01;
     if action_hits >= 2 {
@@ -443,8 +502,63 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         bonus += 0.02;
     }
 
-    let short_desc: String = clean.chars().take(110).collect();
-    Some((short_desc.trim().to_string(), bonus.clamp(0.0, 0.08)))
+    // Аккуратное усечение описания без обрыва слов посередине ("in the backgr", "Two other me", "as if in a s"):
+    // 1) Если первое предложение заканчивается точкой в диапазоне 28..=115 символов — берем ровно первое законченное предложение.
+    // 2) Иначе обрезаем по последнему пробелу до 110 символов и убираем висячие предлоги/артикли на конце.
+    let short_desc = format_clean_vision_summary(&clean, 112);
+    if short_desc.len() < 8 {
+        return None;
+    }
+
+    Some((short_desc, bonus.clamp(0.0, 0.08)))
+}
+
+/// Форматирует описание кадра от Vision AI без обрыва слов на полуслове и без висячих артиклей/предлогов
+fn format_clean_vision_summary(clean: &str, max_chars: usize) -> String {
+    let char_count = clean.chars().count();
+    if char_count <= max_chars {
+        return clean.trim().to_string();
+    }
+
+    let prefix: String = clean.chars().take(max_chars).collect();
+    if let Some(dot_byte_idx) = prefix.find(". ") {
+        let dot_char_idx = prefix[..=dot_byte_idx].chars().count();
+        if dot_char_idx >= 28 {
+            return prefix[..=dot_byte_idx].trim().to_string();
+        }
+    }
+
+    let mut cut = if let Some(last_space) = prefix.rfind(' ') {
+        prefix[..last_space]
+            .trim_end_matches([',', ';', ':', '-'])
+            .trim()
+            .to_string()
+    } else {
+        prefix.trim().to_string()
+    };
+
+    // Убираем висячие служебные слова в самом конце усеченной фразы ("...in the", "...as if in a", "...with a")
+    let dangling_tail_words = [
+        "a", "an", "the", "with", "in", "on", "at", "of", "to", "for", "from", "by", "and",
+        "or", "as", "if", "into", "towards", "his", "her", "their", "its", "is", "are",
+    ];
+    loop {
+        if let Some(last_sp) = cut.rfind(' ') {
+            let last_w = cut[last_sp + 1..]
+                .trim_matches(|c: char| !c.is_alphabetic())
+                .to_lowercase();
+            if dangling_tail_words.contains(&last_w.as_str()) {
+                cut = cut[..last_sp]
+                    .trim_end_matches([',', ';', ':', '-'])
+                    .trim()
+                    .to_string();
+                continue;
+            }
+        }
+        break;
+    }
+
+    cut
 }
 
 /// Двухфакторный алгоритм анализа видео-хайлайтов (смена планов FFmpeg + энергетические пики аудиодорожки)

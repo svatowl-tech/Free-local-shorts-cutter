@@ -5,6 +5,7 @@
   import type { Fragment } from '../stores/fragments';
   import Timeline from './Timeline.svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
+  import { isTauriRuntime, formatErrorMessage } from '../utils/path';
   import { 
     Play, 
     Pause, 
@@ -60,16 +61,15 @@
         videoLoadError = false;
       } else if ($pipelineStore.video.path) {
         try {
-          const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-          if (isTauri) {
+          if (isTauriRuntime()) {
             const rawPath = $pipelineStore.video.path;
             videoSrc = convertFileSrc(rawPath);
           } else {
             videoSrc = '';
           }
           videoLoadError = false;
-        } catch (err) {
-          console.error("Failed to convert file src", err);
+        } catch (err: unknown) {
+          console.error('Failed to convert file src:', formatErrorMessage(err));
         }
       }
       if ($pipelineStore.video.duration && $pipelineStore.video.duration > 0) {
@@ -118,7 +118,9 @@
         videoEl.pause();
         videoEl.removeAttribute('src');
         videoEl.load();
-      } catch {}
+      } catch (err: unknown) {
+        console.debug('Очистка медиаэлемента при размонтировании:', formatErrorMessage(err));
+      }
     }
   });
 
@@ -297,13 +299,10 @@
       await pipelineStore.exportManualClips(
         $pipelineStore.video.path,
         $fragmentsStore,
-        {
-          ...$pipelineStore.config,
-          vertical_format: true
-        }
+        $pipelineStore.config
       );
-    } catch (e: any) {
-      console.error('Ошибка экспорта клипов:', e);
+    } catch (e: unknown) {
+      console.error('Ошибка экспорта клипов:', formatErrorMessage(e));
     } finally {
       isExporting = false;
     }

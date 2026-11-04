@@ -25,13 +25,11 @@
     "clean": "node -e \"const fs = require('fs'); ['build', 'dist', 'dist-releases', 'src-tauri/target', 'src-tauri/resources'].forEach(p => fs.rmSync(p, { recursive: true, force: true })); console.log('Build caches successfully cleaned up!');\""
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "@lucide/svelte": "^1.21.0",
     "@tauri-apps/api": "~2.0.0",
     "@tauri-apps/plugin-dialog": "~2.0.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "clsx": "^2.1.1",
-    "sharp": "^0.35.2",
     "tailwind-merge": "^3.3.1"
   },
   "overrides": {
@@ -56,6 +54,7 @@
     "eslint": "9.39.1",
     "pngjs": "^7.0.0",
     "postcss": "^8.5.6",
+    "sharp": "^0.35.2",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "tailwindcss": "4.1.11",

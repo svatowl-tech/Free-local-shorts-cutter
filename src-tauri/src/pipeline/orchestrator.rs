@@ -736,14 +736,14 @@ fn build_complete_phrase_window(
     }
 
     // Вспомогательное замыкание поиска лучшей конечной реплики `end_idx` от заданного `s_idx`
-    let find_best_end = |s_idx: usize| -> Option<(usize, f64, f64, bool)> {
+    let find_best_end = |s_idx: usize| -> Option<(usize, f64, f64, bool, bool, f64)> {
         let mut pre_roll = (fragments[s_idx].start - 0.18).max(intro_skip);
         if s_idx > 0 {
             // Не залезаем на хвост предыдущей реплики!
             pre_roll = pre_roll.max(fragments[s_idx - 1].end + 0.04).min(fragments[s_idx].start);
         }
 
-        let mut best_choice: Option<(usize, f64, f64, bool, f64)> = None; // (end_idx, c_start, c_end, is_clean_end, boundary_quality)
+        let mut best_choice: Option<(usize, f64, f64, bool, bool, f64)> = None; // (end_idx, c_start, c_end, is_clean_end, crossed_scene_transition, boundary_quality)
         let mut crossed_scene_transition = false;
 
         for end_idx in s_idx..fragments.len() {
@@ -803,7 +803,7 @@ fn build_complete_phrase_window(
                     b_quality += 0.45;
                 }
 
-                // 2. Сильный штраф за обрыв на слабой реплике («- Да уж.», «- Ясно.», «Прости за ожидание...», «Значит, ты и есть та самая дочка...»),
+                // 2. Сильный штраф за обрыв на слабой реплике («- Да уж.», «- Ясно.», «Какая мерзость!», «Значит, ты и есть та самая дочка...»),
                 // чтобы алгоритм продолжал окно еще на 2–3 секунды и захватывал финальный панчлайн собеседника!
                 if is_weak_end {
                     b_quality -= 1.45;
@@ -819,7 +819,7 @@ fn build_complete_phrase_window(
 
                 // 4. Штраф за склейку двух разных сцен через длинную паузу >= 2.2с
                 if crossed_scene_transition {
-                    b_quality -= 0.40;
+                    b_quality -= 0.65;
                 }
 
                 // 5. Небольшой бонус за насыщенность диалога (чтобы полноценная сцена с ярким панчлайном выигрывала у сухого обрывка)
@@ -838,45 +838,75 @@ fn build_complete_phrase_window(
                 let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.70;
                 b_quality -= dist_penalty;
 
-                if best_choice.as_ref().map_or(true, |prev| b_quality > prev.4) {
-                    best_choice = Some((end_idx, pre_roll, post_roll, is_sent_end && !is_weak_end, b_quality));
+                if best_choice.as_ref().map_or(true, |prev| b_quality > prev.5) {
+                    best_choice = Some((
+                        end_idx,
+                        pre_roll,
+                        post_roll,
+                        is_sent_end && !is_weak_end,
+                        crossed_scene_transition,
+                        b_quality,
+                    ));
                 }
             }
         }
 
-        best_choice.map(|(e_idx, cs, ce, clean, _)| (e_idx, cs, ce, clean))
+        best_choice
     };
 
     let mut chosen = find_best_end(start_idx);
 
-    // Если от `start_idx` вперед диалог закончился раньше 10 секунд (или закончился на слабой/оборванной фразе),
-    // пробуем захватить предыдущее полное предложение перед `start_idx`, чтобы получился полноценный диалог!
-    if chosen.as_ref().map_or(true, |c| !c.3) && start_idx > 0 {
-        let mut prev_start = start_idx - 1;
-        while prev_start > 0
-            && !crate::text_analyzer::is_sentence_start(fragments, prev_start)
-            && (start_idx - prev_start) < 6
-        {
-            let gap = (fragments[prev_start].start - fragments[prev_start - 1].end).max(0.0);
-            if gap > 1.8 {
+    // Если `start_idx` пришелся на кульминационную фразу в самом конце сцены (так что при движении вперед
+    // пришлось перешагнуть паузу смены сцен >= 2.2с `crossed_scene_transition == true`, либо диалог закончился на слабой фразе),
+    // шагаем назад по репликам ЭТОЙ ЖЕ сцены (пока паузы между ними <= 1.8с и сдвиг <= 11.5с), чтобы клип захватил
+    // подводку и завершился ровно на кульминации без склейки со следующей сценой!
+    if chosen.as_ref().map_or(true, |c| !c.3 || c.4) && start_idx > 0 {
+        let mut cursor = start_idx;
+        for _step in 0..4 {
+            if cursor == 0 {
                 break;
             }
-            prev_start -= 1;
-        }
-        if fragments[prev_start].start >= intro_skip {
-            let gap_between = (fragments[start_idx].start - fragments[prev_start].end).max(0.0);
-            if gap_between <= 2.5 {
-                if let Some(alt) = find_best_end(prev_start) {
-                    if alt.3 || chosen.is_none() {
-                        start_idx = prev_start;
-                        chosen = Some(alt);
+            let gap_before = (fragments[cursor].start - fragments[cursor - 1].end).max(0.0);
+            if gap_before > 1.8 {
+                break;
+            }
+            let mut prev_start = cursor - 1;
+            while prev_start > 0
+                && !crate::text_analyzer::is_sentence_start(fragments, prev_start)
+                && (cursor - prev_start) < 5
+            {
+                let g = (fragments[prev_start].start - fragments[prev_start - 1].end).max(0.0);
+                if g > 1.8 {
+                    break;
+                }
+                prev_start -= 1;
+            }
+            if fragments[prev_start].start < intro_skip
+                || (fragments[start_idx].start - fragments[prev_start].start) > 11.5
+            {
+                break;
+            }
+            if let Some(alt) = find_best_end(prev_start) {
+                let is_better = match &chosen {
+                    None => true,
+                    Some(curr) => {
+                        (alt.3 && !alt.4 && (!curr.3 || curr.4))
+                            || (alt.3 == curr.3 && alt.4 == curr.4 && alt.5 > curr.5 + 0.15)
+                    }
+                };
+                if is_better {
+                    start_idx = prev_start;
+                    chosen = Some(alt);
+                    if alt.3 && !alt.4 {
+                        break;
                     }
                 }
             }
+            cursor = prev_start;
         }
     }
 
-    let (end_idx, clip_start, clip_end, is_clean_end) = chosen?;
+    let (end_idx, clip_start, clip_end, is_clean_end, _, _) = chosen?;
     let clip_dur = clip_end - clip_start;
     if clip_dur < min_dur * 0.9 || clip_dur > max_dur + 1.5 {
         return None;
@@ -937,7 +967,13 @@ fn build_complete_phrase_window(
     };
 
     // Штраф за длинный провал тишины/музыки посередине клипа (когда склеены две разные сцены)
-    let transition_penalty = if max_internal_gap >= 2.0 { 0.05 } else { 0.0 };
+    let transition_penalty = if max_internal_gap >= 2.5 {
+        0.09
+    } else if max_internal_gap >= 2.0 {
+        0.05
+    } else {
+        0.0
+    };
 
     // Бонус за совпадение с визуальной динамикой / аудио-пиком
     let max_scene_in_win = scenes
@@ -959,22 +995,21 @@ fn build_complete_phrase_window(
         - transition_penalty)
         .clamp(0.35, 0.97);
 
-    let format_preview_text = |txt: &str, is_last: bool| -> String {
-        let t = txt.trim().replace(['\r', '\n'], " ");
+    let format_preview_text = |txt: &str, _is_last: bool| -> String {
+        let t = txt
+            .trim()
+            .replace(['\r', '\n'], " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
         let chars: Vec<char> = t.chars().collect();
-        if chars.len() <= 38 {
+        if chars.len() <= 68 {
             t
-        } else if !is_last {
-            let prefix: String = chars[..35].iter().collect();
-            format!("{}...", prefix.trim_end())
         } else {
-            let words: Vec<&str> = t.split_whitespace().collect();
-            if words.len() >= 4 {
-                let tail = words[words.len() - 3..].join(" ");
-                let prefix: String = chars[..18].iter().collect();
-                format!("{}... {}", prefix.trim_end(), tail)
+            let prefix: String = chars[..64].iter().collect();
+            if let Some(last_sp) = prefix.rfind(' ') {
+                format!("{}...", prefix[..last_sp].trim_end())
             } else {
-                let prefix: String = chars[..35].iter().collect();
                 format!("{}...", prefix.trim_end())
             }
         }

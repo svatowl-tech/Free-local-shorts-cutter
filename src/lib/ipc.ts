@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type Event } from '@tauri-apps/api/event';
+import { listen } from '@tauri-apps/api/event';
+import { isTauriRuntime, formatErrorMessage } from './utils/path';
 
 export interface FfmpegProgressPayload {
   current_time: number;
@@ -38,12 +39,6 @@ export interface SubtitleStyle {
   placement: string;
 }
 
-export interface RenderConfig {
-  vertical_format: boolean;
-  subtitle_style?: SubtitleStyle;
-  hw_accel: boolean;
-}
-
 export interface OpenAiProfile {
   id: string;
   name: string;
@@ -80,24 +75,24 @@ export interface PipelineProgressPayload {
 export async function extractAudio(videoPath: string, outputAudioPath?: string): Promise<string> {
   try {
     return await invoke<string>('extract_audio', { videoPath, outputAudioPath });
-  } catch (err) {
-    throw new Error(`Ошибка извлечения аудио: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка извлечения аудио: ${formatErrorMessage(err)}`);
   }
 }
 
 export async function transcribeAudio(audioPath: string, modelPath?: string): Promise<TranscribeResult> {
   try {
     return await invoke<TranscribeResult>('transcribe_audio', { audioPath, modelPath });
-  } catch (err) {
-    throw new Error(`Ошибка Whisper ASR: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка Whisper ASR: ${formatErrorMessage(err)}`);
   }
 }
 
 export async function analyzeVideo(videoPath: string, modelPath?: string): Promise<SceneCandidate[]> {
   try {
     return await invoke<SceneCandidate[]>('analyze_video', { videoPath, modelPath });
-  } catch (err) {
-    throw new Error(`Ошибка видеоанализа Qwen3-VL: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка видеоанализа Qwen3-VL: ${formatErrorMessage(err)}`);
   }
 }
 
@@ -121,8 +116,8 @@ export interface PipelineResult {
 export async function startPipeline(videoPath: string, config: PipelineConfig): Promise<PipelineResult> {
   try {
     return await invoke<PipelineResult>('start_pipeline', { videoPath, config });
-  } catch (err) {
-    throw new Error(`Ошибка pipeline: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка pipeline: ${formatErrorMessage(err)}`);
   }
 }
 
@@ -131,19 +126,23 @@ export interface FragmentDto {
   end: number;
 }
 
-export async function renderClipsFromFragments(videoPath: string, fragments: FragmentDto[], config: PipelineConfig): Promise<string[]> {
+export async function renderClipsFromFragments(
+  videoPath: string,
+  fragments: FragmentDto[],
+  config: PipelineConfig
+): Promise<string[]> {
   try {
     return await invoke<string[]>('render_clips_from_fragments', { videoPath, fragments, config });
-  } catch (err) {
-    throw new Error(`Ошибка рендеринга клипов по фрагментам: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка рендеринга клипов по фрагментам: ${formatErrorMessage(err)}`);
   }
 }
 
 export async function generateSubtitlesOnly(videoPath: string, config: PipelineConfig): Promise<string> {
   try {
     return await invoke<string>('generate_subtitles_only', { videoPath, config });
-  } catch (err) {
-    throw new Error(`Ошибка генерации субтитров: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка генерации субтитров: ${formatErrorMessage(err)}`);
   }
 }
 
@@ -202,32 +201,32 @@ export interface ModelDownloadProgressPayload {
 export async function getModelsStatus(): Promise<ModelInfo[]> {
   try {
     return await invoke<ModelInfo[]>('get_models_status');
-  } catch (err) {
-    throw new Error(`Ошибка получения статуса моделей: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка получения статуса моделей: ${formatErrorMessage(err)}`);
   }
 }
 
 export async function downloadModel(modelId: string): Promise<string> {
   try {
     return await invoke<string>('download_model', { modelId });
-  } catch (err) {
-    throw new Error(`Ошибка запуска скачивания: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка запуска скачивания: ${formatErrorMessage(err)}`);
   }
 }
 
 export async function deleteModel(modelId: string): Promise<string> {
   try {
     return await invoke<string>('delete_model', { modelId });
-  } catch (err) {
-    throw new Error(`Ошибка удаления модели: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка удаления модели: ${formatErrorMessage(err)}`);
   }
 }
 
 export async function cancelModelDownload(modelId: string): Promise<string> {
   try {
     return await invoke<string>('cancel_model_download', { modelId });
-  } catch (err) {
-    throw new Error(`Ошибка отмены загрузки: ${err}`);
+  } catch (err: unknown) {
+    throw new Error(`Ошибка отмены загрузки: ${formatErrorMessage(err)}`);
   }
 }
 
@@ -248,8 +247,8 @@ export async function getVideoMetadata(videoPath: string): Promise<VideoMetadata
 export async function cancelPipeline(): Promise<void> {
   try {
     await invoke('cancel_pipeline');
-  } catch (err) {
-    console.warn('cancel_pipeline invoke error:', err);
+  } catch (err: unknown) {
+    console.warn('cancel_pipeline invoke error:', formatErrorMessage(err));
   }
 }
 
@@ -258,106 +257,37 @@ export async function openFolder(folderPath: string): Promise<string> {
 }
 
 export async function getOpenAiProfiles(): Promise<OpenAiProfile[]> {
+  if (!isTauriRuntime()) {
+    return [];
+  }
   try {
     return await invoke<OpenAiProfile[]>('get_openai_profiles');
-  } catch {
+  } catch (err: unknown) {
+    console.warn('Не удалось получить профили OpenAI из Rust-бэкенда:', formatErrorMessage(err));
     return [];
   }
 }
 
 export async function saveOpenAiProfiles(profiles: OpenAiProfile[]): Promise<string> {
-  return await invoke<string>('save_openai_profiles', { profiles });
-}
-
-function buildBrowserModelsUrls(baseUrl: string): string[] {
-  let trimmed = (baseUrl || '').trim().replace(/\/+$/, '');
-  if (!trimmed) {
-    trimmed = 'https://api.openai.com/v1';
+  if (!isTauriRuntime()) {
+    return '';
   }
-  for (const suffix of ['/chat/completions', '/completions', '/models']) {
-    if (trimmed.endsWith(suffix)) {
-      trimmed = trimmed.slice(0, -suffix.length).replace(/\/+$/, '');
-    }
+  try {
+    return await invoke<string>('save_openai_profiles', { profiles });
+  } catch (err: unknown) {
+    throw new Error(`Ошибка сохранения профилей OpenAI: ${formatErrorMessage(err)}`);
   }
-  const urls: string[] = [];
-  if (
-    trimmed.endsWith('/v1') ||
-    trimmed.endsWith('/v1beta') ||
-    trimmed.endsWith('/v4') ||
-    trimmed.endsWith('/openai')
-  ) {
-    urls.push(`${trimmed}/models`);
-  } else {
-    urls.push(`${trimmed}/v1/models`);
-    urls.push(`${trimmed}/models`);
-  }
-  return urls;
-}
-
-function parseModelsFromJson(json: any): string[] {
-  const seen = new Set<string>();
-  const models: string[] = [];
-  const pushId = (val: unknown) => {
-    if (typeof val === 'string') {
-      const clean = val.trim();
-      if (clean && !seen.has(clean)) {
-        seen.add(clean);
-        models.push(clean);
-      }
-    }
-  };
-  const scanArray = (arr: any[]) => {
-    for (const item of arr) {
-      if (typeof item === 'string') {
-        pushId(item);
-      } else if (item && typeof item === 'object') {
-        pushId(item.id ?? item.model ?? item.name);
-      }
-    }
-  };
-
-  if (Array.isArray(json)) {
-    scanArray(json);
-  } else if (json && typeof json === 'object') {
-    if (Array.isArray(json.data)) scanArray(json.data);
-    if (models.length === 0 && Array.isArray(json.models)) scanArray(json.models);
-  }
-  return models;
 }
 
 export async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promise<string[]> {
-  const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-  if (isTauri) {
+  if (!isTauriRuntime()) {
+    throw new Error('Запрос списка моделей OpenAI выполняется только через защищенный Rust-бэкенд (Tauri IPC)');
+  }
+  try {
     return await invoke<string[]>('fetch_openai_models', { baseUrl, apiKey });
+  } catch (err: unknown) {
+    throw new Error(formatErrorMessage(err));
   }
-
-  const urls = buildBrowserModelsUrls(baseUrl);
-  const cleanKey = (apiKey || '').trim();
-  let lastError = 'Не удалось получить список моделей с сервера';
-
-  for (const url of urls) {
-    try {
-      const headers: Record<string, string> = { Accept: 'application/json' };
-      if (cleanKey) {
-        headers['Authorization'] = `Bearer ${cleanKey}`;
-      }
-      const resp = await fetch(url, { method: 'GET', headers });
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => '');
-        lastError = `HTTP ${resp.status}: ${text.slice(0, 140) || resp.statusText}`;
-        if (resp.status === 401 || resp.status === 403) break;
-        continue;
-      }
-      const data = await resp.json();
-      const models = parseModelsFromJson(data);
-      if (models.length > 0) {
-        return models;
-      }
-      lastError = 'Сервер ответил успешно, но список моделей пуст';
-    } catch (err: any) {
-      lastError = err?.message || String(err);
-    }
-  }
-  throw new Error(lastError);
 }
+
 

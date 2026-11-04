@@ -29,3 +29,9 @@ src-tauri/models/*
 .env*
 !.env.example
 
+# Temporary AI Studio chat attachments & planning artifacts
+public/assets/aistudio/
+.aistudio/
+assets/.aistudio/
+app/
+bun.lock

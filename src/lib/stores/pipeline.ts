@@ -12,11 +12,17 @@ import {
   onPipelineLog,
   cancelPipeline as ipcCancelPipeline,
   openFolder as ipcOpenFolder,
+  getOpenAiProfiles,
   type PipelineLogPayload,
-  type PipelineConfig,
-  type SubtitleStyle
+  type PipelineConfig
 } from '../ipc';
 import { fragmentsStore, type Fragment } from './fragments';
+import {
+  isTauriRuntime,
+  getParentDir,
+  hasDirectorySeparator,
+  formatErrorMessage
+} from '../utils/path';
 
 export interface SelectedVideo {
   name: string;
@@ -87,17 +93,21 @@ function loadInitialConfig(): PipelineConfig {
   try {
     const raw = window.localStorage.getItem(STORAGE_CONFIG_KEY);
     if (!raw) return { ...DEFAULT_CONFIG };
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as Partial<PipelineConfig>;
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
+      openai_api_key: '',
       max_clips_count: typeof parsed.max_clips_count === 'number' ? parsed.max_clips_count : DEFAULT_CONFIG.max_clips_count,
       subtitle_style: {
-        ...DEFAULT_CONFIG.subtitle_style,
-        ...(parsed.subtitle_style || {})
+        font_name: parsed.subtitle_style?.font_name || DEFAULT_CONFIG.subtitle_style!.font_name,
+        font_size: parsed.subtitle_style?.font_size || DEFAULT_CONFIG.subtitle_style!.font_size,
+        color: parsed.subtitle_style?.color || DEFAULT_CONFIG.subtitle_style!.color,
+        placement: parsed.subtitle_style?.placement || DEFAULT_CONFIG.subtitle_style!.placement
       }
     };
-  } catch {
+  } catch (err: unknown) {
+    console.warn('Не удалось прочитать сохраненную конфигурацию пайплайна:', formatErrorMessage(err));
     return { ...DEFAULT_CONFIG };
   }
 }
@@ -366,15 +376,18 @@ const createPipelineStore = () => {
         const config = { ...s.config, ...fields };
         if (typeof window !== 'undefined' && window.localStorage) {
           try {
-            window.localStorage.setItem(STORAGE_CONFIG_KEY, JSON.stringify(config));
-          } catch {}
+            // Никогда не сохраняем секретный API-ключ в браузерный localStorage
+            const persistedConfig: PipelineConfig = { ...config, openai_api_key: '' };
+            window.localStorage.setItem(STORAGE_CONFIG_KEY, JSON.stringify(persistedConfig));
+          } catch (err: unknown) {
+            console.warn('Не удалось сохранить конфигурацию пайплайна в localStorage:', formatErrorMessage(err));
+          }
         }
         return { ...s, config };
       });
       const safeFields = { ...fields };
       if (safeFields.openai_api_key) {
-        const k = safeFields.openai_api_key;
-        safeFields.openai_api_key = k.length > 8 ? `${k.slice(0, 4)}...${k.slice(-4)}` : '***';
+        safeFields.openai_api_key = '***';
       }
       addLog(`Обновлены настройки пайплайна: ${JSON.stringify(safeFields)}`);
     },
@@ -384,8 +397,8 @@ const createPipelineStore = () => {
     cancelPipeline: async () => {
       try {
         await ipcCancelPipeline();
-      } catch (err) {
-        console.warn('Ошибка вызова cancel_pipeline:', err);
+      } catch (err: unknown) {
+        console.warn('Ошибка вызова cancel_pipeline:', formatErrorMessage(err));
       }
       update(s => ({
         ...s,
@@ -397,12 +410,8 @@ const createPipelineStore = () => {
       addLog('Операция отменена пользователем.', 'Pipeline', 'warn');
     },
     openFolder: async (folderPath: string): Promise<string> => {
-      const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-      const fallbackDir =
-        folderPath.substring(0, folderPath.lastIndexOf('/')) ||
-        folderPath.substring(0, folderPath.lastIndexOf('\\')) ||
-        folderPath ||
-        'output_cuts';
+      const isTauri = isTauriRuntime();
+      const fallbackDir = getParentDir(folderPath, folderPath || 'output_cuts');
 
       if (!isTauri) {
         addLog(`Открыта папка готовых роликов: ${fallbackDir}`, 'UI', 'info');
@@ -412,9 +421,10 @@ const createPipelineStore = () => {
       try {
         const openedPath = await ipcOpenFolder(folderPath);
         return openedPath || fallbackDir;
-      } catch (err) {
-        console.error('Ошибка открытия папки через IPC:', err);
-        addLog(`Не удалось автоматически открыть проводник для: ${fallbackDir} (${err})`, 'UI', 'warn');
+      } catch (err: unknown) {
+        const errMsg = formatErrorMessage(err);
+        console.error('Ошибка открытия папки через IPC:', errMsg);
+        addLog(`Не удалось автоматически открыть проводник для: ${fallbackDir} (${errMsg})`, 'UI', 'warn');
         return fallbackDir;
       }
     },
@@ -434,17 +444,17 @@ const createPipelineStore = () => {
       addLog('Состояние сброшено к начальным настройкам');
     },
     exportManualClips: async (videoPath: string, fragments: Fragment[], config: PipelineConfig): Promise<string[]> => {
-      const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+      const isTauri = isTauriRuntime();
 
       update(s => ({
         ...s,
         status: 'running',
-        currentStage: 'Подготовка экспорта Reels (9:16 + Субтитры)...',
+        currentStage: `Подготовка экспорта клипов (${config.vertical_format ? '9:16' : '16:9'} + Субтитры)...`,
         percentage: 5,
         error: null,
         clips: []
       }));
-      addLog(`Запуск экспорта ${fragments.length} клипов в формате 9:16 с синхронизированными субтитрами...`);
+      addLog(`Запуск экспорта ${fragments.length} клипов в формате ${config.vertical_format ? '9:16' : '16:9'} с синхронизированными субтитрами...`);
 
       if (!isTauri) {
         // Этап 1: Извлечение аудио
@@ -604,7 +614,7 @@ const createPipelineStore = () => {
         const clipPaths = await renderClipsFromFragments(
             videoPath,
             formattedFragments,
-            { ...config, vertical_format: true }
+            config
         );
 
         unlistenPipelineLog();
@@ -616,15 +626,15 @@ const createPipelineStore = () => {
         update(s => ({
           ...s,
           status: 'completed',
-          currentStage: 'Экспорт Reels успешно завершен!',
+          currentStage: 'Экспорт клипов успешно завершен!',
           percentage: 100,
           clips: clipPaths
         }));
-        addLog(`Экспорт успешно завершен! Сгенерировано Reels: ${clipPaths.length}`);
+        addLog(`Экспорт успешно завершен! Сгенерировано клипов: ${clipPaths.length}`);
         return clipPaths;
 
-      } catch (err: any) {
-        const errorMsg = err.message || String(err);
+      } catch (err: unknown) {
+        const errorMsg = formatErrorMessage(err);
         update(s => ({
           ...s,
           status: 'failed',
@@ -635,7 +645,7 @@ const createPipelineStore = () => {
         return [];
       }
     },
-    exportAndRenderClips: async (fragments: any[]) => {
+    exportAndRenderClips: async (fragments: Fragment[]) => {
       const currentState = get(store);
       if (!currentState.video) return;
 
@@ -653,7 +663,7 @@ const createPipelineStore = () => {
         return;
       }
 
-      const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+      const isTauri = isTauriRuntime();
 
       if (!isTauri) {
         // Мы в веб-браузере (в нашей песочнице), запускаем красивый продвинутый симулятор
@@ -662,7 +672,7 @@ const createPipelineStore = () => {
       }
 
       // Проверяем, что передан полный системный путь к видеофайлу, а не только имя файла из браузерного input
-      const hasFullPath = currentState.video.path.includes('/') || currentState.video.path.includes('\\');
+      const hasFullPath = hasDirectorySeparator(currentState.video.path);
       if (!hasFullPath) {
         const msg = `Не удалось получить полный системный путь к файлу "${currentState.video.name}". Пожалуйста, выберите видео через диалог выбора файла (клик по области загрузки) или перетащите файл в окно программы.`;
         update(s => ({ ...s, error: msg }));
@@ -818,26 +828,23 @@ const createPipelineStore = () => {
           'render-progress'
         );
 
-        // Защитная проверка для OpenAI API: гарантируем отправку сохраненного API-ключа и URL
+        // Защитная проверка для OpenAI API: гарантируем подгрузку сохраненного профиля из защищенного Rust-бэкенда
         if (currentState.config.text_engine === 'openai') {
           if (!currentState.config.openai_api_key || currentState.config.openai_base_url === 'https://api.openai.com/v1' || !currentState.config.openai_base_url) {
             try {
-              const raw = typeof window !== 'undefined' ? window.localStorage.getItem('vcp_openai_profiles_v1') : null;
-              if (raw) {
-                const profiles = JSON.parse(raw);
-                if (Array.isArray(profiles) && profiles.length > 0) {
-                  const prof = profiles.find((p: any) => p.id === currentState.config.openai_profile_id) || profiles[0];
-                  if (prof && prof.api_key) {
-                    currentState.config.openai_profile_id = prof.id;
-                    currentState.config.openai_base_url = prof.base_url;
-                    currentState.config.openai_api_key = prof.api_key;
-                    currentState.config.openai_model = prof.model;
-                    addLog(`Подгружен сохраненный профиль OpenAI '${prof.name}' (${prof.base_url})`, 'IPC', 'info');
-                  }
+              const profiles = await getOpenAiProfiles();
+              if (Array.isArray(profiles) && profiles.length > 0) {
+                const prof = profiles.find((p) => p.id === currentState.config.openai_profile_id) || profiles[0];
+                if (prof && prof.api_key) {
+                  currentState.config.openai_profile_id = prof.id;
+                  currentState.config.openai_base_url = prof.base_url;
+                  currentState.config.openai_api_key = prof.api_key;
+                  currentState.config.openai_model = prof.model;
+                  addLog(`Подгружен сохраненный профиль OpenAI '${prof.name}' (${prof.base_url})`, 'IPC', 'info');
                 }
               }
-            } catch (e) {
-              console.warn('Не удалось прочитать локальные профили OpenAI:', e);
+            } catch (e: unknown) {
+              console.warn('Не удалось прочитать профили OpenAI из Rust-бэкенда:', formatErrorMessage(e));
             }
           }
         }
@@ -891,8 +898,8 @@ const createPipelineStore = () => {
           addLog(`Работа завершена! Получено клипов: ${(result.clips || []).length}`);
         }
 
-      } catch (err: any) {
-        const errorMsg = err.message || String(err);
+      } catch (err: unknown) {
+        const errorMsg = formatErrorMessage(err);
         update(s => ({
           ...s,
           status: 'failed',
@@ -914,8 +921,7 @@ const createPipelineStore = () => {
       const currentState = get(store);
       const safeConfig = { ...currentState.config };
       if (safeConfig.openai_api_key) {
-        const k = safeConfig.openai_api_key;
-        safeConfig.openai_api_key = k.length > 8 ? `${k.slice(0, 4)}...${k.slice(-4)}` : '***';
+        safeConfig.openai_api_key = '***';
       }
       const header = `=== Video Cutter Pro - Журнал логирования ===\nДата: ${new Date().toLocaleString()}\nВидео: ${currentState.video ? currentState.video.path : 'Не выбрано'}\nКонфигурация: ${JSON.stringify(safeConfig, null, 2)}\n===========================================\n\n`;
       const text = header + currentState.logs.join('\n');

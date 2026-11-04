@@ -3,7 +3,17 @@
   import { onMount, onDestroy } from 'svelte';
   import { pipelineStore } from '../stores/pipeline';
   import { getVideoMetadata } from '../ipc';
+  import { isTauriRuntime, getFileName, formatErrorMessage } from '../utils/path';
   import { HardDrive, Trash2 } from '@lucide/svelte';
+
+  interface FileWithNativePath extends File {
+    path?: string;
+  }
+
+  interface TauriDragDropPayload {
+    type?: string;
+    paths?: string[];
+  }
 
   let dragOver = false;
   let fileInput: HTMLInputElement;
@@ -19,7 +29,7 @@
   }
 
   async function selectPathFromTauri(selectedPath: string) {
-    const fileName = selectedPath.split(/[/\\]/).pop() || 'selected_video.mp4';
+    const fileName = getFileName(selectedPath, 'selected_video.mp4');
 
     // Мгновенно устанавливаем выбранный файл в стор (без блокировки UI)
     pipelineStore.setVideo({
@@ -38,18 +48,17 @@
           duration: meta.duration || 0
         });
       }
-    } catch (e) {
-      console.warn('FFmpeg метаданные пропущены:', e);
+    } catch (e: unknown) {
+      console.warn('FFmpeg метаданные пропущены:', formatErrorMessage(e));
     }
   }
 
   onMount(async () => {
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-    if (isTauri) {
+    if (isTauriRuntime()) {
       try {
         const { getCurrentWebview } = await import('@tauri-apps/api/webview');
         unlistenDragDrop = await getCurrentWebview().onDragDropEvent(async (event) => {
-          const payload = event.payload as any;
+          const payload = event.payload as TauriDragDropPayload;
           if (payload.type === 'over' || payload.type === 'enter') {
             dragOver = true;
           } else if (payload.type === 'leave' || payload.type === 'cancel') {
@@ -64,8 +73,8 @@
             }
           }
         });
-      } catch (e) {
-        console.warn('Не удалось подписаться на нативный Tauri drag-drop:', e);
+      } catch (e: unknown) {
+        console.warn('Не удалось подписаться на нативный Tauri drag-drop:', formatErrorMessage(e));
       }
     }
   });
@@ -81,9 +90,9 @@
     const target = event.target as HTMLInputElement;
     const files = target.files;
     if (files && files.length > 0) {
-      const file = files[0];
+      const file = files[0] as FileWithNativePath;
       const objectUrl = URL.createObjectURL(file);
-      const nativePath = (file as any).path;
+      const nativePath = file.path;
       const filePath = nativePath || file.name;
 
       pipelineStore.setVideo({
@@ -102,15 +111,16 @@
               size: meta.size || file.size
             });
           }
-        }).catch(() => {});
+        }).catch((err: unknown) => {
+          console.warn('Не удалось получить метаданные видео:', formatErrorMessage(err));
+        });
       }
     }
   }
 
   async function chooseVideoTauri() {
     try {
-      const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
-      if (isTauri) {
+      if (isTauriRuntime()) {
         const { open } = await import('@tauri-apps/plugin-dialog');
         const selected = await open({
           multiple: false,
@@ -126,8 +136,8 @@
       } else {
         fileInput?.click();
       }
-    } catch (err) {
-      console.error('Ошибка выбора файла Tauri, переключаемся на стандартный диалог:', err);
+    } catch (err: unknown) {
+      console.error('Ошибка выбора файла Tauri, переключаемся на стандартный диалог:', formatErrorMessage(err));
       fileInput?.click();
     }
   }
@@ -144,11 +154,11 @@
   function handleDrop(e: DragEvent) {
     e.preventDefault();
     dragOver = false;
-    const isTauri = typeof window !== 'undefined' && (window as any).__TAURI_INTERNALS__ !== undefined;
+    const isTauri = isTauriRuntime();
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      const file = files[0];
-      const nativePath = (file as any).path;
+      const file = files[0] as FileWithNativePath;
+      const nativePath = file.path;
       // В Tauri v2 путь приходит через onDragDropEvent. Если его нет в DOM File, не перезаписываем полный путь коротким именем
       if (isTauri && !nativePath) {
         return;
@@ -172,7 +182,9 @@
                 size: meta.size || file.size
               });
             }
-          }).catch(() => {});
+          }).catch((err: unknown) => {
+            console.warn('Не удалось получить метаданные видео после drop:', formatErrorMessage(err));
+          });
         }
       } else {
         pipelineStore.updateError('Пожалуйста, перетащите видеофайл проверенных форматов (MP4, MKV, MOV)');

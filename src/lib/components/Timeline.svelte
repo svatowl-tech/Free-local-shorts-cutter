@@ -203,7 +203,7 @@
     }
   }
 
-  function handleFragmentClick(frag: Fragment, e: MouseEvent) {
+  function handleFragmentClick(frag: Fragment, e?: Event) {
     e?.stopPropagation();
     if (hasMovedDuringDrag || isResizingLeft || isResizingRight) return;
     // При клике по ролику на таймлайне запускаем его предпросмотр (воспроизведение от старта до конца)
@@ -560,7 +560,7 @@
             role="button"
             tabindex="0"
             title="Клик: воспроизвести клип (превью) • Двойной клик: приблизить масштаб к клипу • Потяните края для точной настройки границ"
-            on:keydown={(e) => e.key === 'Enter' && handleFragmentClick(frag, null as any)}
+            on:keydown={(e) => e.key === 'Enter' && handleFragmentClick(frag, e)}
           >
             <!-- Верхняя строка клипа: номер, время и кнопки управления -->
             <div class="w-full flex items-center justify-between text-[10px] text-[#e2e2e4] font-mono px-2 pt-1 font-bold gap-1">
