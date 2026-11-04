@@ -267,6 +267,16 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         return true;
     }
 
+    // Фонетические галлюцинации на вокале опенинга/эндинга («Повторяй на Сент-Чьи», «Повторяй на Вище», «Возьми несколько зажиманий!»)
+    if lower.starts_with("повторяй на сент")
+        || lower.starts_with("повторяй на вищ")
+        || lower.contains("возьми несколько зажиманий")
+        || lower.contains("сисло, то прайд")
+        || lower.contains("по, вис, о, ю, тю")
+    {
+        return true;
+    }
+
     false
 }
 
@@ -274,6 +284,10 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
 pub fn fix_common_whisper_glued_words(text: &str) -> String {
     let glued_patterns: &[(&str, &str)] = &[
         ("недостаточносил", "недостаточно сил"),
+        ("вражескихсил", "вражеских сил"),
+        ("боевыхсил", "боевых сил"),
+        ("нашихсил", "наших сил"),
+        ("вооруженныхсил", "вооружённых сил"),
         ("недостаточновремени", "недостаточно времени"),
         ("недостаточносредств", "недостаточно средств"),
         ("несмог", "не смог"),
@@ -301,8 +315,11 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("оберез лейтенант сфотографируй", "обер-лейтенант фон Дегуршаф"),
         ("оберез лейтенант фон дегуршав", "обер-лейтенант фон Дегуршаф"),
         ("оберс лейтенант фонди гуршав", "обер-лейтенант фон Дегуршаф"),
+        ("уберс лейтенант фонди гуршав", "обер-лейтенант фон Дегуршаф"),
+        ("оберстлетенанта фонди грушав", "обер-лейтенанта фон Дегуршаф"),
         ("тефон дегуршав", "фон Дегуршаф"),
         ("фонди гуршав", "фон Дегуршаф"),
+        ("фонди грушав", "фон Дегуршаф"),
         ("дегушав", "Дегуршаф"),
         ("госпожаобес лейтенант", "госпожа обер-лейтенант"),
         ("убер с лейтенанфан югер", "оберст-лейтенант фон Угар"),
@@ -310,7 +327,19 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("оберез лейтенант", "обер-лейтенант"),
         ("оберс лейтенант", "обер-лейтенант"),
         ("обер с лейтенант", "обер-лейтенант"),
+        ("уберс лейтенант", "обер-лейтенант"),
+        ("убер, лейтенант", "обер-лейтенант"),
+        ("увес, лейтенант", "обер-лейтенант"),
         ("образ, лейтенант", "обер-лейтенант"),
+        ("рейтинан сью, довольна", "лейтенант Сью, довольно"),
+        ("рейтинан сью", "лейтенант Сью"),
+        ("прошеские колдуне", "вражеские колдуны"),
+        ("ражеское подкрепление", "вражеское подкрепление"),
+        ("рынского дьявола", "Рейнского дьявола"),
+        ("рынский дьявол", "Рейнский дьявол"),
+        ("гаинский дьевол", "Рейнский дьявол"),
+        ("поохвально", "похвально"),
+        ("какое тончанное предложение", "какое утончённое предложение"),
         ("я полевая командир", "я полевой командир"),
         ("какие доказательки", "какие доказательства"),
         ("к стадии... желению мирной переговоры", "к сожалению, мирные переговоры"),
@@ -344,15 +373,69 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
     result
 }
 
-/// Устраняет артефакты заикания / вдоха Whisper с висячей запятой или многоточием перед словом
-/// (например «Г, госпожа Бреслий!» -> «Госпожа Бреслий!», «В… Воды?» -> «Воды?»)
+/// Устраняет артефакты заикания / вдоха Whisper с висячей запятой, дефисом или многоточием перед словом
+/// (например «Г, госпожа Бреслий!» -> «Госпожа Бреслий!», «В… Воды?» -> «Воды?», «П-поверьте...» -> «Поверьте...», «Н-н-н-н-н-н, что» -> «На что»)
 pub fn fix_whisper_stutters(text: &str) -> String {
     let mut words: Vec<String> = text.split_whitespace().map(|w| w.to_string()).collect();
-    if words.len() < 2 {
+    if words.is_empty() {
         return text.to_string();
     }
 
     let mut changed = false;
+
+    // 1. Внутрисловные дефисные заикания («П-поверьте...» -> «Поверьте...», «Н-н-н-н-н-н,» -> удаляем или схлопываем)
+    let mut k = 0;
+    while k < words.len() {
+        let w = words[k].clone();
+        let lead_punct: String = w.chars().take_while(|c| matches!(c, '-' | '—' | '«' | '"' | '(')).collect();
+        let body = &w[lead_punct.len()..];
+        if body.contains('-') {
+            let parts: Vec<&str> = body.split('-').collect();
+            if parts.len() >= 2 {
+                let first_alpha: String = parts[0].chars().filter(|c| c.is_alphabetic()).collect();
+                // Многократное заикание одной буквы через дефис: «Н-н-н-н-н-н,»
+                let all_single_same = first_alpha.chars().count() == 1
+                    && parts.iter().all(|p| {
+                        let pa: String = p.chars().filter(|c| c.is_alphabetic()).collect();
+                        pa.chars().count() == 1 && pa.to_lowercase() == first_alpha.to_lowercase()
+                    });
+                if all_single_same && parts.len() >= 3 {
+                    if k + 1 < words.len() && first_alpha.to_lowercase() == "н" && words[k + 1].to_lowercase().starts_with("что") {
+                        words[k] = format!("{}На", lead_punct);
+                    } else {
+                        words.remove(k);
+                        changed = true;
+                        continue;
+                    }
+                    changed = true;
+                } else if first_alpha.chars().count() == 1 && parts.len() == 2 {
+                    // Одиночный дефисный повтор первой буквы: «П-поверьте...» -> «Поверьте...»
+                    let second_part = parts[1];
+                    let second_first = second_part.chars().find(|c| c.is_alphabetic()).unwrap_or(' ');
+                    if first_alpha.to_lowercase() == second_first.to_lowercase().to_string() && second_part.chars().count() >= 3 {
+                        let is_cap = first_alpha.chars().next().map_or(false, |c| c.is_uppercase());
+                        let mut sec_chars = second_part.chars();
+                        let rebuilt_second = if is_cap {
+                            match sec_chars.next() {
+                                Some(fc) => fc.to_uppercase().collect::<String>() + sec_chars.as_str(),
+                                None => second_part.to_string(),
+                            }
+                        } else {
+                            second_part.to_string()
+                        };
+                        words[k] = format!("{}{}", lead_punct, rebuilt_second);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        k += 1;
+    }
+
+    if words.len() < 2 {
+        return if changed { words.join(" ") } else { text.to_string() };
+    }
+
     let mut i = 0;
     while i + 1 < words.len() {
         let w1 = &words[i];
@@ -560,6 +643,17 @@ fn is_bound_russian_word_tail(w_prev_lower: &str, w_next_alpha_lower: &str) -> b
         return false;
     }
 
+    // Особый случай: предлог/первая буква перед разорванным словом («в|ойдет», «л|овочку», «п|унктуальность», «ф|анатом»)
+    if (w_prev_lower == "в" && w_next_alpha_lower == "ойдет")
+        || (w_prev_lower == "л" && w_next_alpha_lower == "овочку")
+        || (w_prev_lower == "п" && w_next_alpha_lower.starts_with("унктуальн"))
+        || (w_prev_lower == "ф" && w_next_alpha_lower.starts_with("анатом"))
+        || (w_prev_lower == "к" && w_next_alpha_lower == "уш")
+        || (w_prev_lower == "м" && w_next_alpha_lower == "ена")
+    {
+        return true;
+    }
+
     // Ни одно настоящее русское слово не начинается с ь, ъ или ы
     if w_next_alpha_lower.starts_with('ь')
         || w_next_alpha_lower.starts_with('ъ')
@@ -568,7 +662,8 @@ fn is_bound_russian_word_tail(w_prev_lower: &str, w_next_alpha_lower: &str) -> b
         return true;
     }
 
-    // Короткие самостоятельные предлоги, союзы, частицы и местоимения, после которых ВСЕГДА идет отдельное слово через пробел
+    // Короткие самостоятельные предлоги, союзы, частицы, местоимения и существительные,
+    // которые НИКОГДА не должны склеиваться без пробела с предыдущим словом (предотвращает «вражескихсил»)
     let standalone_short_words = [
         "а", "и", "о", "у", "я", "в", "с", "к",
         "на", "по", "из", "за", "от", "до", "об", "во", "со", "ко",
@@ -576,8 +671,28 @@ fn is_bound_russian_word_tail(w_prev_lower: &str, w_next_alpha_lower: &str) -> b
         "мы", "ты", "вы", "он", "она", "оно", "они", "кто", "что", "как", "где", "тут", "там",
         "вот", "все", "всё", "так", "уже", "еще", "ещё", "или", "для", "при", "про", "без",
         "над", "под", "это", "чем", "тем", "мой", "моя", "моё", "мои", "сам", "сама", "сами",
-        "его", "ее", "её", "их", "нам", "вам", "им", "нас", "вас", "мне", "дни", "три", "два",
+        "его", "ее", "её", "ей", "ему", "ими", "их", "нам", "вам", "им", "нас", "вас", "мне",
+        "дни", "дня", "три", "два", "сил", "боя", "бою", "бой", "раз", "год", "лет", "шаг",
+        "дом", "мир", "путь", "враг", "полк", "штаб", "фронт", "тыл", "план", "цель", "речь",
+        "меч", "щит", "зал", "род", "вид", "ряд", "час", "век", "дух", "чай", "чая",
     ];
+
+    if standalone_short_words.contains(&w_prev_lower)
+        || standalone_short_words.contains(&w_next_alpha_lower)
+    {
+        return false;
+    }
+
+    // Если предыдущее слово уже имеет законченное прилагательное/причастное окончание («вражеских», «боевых», «новый»),
+    // то следующее слово — это отдельное существительное, а не хвост того же слова!
+    let complete_word_endings = [
+        "их", "ых", "ого", "его", "ому", "ему", "ыми", "ими", "ая", "яя", "ое", "ее", "ые", "ие",
+    ];
+    if w_prev_lower.chars().count() >= 5
+        && complete_word_endings.iter().any(|ext| w_prev_lower.ends_with(ext))
+    {
+        return false;
+    }
 
     // Безусловные морфологические хвосты русских слов (глагольные окончания, падежные суффиксы),
     // которые не употребляются как самостоятельные слова в начале фразы
@@ -591,31 +706,19 @@ fn is_bound_russian_word_tail(w_prev_lower: &str, w_next_alpha_lower: &str) -> b
         "ережнее", "овочку", "ойдет", "ено", "ерплохо", "ительности", "ельности", "равляющий",
         "равляющих", "ция", "новато", "ичек", "ности", "ерником", "ель", "удние", "орые", "роил",
         "орах", "уживающих", "ений", "торов", "астую", "ываетесь", "обрить", "ания", "плей",
-        "роются", "ывать", "ся", "сь", "му", "цу", "ма", "уш", "ий", "ая", "яя", "ое", "ее",
-        "ые", "ие", "ого", "ому", "ему", "ыми", "ими", "ях", "ом", "ем", "ам", "ям", "ов", "ев", "ей",
+        "роются", "ывать", "ся", "сь", "му", "цу", "ма", "уш", "ий", "ая", "яя", "ое",
+        "ые", "ие", "ого", "ому", "ыми", "ях", "ом", "ам", "ям", "ов", "ев",
     ];
-
-    // Особый случай: предлог «в» или «с» перед словом, но иногда whisper режет «вз|носы», «в|ойдет», «л|овочку», «п|унктуальность»
-    if (w_prev_lower == "в" && w_next_alpha_lower == "ойдет")
-        || (w_prev_lower == "л" && w_next_alpha_lower == "овочку")
-        || (w_prev_lower == "п" && w_next_alpha_lower.starts_with("унктуальн"))
-        || (w_prev_lower == "ф" && w_next_alpha_lower.starts_with("анатом"))
-        || (w_prev_lower == "к" && w_next_alpha_lower == "уш")
-        || (w_prev_lower == "м" && w_next_alpha_lower == "ена")
-    {
-        return true;
-    }
 
     if bound_tails.contains(&w_next_alpha_lower) {
         return true;
     }
 
-    // Если первое слово не входит в список самостоятельных коротких слов и обрывается на согласную,
-    // а вторая часть — короткий осколок (<= 4 букв), не являющийся самостоятельным словом
-    if !standalone_short_words.contains(&w_prev_lower)
-        && !standalone_short_words.contains(&w_next_alpha_lower)
-        && w_next_alpha_lower.chars().count() <= 4
-    {
+    // Если первая часть — короткий осколок из одних согласных без гласных (например «вз» + «носы», «сп» + «рашивать»)
+    let has_vowel = w_prev_lower
+        .chars()
+        .any(|c| matches!(c, 'а' | 'е' | 'ё' | 'и' | 'о' | 'у' | 'ы' | 'э' | 'ю' | 'я'));
+    if !has_vowel && w_prev_lower.chars().count() <= 4 {
         return true;
     }
 
@@ -953,6 +1056,7 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     while i < stage1.len() {
         let norm_i = norm_line(&stage1[i].text);
         let prefix_i: String = norm_i.chars().take(18).collect();
+        let short_prefix_i: String = norm_i.chars().take(10).collect();
         let words_i = norm_i.split_whitespace().count();
 
         // Считаем, сколько раз подряд повторяется эта же фраза без учета знаков препинания (или 18-символьный префикс для длинных галлюцинаций песни)
@@ -972,6 +1076,18 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
 
         let run_len = run_end - i;
         if run_len >= 4 {
+            // Если прямо перед 4+-кратным зацикливанием вокала стоит одиночная строка с тем же 10-символьным префиксом
+            // (например «Повторяй на Сент-Чьи» перед 8x «Повторяй на Вище»), удаляем и её!
+            if !short_prefix_i.is_empty() && short_prefix_i.chars().count() >= 9 {
+                if let Some(last_pushed) = clean_fragments.last() {
+                    let last_norm = norm_line(&last_pushed.text);
+                    if last_norm.starts_with(&short_prefix_i)
+                        && (stage1[i].start - last_pushed.end).abs() <= 2.5
+                    {
+                        clean_fragments.pop();
+                    }
+                }
+            }
             // Любая фраза (даже из 1–3 слов, как «ПЕСНЯ ВСХЛИПЫМ» x9), повторенная 4+ раз подряд —
             // это 100% зацикленная галлюцинация Whisper на музыке или шуме, отбрасываем весь кластер!
             i = run_end;
@@ -991,21 +1107,28 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     let mut total_stitched_words = 0usize;
     let mut total_tightened_cues = 0usize;
 
-    // Многопроходная конвергенция (до достижения неподвижной точки):
-    // гарантирует, что 3-частные разрывы («отныне буду» + «квартироваться» + «здесь.») и подтяжка таймкодов
-    // полностью завершаются за первый же вызов `sanitize_srt_file`, а повторное чтение кэша при экспорте дает 0 изменений!
-    for _pass in 0..3 {
+    // Многопроходная конвергенция (до достижения полной неподвижной точки):
+    // сначала склеиваем разорванные полуслова/хвосты и убираем многострочное эхо, затем подтягиваем таймкоды,
+    // чтобы повторный вызов `sanitize_srt_file` на кэшированном SRT всегда давал 0 изменений!
+    for _pass in 0..4 {
         let prev_len = clean_fragments.len();
-        let (tightened_frags, t_cnt) = tighten_subtitle_timestamps(clean_fragments);
+        let (tightened_frags, t_cnt1) = tighten_subtitle_timestamps(clean_fragments);
         let (repaired_frags, s_cnt) = repair_split_words_and_orphans(tightened_frags);
         let dedup_frags = deduplicate_multiline_loops(repaired_frags);
+        let (final_frags, t_cnt2) = tighten_subtitle_timestamps(dedup_frags);
+        let t_cnt = t_cnt1 + t_cnt2;
         total_tightened_cues += t_cnt;
         total_stitched_words += s_cnt;
-        let len_changed = dedup_frags.len() != prev_len;
-        clean_fragments = dedup_frags;
+        let len_changed = final_frags.len() != prev_len;
+        clean_fragments = final_frags;
         if t_cnt == 0 && s_cnt == 0 && !len_changed {
             break;
         }
+    }
+
+    // Финальный проход словаря склеенных слов после всех объединений строк
+    for frag in &mut clean_fragments {
+        frag.text = fix_common_whisper_glued_words(&frag.text);
     }
 
     let removed = raw_count
@@ -1047,7 +1170,7 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
 /// 1) Блочные повторы ABAB / ABCABC из 2..=6 строк подряд (например, когда 5 реплик диалога повторяются дважды подряд).
 /// 2) Слитные и дробные эхо-повторы, когда Whisper объединяет предыдущие 2–3 короткие реплики в одну строку-дубликат
 ///    или наоборот дробит только что сказанную длинную фразу на повторяющиеся половинки.
-/// 3) Одиночные эхо-повторы через 1–2 короткие реплики (шаблоны A-B-A и A-B-C-A в пределах 16 секунд).
+/// 3) Одиночные эхо-повторы через 1–4 короткие реплики (шаблоны A-B-A, A-B-C-A и A-B-C-D-A в пределах 18 секунд).
 /// 4) Нахлест начала строки на хвост предыдущих 1–2 реплик («маленькую хитрость. Виноват. А что за хитрость?» -> «А что за хитрость?»).
 fn deduplicate_multiline_loops(
     mut fragments: Vec<crate::text_analyzer::SubtitleFragment>,
@@ -1077,6 +1200,22 @@ fn deduplicate_multiline_loops(
             // Совпадение первых 4 букв ИЛИ последних 4 букв (ловит опечатки Whisper в первой букве: «Афицеры» / «Офицеры»)
             if ac[..4] == bc[..4] || ac[ac.len() - 4..] == bc[bc.len() - 4..] {
                 return true;
+            }
+        }
+        false
+    }
+
+    /// Проверяет, есть ли у двух реплик общий непрерывный 4-словный фрагмент
+    /// (например «Надеюсь, не откажешься выпить по кружечке чая после боя» и «Вы можете выпить по кружечке чая после боя»)
+    fn has_shared_4gram(a_words: &[&str], b_words: &[&str]) -> bool {
+        if a_words.len() < 4 || b_words.len() < 4 {
+            return false;
+        }
+        for wa in a_words.windows(4) {
+            for wb in b_words.windows(4) {
+                if (0..4).all(|idx| words_match_fuzzy(wa[idx], wb[idx])) {
+                    return true;
+                }
             }
         }
         false
@@ -1158,17 +1297,17 @@ fn deduplicate_multiline_loops(
             }
         }
 
-        // 3. Проверяем слитный, дробный или чередующийся (A-B-A / A-B-C-A) эхо-повтор относительно последних 1..=3 принятых реплик
+        // 3. Проверяем слитный, дробный или чередующийся (A-B-A / A-B-C-A / A-B-C-D-A) эхо-повтор относительно последних 1..=5 принятых реплик
         let curr_words: Vec<&str> = norms[i].split_whitespace().collect();
         if curr_words.len() >= 2 && !out_norms.is_empty() {
             let mut is_echo = false;
 
-            // А) Повтор строки (или её дробного осколка) относительно любой из последних 1..=3 реплик в окне 16 секунд
-            let max_lookback = out_norms.len().min(3);
+            // А) Повтор строки (или её дробного осколка) относительно любой из последних 1..=5 реплик в окне 18 секунд
+            let max_lookback = out_norms.len().min(5);
             for d in 1..=max_lookback {
                 let prev_idx = out_norms.len() - d;
                 let time_gap = (fragments[i].start - out[prev_idx].end).max(0.0);
-                if time_gap > 16.0 {
+                if time_gap > 18.0 {
                     continue;
                 }
                 let prev_words: Vec<&str> = out_norms[prev_idx].split_whitespace().collect();
@@ -1176,17 +1315,20 @@ fn deduplicate_multiline_loops(
                     continue;
                 }
 
-                // Точный или нечеткий повтор целой реплики через 0–2 промежуточные вставки (A-B-A / A-B-C-A)
+                // Точный или нечеткий повтор целой реплики через 0–4 промежуточные вставки (включая общий 4-словный блок)
                 if curr_words.len() >= 3 && prev_words.len() >= 3 {
                     let matched = curr_words
                         .iter()
                         .filter(|&&cw| prev_words.iter().any(|&pw| words_match_fuzzy(cw, pw)))
                         .count();
                     let min_len = curr_words.len().min(prev_words.len());
+                    let shared_phrase = has_shared_4gram(&curr_words, &prev_words);
                     if norms[i] == out_norms[prev_idx]
                         || (min_len >= 4 && matched * 5 >= min_len * 4)
+                        || shared_phrase
                     {
-                        // Если новая версия реплики более полная (например на 2+ слова длиннее), обновляем текст первой реплики
+                        // Если новая версия реплики более полная (например «А ведь у нас идёт война, господин генерал» вместо обрывка «А ведь у нас сомнений»),
+                        // обновляем текст первой реплики
                         if curr_words.len() >= prev_words.len() + 2 {
                             out[prev_idx].text = fragments[i].text.clone();
                             out_norms[prev_idx] = norms[i].clone();
@@ -1196,8 +1338,8 @@ fn deduplicate_multiline_loops(
                     }
                 }
 
-                // Дробный эхо-повтор: текущая короткая/средняя строка входит в одну из последних 2 более длинных реплик
-                if d <= 2 && prev_words.len() >= curr_words.len() && prev_words.len() >= 4 {
+                // Дробный эхо-повтор: текущая короткая/средняя строка входит в одну из последних 3 более длинных реплик
+                if d <= 3 && prev_words.len() >= curr_words.len() && prev_words.len() >= 4 {
                     let matched = curr_words
                         .iter()
                         .filter(|&&cw| prev_words.iter().any(|&pw| words_match_fuzzy(cw, pw)))

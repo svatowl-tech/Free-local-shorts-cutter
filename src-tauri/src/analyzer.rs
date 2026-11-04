@@ -255,7 +255,7 @@ pub async fn analyze_video(
                 if let Some((desc, vis_bonus)) = parse_vision_description_and_bonus(&out) {
                     enriched_count += 1;
                     let old_int = base_scenes[scene_idx].intensity;
-                    let new_int = (old_int + vis_bonus).clamp(0.58, 0.97);
+                    let new_int = (old_int + vis_bonus).clamp(0.45, 0.95);
                     base_scenes[scene_idx].intensity = new_int;
                     base_scenes[scene_idx].description = format!(
                         "{} | Vision: {}",
@@ -315,7 +315,7 @@ pub async fn analyze_video(
 }
 
 /// Извлекает осмысленное визуальное описание кадра из ответа `llama-vision` (Moondream 2 / LLaVA)
-/// и рассчитывает бонус визуальной динамики/эмоциональности (`-0.02 .. +0.08`)
+/// и рассчитывает строгий дифференцированный бонус визуальной динамики (`-0.04 .. +0.07`)
 fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
     let trimmed = raw_out.trim();
     if trimmed.is_empty() {
@@ -327,7 +327,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         if json_start < json_end {
             if let Ok(parsed) = serde_json::from_str::<LlamaOutput>(&trimmed[json_start..=json_end]) {
                 if !parsed.description.trim().is_empty() {
-                    let bonus = ((parsed.intensity - 0.65) * 0.2).clamp(-0.02, 0.08);
+                    let bonus = ((parsed.intensity - 0.70) * 0.2).clamp(-0.04, 0.07);
                     return Some((parsed.description.trim().to_string(), bonus));
                 }
             }
@@ -469,37 +469,48 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         return None;
     }
 
-    // Оцениваем визуальную насыщенность строго по ЦЕЛЫМ словам (чтобы "undermanded" не давало ложное совпадение с "man")
-    let high_energy_terms = [
-        "fight", "fighting", "battle", "attack", "explosion", "fire", "glow", "glowing",
-        "energy", "weapon", "sword", "gun", "rifle", "blood", "monster", "kaiju", "skull",
-        "scream", "screaming", "angry", "shock", "shocked", "intense", "dramatic", "action",
-        "running", "runs", "jumping", "leaps", "laser", "lightning", "smoke", "marching",
+    // Строго дифференцированная оценка визуального накала кадра:
+    // только настоящий экшен/взрывы/крик дают ощутимый прирост, а спокойные кабинетные/разговорные кадры получают 0 или легкое снижение
+    let extreme_action_terms = [
+        "fight", "fighting", "battle", "attack", "explosion", "fire", "blood", "monster",
+        "kaiju", "skull", "scream", "screaming", "angry", "shock", "shocked", "intense",
+        "dramatic", "laser", "lightning", "leaps",
     ];
-    let character_terms = [
-        "character", "person", "man", "men", "woman", "women", "girl", "boy", "soldier",
-        "soldiers", "officer", "uniform", "face", "eyes", "expression", "looking", "looks",
-        "holding", "holds", "standing", "stands", "sitting", "sits", "talking", "speaking",
-        "smiling", "anime",
+    let moderate_action_terms = [
+        "weapon", "sword", "gun", "rifle", "glow", "glowing", "energy", "running", "runs",
+        "jumping", "flying", "smoke", "marching", "aircraft", "plane",
+    ];
+    let calm_static_terms = [
+        "sitting", "sits", "table", "desk", "chair", "map", "room", "office", "smiling",
+        "smiles", "tea", "cup", "reading", "paper", "book",
     ];
 
-    let action_hits = high_energy_terms
+    let extreme_hits = extreme_action_terms
         .iter()
         .filter(|&&w| all_words.contains(&w))
         .count();
-    let char_hits = character_terms
+    let mod_hits = moderate_action_terms
+        .iter()
+        .filter(|&&w| all_words.contains(&w))
+        .count();
+    let calm_hits = calm_static_terms
         .iter()
         .filter(|&&w| all_words.contains(&w))
         .count();
 
-    let mut bonus: f64 = 0.01;
-    if action_hits >= 2 {
-        bonus += 0.06;
-    } else if action_hits == 1 {
+    let mut bonus: f64 = 0.0;
+    if extreme_hits >= 2 {
+        bonus += 0.07;
+    } else if extreme_hits == 1 {
         bonus += 0.04;
     }
-    if char_hits >= 1 {
-        bonus += 0.02;
+    if mod_hits >= 2 {
+        bonus += 0.03;
+    } else if mod_hits == 1 {
+        bonus += 0.015;
+    }
+    if extreme_hits == 0 && mod_hits == 0 && calm_hits >= 1 {
+        bonus -= 0.03;
     }
 
     // Аккуратное усечение описания без обрыва слов посередине ("in the backgr", "Two other me", "as if in a s"):
@@ -510,7 +521,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         return None;
     }
 
-    Some((short_desc, bonus.clamp(0.0, 0.08)))
+    Some((short_desc, bonus.clamp(-0.04, 0.07)))
 }
 
 /// Форматирует описание кадра от Vision AI без обрыва слов на полуслове и без висячих артиклей/предлогов
@@ -618,22 +629,27 @@ async fn run_two_factor_scene_analysis(
 
     let mut candidate_scenes = Vec::new();
 
-    // А. Многофакторная оценка динамики сцен (частота монтажных склеек + звуковая энергия + драматургическая позиция)
+    // А. Многофакторная оценка динамики сцен с честным разбросом весов (0.48 .. 0.92):
+    // обычные диалоговые склейки получают 0.52–0.68, динамичные сцены 0.70–0.82, и только взрывной экшен с высокой плотностью склеек — 0.85+
     for (idx, &scene_t) in scene_cuts.iter().enumerate() {
         if scene_t < 3.0 || scene_t >= duration - 3.0 {
             continue;
         }
 
-        // 1. Плотность монтажных склеек в 15-секундном окне вокруг точки (индикатор экшена и динамики)
+        // 1. Плотность монтажных склеек в 15-секундном окне вокруг точки (в обычном разговоре 2–5 склеек, в экшене 10–25+)
         let local_cuts = scene_cuts
             .iter()
             .filter(|&&t| (t - scene_t).abs() <= 7.5)
             .count();
-        let cut_density_bonus = ((local_cuts as f64 - 1.0) / 14.0).clamp(0.0, 0.18);
+        let cut_density_bonus = if local_cuts <= 3 {
+            (local_cuts as f64 - 1.0).max(0.0) * 0.02
+        } else {
+            0.04 + ((local_cuts as f64 - 3.0) / 22.0).clamp(0.0, 0.24)
+        };
 
         // 2. Сопоставление со звуковой активностью
         let matching_audio = audio_ranges.iter().find(|(a_start, a_end)| {
-            scene_t >= (*a_start - 1.5) && scene_t <= (*a_end + 1.5)
+            scene_t >= (*a_start - 1.2) && scene_t <= (*a_end + 1.2)
         });
 
         let is_near_audio = matching_audio.is_some();
@@ -641,22 +657,22 @@ async fn run_two_factor_scene_analysis(
             let seg_len = (a_end - a_start).max(1.0);
             let rel_pos = ((scene_t - a_start) / seg_len).clamp(0.0, 1.0);
             let focus = 1.0 - (rel_pos - 0.35).abs();
-            0.10 + (focus * 0.06).clamp(0.0, 0.06)
+            0.06 + (focus * 0.05).clamp(0.0, 0.05)
         } else {
             0.0
         };
 
         // 3. Защита от перекоса в сторону начальной заставки и конечных титров в длинных видео > 10 мин
         let narrative_factor = if duration > 600.0 && (scene_t < 60.0 || scene_t > duration - 60.0) {
-            0.88
+            0.85
         } else {
             1.0
         };
 
-        let raw_intensity = (0.58 + cut_density_bonus + audio_bonus) * narrative_factor;
-        let intensity = raw_intensity.clamp(0.55, 0.95);
+        let raw_intensity = (0.48 + cut_density_bonus + audio_bonus) * narrative_factor;
+        let intensity = raw_intensity.clamp(0.45, 0.91);
 
-        let actions = if is_near_audio && local_cuts >= 4 {
+        let actions = if is_near_audio && local_cuts >= 8 {
             vec!["экшен/кульминация".to_string(), "эмоциональная речь".to_string()]
         } else if is_near_audio {
             vec!["динамика".to_string(), "реплика/эмоция".to_string()]
@@ -680,7 +696,7 @@ async fn run_two_factor_scene_analysis(
                 candidate_scenes.push(SceneCandidate {
                     timestamp_sec: mid,
                     description: format!("Звуковой пик #{} (активная речь {:.1}с)", idx + 1, mid),
-                    intensity: 0.78,
+                    intensity: 0.68,
                     actions: vec!["диалог".to_string(), "активность".to_string()],
                 });
             }

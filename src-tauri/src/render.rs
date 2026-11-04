@@ -290,6 +290,8 @@ pub async fn render_clip(
             stage: "rendering started".to_string() 
         });
 
+        let mut max_cur_secs: f64 = 0.0;
+
         // Чтение stderr, где ffmpeg отдает прогресс и статус кодирования
         while let Some(event) = rx.recv().await {
             match event {
@@ -303,12 +305,13 @@ pub async fn render_clip(
                         let parts: Vec<&str> = time_str.trim().split(':').collect();
                         if parts.len() == 3 {
                             if let (Ok(h), Ok(m), Ok(s)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
-                                let cur_secs = h * 3600.0 + m * 60.0 + s;
-                                if duration_sec > 0.0 {
-                                    let pct = (cur_secs / duration_sec * 100.0).min(99.0).max(0.0);
+                                let cur_secs = (h * 3600.0 + m * 60.0 + s).min(duration_sec);
+                                if cur_secs > max_cur_secs && duration_sec > 0.0 {
+                                    max_cur_secs = cur_secs;
+                                    let pct = (max_cur_secs / duration_sec * 100.0).min(99.0).max(0.0);
                                     let _ = app_handle_clone.emit("render-progress", RenderProgressPayload { 
                                         percent: pct, 
-                                        stage: format!("{:.1}с / {:.1}с", cur_secs, duration_sec) 
+                                        stage: format!("{:.1}с / {:.1}с", max_cur_secs, duration_sec) 
                                     });
                                 }
                             }

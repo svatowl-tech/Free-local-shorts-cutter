@@ -565,13 +565,21 @@ fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64
     let mut out = Vec::with_capacity(chunk.len());
     for i in 0..chunk.len() {
         if let Some(&val) = parsed.get(i) {
-            // Если фраза является явной галлюцинацией Whisper, принудительно занижаем вес
-            if crate::whisper::is_whisper_hallucination(&chunk[i].text) {
+            // Если фраза является явной галлюцинацией Whisper или вокалом песни, принудительно занижаем вес
+            if crate::whisper::is_whisper_hallucination(&chunk[i].text)
+                || is_opening_or_song_fragment(chunk, i)
+            {
                 out.push(0.05);
             } else {
-                // Смешиваем оценку LLM (70%) с локальной оценкой границ фраз (30%), чтобы избежать плоских 0.99
-                let blended = (val.clamp(0.10, 0.96) * 0.70 + fallback[i] * 0.30).clamp(0.12, 0.96);
-                out.push(blended);
+                // Смешиваем оценку LLM (65%) со строгим локальным анализатором эмоций (35%) и применяем контрастную кривую,
+                // чтобы обычные спокойные фразы не раздувались до 0.85+, а оставались в 0.30–0.65, выделяя настоящие пики >= 0.88
+                let raw_blend = val.clamp(0.08, 0.96) * 0.65 + fallback[i] * 0.35;
+                let contrasted = if raw_blend < 0.72 {
+                    (raw_blend * 0.90).clamp(0.12, 0.68)
+                } else {
+                    raw_blend.clamp(0.72, 0.96)
+                };
+                out.push(contrasted);
             }
         } else {
             out.push(fallback[i]);
@@ -976,14 +984,14 @@ pub async fn analyze_text_with_llm(
         );
 
         let client = Client::builder()
-            .timeout(Duration::from_secs(45))
+            .timeout(Duration::from_secs(20))
             .build()
             .unwrap_or_default();
 
         let mut all_scores = Vec::with_capacity(fragments.len());
         let batch_size = 24;
         let total_batches = (fragments.len() + batch_size - 1) / batch_size;
-        let mut consecutive_failures = 0usize;
+        let mut total_failures = 0usize;
 
         for (batch_idx, chunk) in fragments.chunks(batch_size).enumerate() {
             if cancel_rx.try_recv().is_ok() {
@@ -1006,50 +1014,64 @@ pub async fn analyze_text_with_llm(
 
             let prompt = build_prompt(chunk);
             let mut result_opt = None;
-            for attempt in 1..=2 {
+            let mut hard_channel_unavailable = false;
+            // Если ранее уже был сбой на этом API, не тратим время на повторные попытки для каждого пакета
+            let max_attempts = if total_failures == 0 { 2 } else { 1 };
+
+            for attempt in 1..=max_attempts {
                 match run_openai(&client, config, &prompt, app_handle).await {
                     Ok(res) => {
                         if parse_json_array(&res, chunk.len()).is_some() {
                             result_opt = Some(res);
                             break;
-                        } else if attempt < 2 {
+                        } else if attempt < max_attempts {
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
                                 "warn",
                                 &format!(
-                                    "Пакет {}/{}: неполный ответ OpenAI API ({} симв.), повторный запрос через 1.5 сек...",
+                                    "Пакет {}/{}: неполный ответ OpenAI API ({} симв.), повторный запрос через 1 сек...",
                                     batch_idx + 1,
                                     total_batches,
                                     res.len()
                                 ),
                             );
-                            tokio::time::sleep(Duration::from_millis(1500)).await;
+                            tokio::time::sleep(Duration::from_millis(1000)).await;
                         } else {
                             result_opt = Some(res);
                         }
                     }
                     Err(e) => {
-                        if attempt < 2 {
+                        let err_str = e.to_string();
+                        if err_str.contains("502")
+                            || err_str.contains("503")
+                            || err_str.contains("504")
+                            || err_str.contains("429")
+                            || err_str.contains("недоступен")
+                        {
+                            hard_channel_unavailable = true;
+                            break;
+                        }
+                        if attempt < max_attempts {
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
                                 "warn",
                                 &format!(
-                                    "Пакет {}/{}: задержка/сбой сети ({}), повторный запрос через 2 сек...",
+                                    "Пакет {}/{}: задержка/сбой сети ({}), повторный запрос через 1.5 сек...",
                                     batch_idx + 1,
                                     total_batches,
                                     e
                                 ),
                             );
-                            tokio::time::sleep(Duration::from_millis(2000)).await;
+                            tokio::time::sleep(Duration::from_millis(1500)).await;
                         } else {
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
                                 "warn",
                                 &format!(
-                                    "Пакет {}/{}: повторный запрос не удался ({}).",
+                                    "Пакет {}/{}: запрос к OpenAI API не удался ({}).",
                                     batch_idx + 1,
                                     total_batches,
                                     e
@@ -1060,133 +1082,77 @@ pub async fn analyze_text_with_llm(
                 }
             }
 
-            match result_opt {
-                Some(result) => {
-                    let parsed = parse_json_array(&result, chunk.len());
-                    if let Some(ref batch_scores) = parsed {
-                        consecutive_failures = 0;
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "info",
-                            &format!(
-                                "✓ Пакет {}/{}: получено {} валидных оценок от OpenAI API",
-                                batch_idx + 1,
-                                total_batches,
-                                batch_scores.len()
-                            ),
-                        );
-                        all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
-                    } else {
-                        consecutive_failures += 1;
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "warn",
-                            &format!(
-                                "Пакет {}/{}: OpenAI API вернул нестандартный JSON. Применяется семантический NLP-анализатор полных фраз.",
-                                batch_idx + 1,
-                                total_batches
-                            ),
-                        );
-                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
-
-                        if consecutive_failures >= 2 && batch_idx + 1 < total_batches {
+            let parsed_scores = result_opt.as_deref().and_then(|res| parse_json_array(res, chunk.len()));
+            if let Some(ref batch_scores) = parsed_scores {
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "info",
+                    &format!(
+                        "✓ Пакет {}/{}: получено {} валидных оценок от OpenAI API",
+                        batch_idx + 1,
+                        total_batches,
+                        batch_scores.len()
+                    ),
+                );
+                all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
+            } else {
+                total_failures += 1;
+                // При недоступности бесплатного канала (502/503/429) или при 2-м сбое за сессию
+                // немедленно передаем ТЕКУЩИЙ пакет и все оставшиеся пакеты в быстрый локальный llama-cli (GPU)!
+                if hard_channel_unavailable || total_failures >= 2 || total_batches == 1 {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "warn",
+                        &format!(
+                            "Предохранитель OpenAI API: внешний канал нестабилен или перегружен (пакет {}/{}). Мгновенный каскадный переход на локальный llama-cli (GPU) без потери пакетов...",
+                            batch_idx + 1,
+                            total_batches
+                        ),
+                    );
+                    let remaining = &fragments[batch_idx * batch_size..];
+                    match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
+                        Ok(llama_scores) => {
+                            crate::logger::emit_log(
+                                app_handle,
+                                "LLM",
+                                "info",
+                                &format!(
+                                    "✓ Резервный llama-cli успешно обработал {} реплик (начиная с пакета {}/{})",
+                                    remaining.len(),
+                                    batch_idx + 1,
+                                    total_batches
+                                ),
+                            );
+                            all_scores.extend_from_slice(&llama_scores);
+                        }
+                        Err(llama_err) => {
+                            if llama_err.to_string().contains("Отменено") {
+                                return Err(llama_err);
+                            }
                             crate::logger::emit_log(
                                 app_handle,
                                 "LLM",
                                 "warn",
-                                "Предохранитель OpenAI API: 2 сбоя парсинга подряд. Каскадное переключение оставшихся пакетов на llama-cli...",
+                                &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
                             );
-                            let remaining = &fragments[(batch_idx + 1) * batch_size..];
-                            match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
-                                Ok(llama_scores) => {
-                                    crate::logger::emit_log(
-                                        app_handle,
-                                        "LLM",
-                                        "info",
-                                        &format!("✓ Резервный llama-cli успешно обработал {} оставшихся реплик", remaining.len()),
-                                    );
-                                    all_scores.extend_from_slice(&llama_scores);
-                                }
-                                Err(llama_err) => {
-                                    if llama_err.to_string().contains("Отменено") {
-                                        return Err(llama_err);
-                                    }
-                                    crate::logger::emit_log(
-                                        app_handle,
-                                        "LLM",
-                                        "warn",
-                                        &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
-                                    );
-                                    all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
-                                }
-                            }
-                            break;
+                            all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
                         }
                     }
-                }
-                None => {
-                    consecutive_failures += 1;
-                    if total_batches == 1 {
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "warn",
-                            "Предохранитель OpenAI API: сбой сетевого запроса. Переключение на llama-cli...",
-                        );
-                        match analyze_with_llama_cli(chunk, None, app_handle, cancel_rx.resubscribe()).await {
-                            Ok(llama_scores) => {
-                                all_scores.extend_from_slice(&llama_scores);
-                            }
-                            Err(llama_err) => {
-                                if llama_err.to_string().contains("Отменено") {
-                                    return Err(llama_err);
-                                }
-                                crate::logger::emit_log(
-                                    app_handle,
-                                    "LLM",
-                                    "warn",
-                                    &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
-                                );
-                                all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
-                            }
-                        }
-                    } else if consecutive_failures >= 2 && batch_idx + 1 < total_batches {
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "warn",
-                            "Предохранитель OpenAI API: 2 сбоя запросов подряд. Каскадное переключение оставшихся пакетов на llama-cli...",
-                        );
-                        let remaining = &fragments[(batch_idx + 1) * batch_size..];
-                        match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
-                            Ok(llama_scores) => {
-                                crate::logger::emit_log(
-                                    app_handle,
-                                    "LLM",
-                                    "info",
-                                    &format!("✓ Резервный llama-cli успешно обработал {} оставшихся реплик", remaining.len()),
-                                );
-                                all_scores.extend_from_slice(&llama_scores);
-                            }
-                            Err(llama_err) => {
-                                if llama_err.to_string().contains("Отменено") {
-                                    return Err(llama_err);
-                                }
-                                crate::logger::emit_log(
-                                    app_handle,
-                                    "LLM",
-                                    "warn",
-                                    &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
-                                );
-                                all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
-                            }
-                        }
-                        break;
-                    } else {
-                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
-                    }
+                    break;
+                } else {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "warn",
+                        &format!(
+                            "Пакет {}/{}: сбой ответа OpenAI API, для пакета применен локальный семантический анализатор.",
+                            batch_idx + 1,
+                            total_batches
+                        ),
+                    );
+                    all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
                 }
             }
         }
@@ -1207,12 +1173,14 @@ fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     }
     let input_list = lines.join("\n");
     format!(
-        "Ты профессиональный режиссер монтажа вертикальных роликов (Shorts, Reels, TikTok) длительностью от 10 до 20 секунд.\n\
-Оцени каждую из {} реплик от 0.0 до 1.0:\n\
-1. 0.75-0.95: законченные эмоциональные, яркие фразы ([START]...[END]).\n\
-2. 0.25-0.50: обрывки и полуфразы ([CONT] или [INCOMPLETE]).\n\
-3. Выведи ТОЛЬКО валидный JSON-массив ровно из {} чисел в диапазоне 0.0-1.0 без текста и комментариев.\n\
-Пример формата: [0.82, 0.45]\n\n\
+        "Ты строгий профессиональный режиссер монтажа вертикальных роликов (Shorts, Reels, TikTok).\n\
+Оцени эмоциональный накал каждой из {} реплик от 0.0 до 1.0 строго по шкале (НЕ завышай оценки спокойным фразам!):\n\
+1. 0.15-0.42: обрывки ([CONT]/[INCOMPLETE]), спокойные доклады, бытовые реплики, вежливые разговоры.\n\
+2. 0.45-0.66: обычные сюжетные диалоги, обсуждение планов, стандартные вопросы без крика.\n\
+3. 0.70-0.84: напряженные споры, угрозы, драматические повороты, жесткие боевые приказы.\n\
+4. 0.88-0.96: ИСКЛЮЧИТЕЛЬНЫЙ ЭМОЦИОНАЛЬНЫЙ ПИК / КУЛЬМИНАЦИЯ (яростный крик, шок, отчаяние, смертельная схватка — не более 1-2 реплик на пакет!).\n\
+Выведи ТОЛЬКО валидный JSON-массив ровно из {} чисел в диапазоне 0.0-1.0 без текста и комментариев.\n\
+Пример формата: [0.42, 0.89]\n\n\
 Реплики:\n{}\n\n\
 JSON:[",
         fragments.len(),
@@ -1398,8 +1366,8 @@ async fn run_llama_cli(
         .to_string();
 
     // Динамический лимит токенов пропорционально размеру пакета + стоп-токен `]`
-    // для мгновенного завершения генерации сразу после закрытия JSON-массива
-    let max_tokens = (expected_count * 7 + 18).clamp(32, 240).to_string();
+    // для мгновенного завершения генерации сразу после закрытия JSON-массива (с запасом для 25 элементов)
+    let max_tokens = (expected_count * 12 + 32).clamp(64, 384).to_string();
 
     let mut cmd = sidecar_command
         .env("PATH", crate::logger::build_sidecar_env_path(app_handle));
@@ -1723,31 +1691,40 @@ pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -
 }
 
 /// Продвинутый локальный семантический анализатор диалогов, эмоциональных всплесков и целостности фраз
+/// со строгой калибровкой шкалы эмоций (0.20 .. 0.95):
+/// - Спокойные доклады и бытовые разговоры без восклицаний: 0.25 – 0.52
+/// - Обычные тактические обсуждения и вопросы: 0.54 – 0.68
+/// - Эмоциональные споры, приказы и драматические повороты: 0.70 – 0.84
+/// - Исключительная кульминация (крик, ярость, шок, `?!` / `!!` + маркеры экстрима): 0.86 – 0.95
 pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> {
     if fragments.is_empty() {
         return Vec::new();
     }
 
-    // Словник высокой драматургической, эмоциональной и сюжетной ценности (аниме, стримы, интервью, кино)
-    let high_impact_keywords = [
-        "ха-ха", "ахах", "haha", "лол", "вау", "ого", "что?!", "жесть", "круто", "капец",
-        "не может быть", "невозможно", "вперёд", "стоп", "быстрее", "постой", "подожди",
-        "бей", "беги", "смотри", "боже", "шок", "ужас", "победа", "атака", "удар",
-        "сила", "смерть", "крик", "войн", "приказ", "огонь", "враг", "преступлен",
-        "уничтож", "спас", "кров", "биться", "штурм", "взрыв", "молодец", "секрет",
-        "тайна", "правда", "лжешь", "врёшь", "прости", "обещаю", "поклялся", "никогда",
-        "навсегда", "люблю", "ненавижу", "убью", "защищ", "опасно", "ловушк", "план",
-        "конец", "начало", "победил", "проиграл", "герой", "монстр", "магия", "способност",
-        "уровень", "память", "разум", "сердц", "душа", "судьб", "выбор", "шанс", "черт", "чёрт",
-        "кайдзю", "капитан", "командир", "оружи", "прорыв", "берегись", "держись",
-        "impossible", "never", "wait", "stop", "watch", "attack", "power", "fight",
-        "monster", "secret", "truth", "promise", "protect", "danger", "victory", "destroy"
+    // 1. Словник ЭКСТРЕМАЛЬНОГО эмоционального накала и кульминации
+    let extreme_climax_keywords = [
+        "ха-ха", "ахах", "haha", "что?!", "не может быть", "невозможно", "немедленно",
+        "закрой свой рот", "прекрати", "довольно!", "замолчи", "бей", "беги", "боже",
+        "шок", "ужас", "смерть", "крик", "огонь!", "уничтож", "кров", "взрыв", "лжешь",
+        "врёшь", "поклялся", "никогда!", "ненавижу", "убью", "умри", "дьявол", "монстр",
+        "кайдзю", "берегись", "держись", "черт", "чёрт", "проклят", "безум", "сдохн",
+        "разнес", "сотру", "в атаку", "штурм", "прорыв", "impossible", "destroy",
+    ];
+
+    // 2. Словник умеренного сюжетного/тактического интереса (не должен сам по себе задирать оценку до 0.9!)
+    let moderate_plot_keywords = [
+        "вперёд", "стоп", "быстрее", "постой", "подожди", "смотри", "победа", "атака",
+        "удар", "сила", "войн", "приказ", "враг", "преступлен", "спас", "биться", "секрет",
+        "тайна", "правда", "прости", "обещаю", "люблю", "защищ", "опасно", "ловушк",
+        "план", "победил", "проиграл", "герой", "магия", "способност", "сердц", "душа",
+        "судьб", "выбор", "шанс", "капитан", "командир", "генерал", "лейтенант", "оружи",
+        "батальон", "штаб", "импери",
     ];
 
     let hook_starters = [
-        "слушай", "знаешь", "смотри", "погоди", "неужели", "значит", "почему", "зачем",
-        "как же", "так вот", "на самом деле", "однако", "кстати", "представь", "эй",
-        "послушай", "внимание", "осторожно", "клянусь", "честно"
+        "слушай", "знаешь", "смотри", "погоди", "неужели", "почему", "зачем",
+        "как же", "на самом деле", "представь", "эй", "послушай", "внимание",
+        "осторожно", "клянусь",
     ];
 
     // Шаг 1. Базовая оценка каждой отдельной реплики
@@ -1770,71 +1747,89 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
 
             // Сверхкороткие междометия без восклицания не должны сами по себе становиться ядром клипа
             if word_count <= 1 && !txt.contains('!') && !txt.contains('?') {
-                return 0.22;
+                return 0.20;
             }
 
-            let mut score: f64 = 0.38;
+            // Спокойная базовая линия (без искусственного завышения)
+            let mut score: f64 = 0.28;
 
-            // 1. Эмоциональная пунктуация
-            if txt.contains('!') {
+            // 1. Эмоциональная пунктуация — главный индикатор реального голосового накала в субтитрах
+            let has_exclam = txt.contains('!');
+            let has_double_punct = txt.contains("!!") || txt.contains("?!") || txt.contains("!?");
+            if has_exclam {
                 score += 0.14;
             }
-            if txt.contains("!!") || txt.contains("?!") || txt.contains("!?") {
-                score += 0.11;
+            if has_double_punct {
+                score += 0.13;
             }
-            if txt.contains('?') {
-                score += 0.08;
+            if txt.contains('?') && !has_double_punct {
+                score += 0.05;
             }
             if txt.contains('…') || txt.contains("...") {
-                score += 0.04;
+                score += 0.02;
             }
 
-            // 2. Ключевые слова конфликта, юмора, откровений и экшена
-            let mut kw_hits = 0usize;
-            for kw in &high_impact_keywords {
+            // 2. Экстремальные слова кульминации vs обычные сюжетные термины
+            let mut extreme_hits = 0usize;
+            for kw in &extreme_climax_keywords {
                 if txt.contains(kw) {
-                    kw_hits += 1;
-                    if kw_hits >= 3 {
+                    extreme_hits += 1;
+                    if extreme_hits >= 3 {
                         break;
                     }
                 }
             }
-            score += (kw_hits as f64) * 0.11;
+            let mut mod_hits = 0usize;
+            for kw in &moderate_plot_keywords {
+                if txt.contains(kw) {
+                    mod_hits += 1;
+                    if mod_hits >= 2 {
+                        break;
+                    }
+                }
+            }
 
-            // 3. Хук-маркеры в начале фразы (привлекают внимание в первые 2 секунды ролика)
+            score += (extreme_hits as f64) * 0.12;
+            score += (mod_hits as f64) * 0.045;
+
+            // 3. Хук-маркеры и целостность границ фразы
             if is_sentence_start(fragments, idx) {
-                score += 0.06;
+                score += 0.04;
                 if hook_starters.iter().any(|h| txt.starts_with(h) || txt.contains(h)) {
-                    score += 0.07;
+                    score += 0.05;
                 }
             } else {
-                // Если реплика начинается с середины незаконченного предложения — снижаем её вес как точки старта
+                // Середина незаконченного предложения
                 score -= 0.08;
             }
 
-            // Бонус за логическую завершенность мысли
             if is_sentence_end(fragments, idx) {
-                score += 0.04;
+                score += 0.03;
             }
 
             // 4. Темп и плотность живой речи
             let duration = (f.end - f.start).max(0.4);
             let speech_rate = (word_count as f64) / duration;
-            if speech_rate >= 2.2 && speech_rate <= 5.5 {
-                score += ((speech_rate - 2.0) * 0.035).clamp(0.02, 0.10);
+            if speech_rate >= 2.4 && speech_rate <= 5.5 {
+                score += ((speech_rate - 2.2) * 0.028).clamp(0.01, 0.07);
             }
 
             // 5. Насыщенность реплики по числу слов
-            if word_count >= 5 {
-                score += ((word_count as f64 - 4.0) * 0.012).min(0.09);
+            if word_count >= 6 {
+                score += ((word_count as f64 - 5.0) * 0.008).min(0.05);
             }
 
-            score.clamp(0.15, 0.94)
+            // Спокойные повествовательные фразы без `!` и без экстремальных триггеров не могут превышать 0.64
+            if !has_exclam && extreme_hits == 0 {
+                score = score.min(0.64);
+            }
+
+            score.clamp(0.14, 0.95)
         })
         .collect();
 
-    // Шаг 2. Группировка реплик в полные предложения и передача импульса к НАЧАЛУ предложения.
-    // Это гарантирует, что алгоритм выбора клипов всегда выберет начало цельной фразы, а не её обрывок!
+    // Шаг 2. Группировка реплик в полные предложения и передача импульса к НАЧАЛУ предложения
+    // без искусственного завышения спокойных предложений
     let mut i = 0;
     while i < fragments.len() {
         let sent_start = i;
@@ -1844,14 +1839,14 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
         }
 
         if sent_end > sent_start {
-            // Находим пиковую эмоцию внутри всего предложения [sent_start..=sent_end]
             let max_in_sentence = raw_scores[sent_start..=sent_end]
                 .iter()
                 .copied()
                 .fold(0.0_f64, f64::max);
 
-            // Усиливаем первую реплику предложения (точку входа в мысль), чтобы окно клипа открывалось именно с неё
-            raw_scores[sent_start] = (raw_scores[sent_start] * 0.45 + max_in_sentence * 0.55 + 0.05).clamp(0.18, 0.96);
+            // Передаем импульс к первой части предложения только если в предложении действительно есть эмоция
+            let boost = if max_in_sentence >= 0.78 { 0.02 } else { 0.0 };
+            raw_scores[sent_start] = (raw_scores[sent_start] * 0.40 + max_in_sentence * 0.60 + boost).clamp(0.16, 0.95);
         }
 
         i = sent_end + 1;

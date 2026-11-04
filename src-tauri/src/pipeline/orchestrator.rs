@@ -308,13 +308,13 @@ pub async fn run_pipeline(
     );
 
     // (start_sec, end_sec, score, first_phrase_preview, last_phrase_preview)
-    let mut candidate_intervals: Vec<(f64, f64, f64, String, String)> = Vec::new();
+    let mut all_valid_windows: Vec<(f64, f64, f64, String, String)> = Vec::new();
 
     // Пропускаем первые секунды интро и финальные титры на длинных видео (> 3 мин)
     let intro_skip = if video_duration > 180.0 { 4.0 } else { 0.0 };
     let outro_limit = if video_duration > 300.0 { (video_duration - 25.0).max(min_dur) } else { video_duration };
 
-    // А. Строим кандидатов по границам полных предложений вокруг реплик
+    // А. Строим все кандидаты цельных диалоговых окон по границам предложений
     if !fragments.is_empty() {
         for anchor_idx in 0..fragments.len() {
             if crate::whisper::is_whisper_hallucination(&fragments[anchor_idx].text)
@@ -334,9 +334,7 @@ pub async fn run_pipeline(
                 outro_limit,
                 video_duration,
             ) {
-                if cand.2 >= config.min_intensity_threshold {
-                    candidate_intervals.push(cand);
-                }
+                all_valid_windows.push(cand);
             }
         }
     }
@@ -349,7 +347,6 @@ pub async fn run_pipeline(
             continue;
         }
         if !fragments.is_empty() {
-            // Ищем ближайшую реплику рядом с визуальным пиком (в радиусе 6 секунд)
             if let Some((nearest_idx, _)) = fragments
                 .iter()
                 .enumerate()
@@ -377,21 +374,22 @@ pub async fn run_pipeline(
                     outro_limit,
                     video_duration,
                 ) {
-                    cand.2 = (cand.2 + 0.03).min(0.97);
-                    if cand.2 >= config.min_intensity_threshold {
-                        candidate_intervals.push(cand);
+                    // Усиливаем окно только если сама визуальная сцена имеет высокий накал (>= 0.75)
+                    if scene.intensity >= 0.75 {
+                        cand.2 = (cand.2 + (scene.intensity - 0.72) * 0.14).min(0.96);
                     }
+                    all_valid_windows.push(cand);
                 }
             }
         } else {
-            // Только если в видео вообще нет речи (например чисто инструментальный клип)
+            // Только если в видео вообще нет речи (чисто инструментальный клип)
             let start = (scene.timestamp_sec - 2.0).max(intro_skip).min((outro_limit - target_dur).max(0.0));
             let end = (start + target_dur).min(video_duration);
-            if end - start >= 4.0 && scene.intensity >= config.min_intensity_threshold {
-                candidate_intervals.push((
+            if end - start >= 4.0 {
+                all_valid_windows.push((
                     start,
                     end,
-                    scene.intensity.clamp(0.50, 0.94),
+                    scene.intensity.clamp(0.45, 0.94),
                     "Визуальная динамика".to_string(),
                     scene.description.clone(),
                 ));
@@ -399,135 +397,174 @@ pub async fn run_pipeline(
         }
     }
 
-    // Если нет ни одного фрагмента выше порога — выбираем топ лучших цельных моментов по относительной ценности
-    if candidate_intervals.is_empty() {
-        crate::logger::emit_log(
-            &app_handle,
-            "Pipeline",
-            "info",
-            &format!("Ни один фрагмент не превысил порог {}. Автоматический выбор лучших цельных сцен по относительной ценности...", config.min_intensity_threshold),
-        );
-        if !fragments.is_empty() {
-            let mut frag_with_scores: Vec<(usize, f64)> = fragments
-                .iter()
-                .enumerate()
-                .filter(|(_, f)| !crate::whisper::is_whisper_hallucination(&f.text))
-                .map(|(i, _)| (i, text_scores.get(i).copied().unwrap_or(0.5)))
-                .collect();
-            frag_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (idx, _) in frag_with_scores.iter().copied().take(max_clips_limit * 4) {
-                if let Some(cand) = build_complete_phrase_window(
-                    &fragments,
-                    &text_scores,
-                    &scenes,
-                    idx,
-                    min_dur,
-                    target_dur,
-                    max_dur,
-                    intro_skip,
-                    outro_limit,
-                    video_duration,
-                ) {
-                    candidate_intervals.push(cand);
+    // Если строгий построитель диалоговых окон не дал кандидатов (например, редкие одиночные реплики с огромными паузами),
+    // строим резервные окна вокруг лучших реплик
+    if all_valid_windows.is_empty() && !fragments.is_empty() {
+        let mut frag_with_scores: Vec<(usize, f64)> = fragments
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| !crate::whisper::is_whisper_hallucination(&f.text))
+            .map(|(i, _)| (i, text_scores.get(i).copied().unwrap_or(0.45)))
+            .collect();
+        frag_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        for (idx, sc) in frag_with_scores.into_iter().take(max_clips_limit * 2) {
+            let f = &fragments[idx];
+            if f.start < intro_skip || f.start >= outro_limit {
+                continue;
+            }
+            let start = (f.start - 0.30).max(0.0);
+            let mut end = (start + target_dur).min(video_duration);
+            let mut last_txt = f.text.clone();
+            for next_f in &fragments[idx..] {
+                if next_f.end <= start + max_dur && next_f.end >= start + min_dur * 0.8 {
+                    end = (next_f.end + 0.24).min(video_duration);
+                    last_txt = next_f.text.clone();
+                } else if next_f.start > start + max_dur {
+                    break;
                 }
             }
-
-            // Если даже строгий построитель диалоговых окон (build_complete_phrase_window) отфильтровал все окна
-            // (например, при редких одиночных репликах с длинными паузами), строим аккуратные окна вокруг лучших реплик!
-            if candidate_intervals.is_empty() {
-                for (idx, sc) in frag_with_scores.into_iter().take(max_clips_limit * 3) {
-                    let f = &fragments[idx];
-                    if f.start < intro_skip || f.start >= outro_limit {
-                        continue;
-                    }
-                    let start = (f.start - 0.30).max(0.0);
-                    let mut end = (start + target_dur).min(video_duration);
-                    let mut last_txt = f.text.clone();
-                    for next_f in &fragments[idx..] {
-                        if next_f.end <= start + max_dur && next_f.end >= start + min_dur * 0.8 {
-                            end = (next_f.end + 0.24).min(video_duration);
-                            last_txt = next_f.text.clone();
-                        } else if next_f.start > start + max_dur {
-                            break;
-                        }
-                    }
-                    if end - start >= min_dur * 0.75 {
-                        candidate_intervals.push((
-                            start,
-                            end,
-                            sc.clamp(0.52, 0.90),
-                            f.text.chars().take(36).collect(),
-                            last_txt.chars().take(36).collect(),
-                        ));
-                    }
-                }
-            }
-        }
-
-        if candidate_intervals.is_empty() && !scenes.is_empty() {
-            for scn in scenes.iter().take(max_clips_limit * 2) {
-                let start = (scn.timestamp_sec - 1.0).max(intro_skip).min((video_duration - target_dur).max(0.0));
-                let end = (start + target_dur).min(video_duration);
-                if end - start >= 3.0 {
-                    candidate_intervals.push((
-                        start,
-                        end,
-                        scn.intensity.clamp(0.55, 0.92),
-                        "Визуальная сцена".to_string(),
-                        scn.description.clone(),
-                    ));
-                }
-            }
-        }
-
-        if candidate_intervals.is_empty() {
-            let num_clips = if video_duration < 30.0 { 1 } else if video_duration < 90.0 { 2 } else { 3 };
-            let step = video_duration / (num_clips as f64);
-            for i in 0..num_clips {
-                let start = (i as f64 * step).min(video_duration - 5.0).max(0.0);
-                let end = (start + target_dur).min(video_duration);
-                if end - start >= 3.0 {
-                    candidate_intervals.push((
-                        start,
-                        end,
-                        0.75 - (i as f64 * 0.05),
-                        "Фрагмент".to_string(),
-                        "Авто".to_string(),
-                    ));
-                }
+            if end - start >= min_dur * 0.75 {
+                all_valid_windows.push((
+                    start,
+                    end,
+                    sc.clamp(0.42, 0.92),
+                    f.text.chars().take(36).collect(),
+                    last_txt.chars().take(36).collect(),
+                ));
             }
         }
     }
 
-    // Устраняем перекрытия и скученность (Non-Maximum Suppression с минимальной дистанцией между клипами)
+    if all_valid_windows.is_empty() && !scenes.is_empty() {
+        for scn in scenes.iter().take(max_clips_limit * 2) {
+            let start = (scn.timestamp_sec - 1.0).max(intro_skip).min((video_duration - target_dur).max(0.0));
+            let end = (start + target_dur).min(video_duration);
+            if end - start >= 3.0 {
+                all_valid_windows.push((
+                    start,
+                    end,
+                    scn.intensity.clamp(0.45, 0.92),
+                    "Визуальная сцена".to_string(),
+                    scn.description.clone(),
+                ));
+            }
+        }
+    }
+
+    if all_valid_windows.is_empty() {
+        let num_clips = if video_duration < 30.0 { 1 } else if video_duration < 90.0 { 2 } else { 3 };
+        let step = video_duration / (num_clips as f64);
+        for i in 0..num_clips {
+            let start = (i as f64 * step).min(video_duration - 5.0).max(0.0);
+            let end = (start + target_dur).min(video_duration);
+            if end - start >= 3.0 {
+                all_valid_windows.push((
+                    start,
+                    end,
+                    0.70 - (i as f64 * 0.05),
+                    "Фрагмент".to_string(),
+                    "Авто".to_string(),
+                ));
+            }
+        }
+    }
+
+    // 1. Сначала выполняем Non-Maximum Suppression (NMS) по всем валидным окнам серии,
+    // чтобы получить чистый список независимых сцен без перекрытий, отсортированный от самой мощной кульминации к спокойным сценам
     let min_gap = (video_duration / 45.0).clamp(4.0, 25.0);
-    candidate_intervals.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    all_valid_windows.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut selected_intervals: Vec<(f64, f64, f64, String, String)> = Vec::new();
-    for candidate in candidate_intervals {
-        // В режиме «Авто» после набора первых 8 ключевых сцен отсекаем слабые фоновые/финальные окна (рейтинг < 0.64,
-        // а в последних 85 секундах 20+-минутной серии на титрах/эндинге — < 0.72)
-        if is_auto_clips && selected_intervals.len() >= 8 {
-            if candidate.2 < 0.64 {
-                continue;
-            }
-            if video_duration >= 1200.0 && candidate.0 >= video_duration - 85.0 && candidate.2 < 0.72 {
-                continue;
-            }
+    let mut non_overlapping_scenes: Vec<(f64, f64, f64, String, String)> = Vec::new();
+    for cand in all_valid_windows {
+        // В последних 85 секундах 20+-минутной серии (титры/эндинг) требуем повышенную достоверность >= 0.74
+        if video_duration >= 1200.0 && cand.0 >= video_duration - 85.0 && cand.2 < 0.74 {
+            continue;
         }
-
-        let too_close_or_overlaps = selected_intervals.iter().any(|sel| {
-            candidate.0 < (sel.1 + min_gap) && candidate.1 > (sel.0 - min_gap)
+        let overlaps = non_overlapping_scenes.iter().any(|sel| {
+            cand.0 < (sel.1 + min_gap) && cand.1 > (sel.0 - min_gap)
         });
-        if !too_close_or_overlaps {
-            selected_intervals.push(candidate);
+        if !overlaps {
+            non_overlapping_scenes.push(cand);
         }
-        if !is_auto_clips && selected_intervals.len() >= max_clips_limit {
+        if non_overlapping_scenes.len() >= 60 {
             break;
         }
-        if is_auto_clips && selected_intervals.len() >= 60 {
-            break;
-        }
+    }
+
+    let user_threshold = config.min_intensity_threshold.clamp(0.10, 0.98);
+    let max_scene_score = non_overlapping_scenes.first().map(|s| s.2).unwrap_or(0.0);
+
+    // Динамический потолок количества роликов в режиме «Авто» в зависимости от запрошенного уровня эмоций (`min_intensity_threshold`):
+    // - при 0.95+: максимум 2 самых взрывных клипа на серию
+    // - при 0.90: максимум 4 супер-интенсивных клипа
+    // - при 0.85: максимум 6 клипов
+    // - при 0.80: максимум 8 клипов
+    // - при 0.75: максимум 11 клипов
+    // - при 0.70: максимум 14 клипов
+    // - при <= 0.60: до 20 клипов
+    let auto_intensity_cap: usize = if user_threshold >= 0.94 {
+        2
+    } else if user_threshold >= 0.89 {
+        4
+    } else if user_threshold >= 0.84 {
+        6
+    } else if user_threshold >= 0.79 {
+        8
+    } else if user_threshold >= 0.74 {
+        11
+    } else if user_threshold >= 0.68 {
+        14
+    } else {
+        20
+    };
+
+    let effective_limit = if is_auto_clips {
+        auto_intensity_cap
+    } else {
+        max_clips_limit
+    };
+
+    // 2. Строгий отбор клипов, реально преодолевших заданный пользователем порог интенсивности эмоций
+    let mut selected_intervals: Vec<(f64, f64, f64, String, String)> = non_overlapping_scenes
+        .iter()
+        .filter(|cand| cand.2 >= user_threshold)
+        .take(effective_limit)
+        .cloned()
+        .collect();
+
+    // 3. Если пользователь выставил экстремальный порог (например 0.90–0.95), а в данной серии пиковая сцена имеет 0.86–0.89:
+    // НИ В КОЕМ СЛУЧАЕ не сбрасываем фильтр до 20 проходных сцен по 0.66!
+    // Выбираем ТОЛЬКО узкую верхушку абсолютных пиков серии (не более 2–3 сцен в пределах 0.05 от максимума серии).
+    if selected_intervals.is_empty() && !non_overlapping_scenes.is_empty() {
+        let strict_fallback_cap = if user_threshold >= 0.90 {
+            3usize.min(effective_limit)
+        } else if user_threshold >= 0.82 {
+            4usize.min(effective_limit)
+        } else if user_threshold >= 0.72 {
+            6usize.min(effective_limit)
+        } else {
+            8usize.min(effective_limit)
+        };
+        let min_peak_floor = (max_scene_score - 0.05).max(0.68);
+
+        selected_intervals = non_overlapping_scenes
+            .into_iter()
+            .filter(|cand| cand.2 >= min_peak_floor)
+            .take(strict_fallback_cap)
+            .collect();
+
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            &format!(
+                "Строгий фильтр интенсивности (порог {:.2}, макс. накал в серии {:.2}): отобрано только {} самых пиковых кульминационных сцен (>= {:.2}).",
+                user_threshold,
+                max_scene_score,
+                selected_intervals.len(),
+                min_peak_floor
+            ),
+        );
     }
 
     // Сортируем по времени начала в хронологическом порядке
@@ -543,9 +580,10 @@ pub async fn run_pipeline(
         "Pipeline",
         "info",
         &format!(
-            "[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} качественных клипов (10–20с, {}) для таймлайна",
+            "[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} качественных клипов (10–20с, порог эмоций: {:.2}, {}) для таймлайна",
             suggested_fragments.len(),
-            if is_auto_clips { "режим: Авто (все лучшие сцены)".to_string() } else { format!("лимит: до {}", max_clips_limit) }
+            user_threshold,
+            if is_auto_clips { format!("режим: Авто (лимит по интенсивности до {})", effective_limit) } else { format!("лимит: до {}", max_clips_limit) }
         ),
     );
     for (i, (start, end, score, first_txt, last_txt)) in selected_intervals.iter().enumerate() {
@@ -912,11 +950,12 @@ fn build_complete_phrase_window(
         return None;
     }
 
-    // 2. Оцениваем содержательность, плотность живой речи и драматургию внутри окна [start_idx..=end_idx]
-    let mut peak_score: f64 = 0.0;
-    let mut sum_score: f64 = 0.0;
+    // 2. Оцениваем содержательность, плотность живой речи и реальный эмоциональный накал внутри окна [start_idx..=end_idx]
+    let mut cue_scores: Vec<f64> = Vec::with_capacity(end_idx - start_idx + 1);
     let mut cue_count = 0usize;
     let mut song_cue_count = 0usize;
+    let mut exclam_cues = 0usize;
+    let mut intense_punct_cues = 0usize;
     let mut active_speech_sec = 0.0;
     let mut max_internal_gap = 0.0_f64;
 
@@ -935,12 +974,17 @@ fn build_complete_phrase_window(
             song_cue_count += 1;
             continue;
         }
-        let sc = text_scores.get(j).copied().unwrap_or(0.42);
-        if sc > peak_score {
-            peak_score = sc;
-        }
-        sum_score += sc;
+        let sc = text_scores.get(j).copied().unwrap_or(0.40);
+        cue_scores.push(sc);
         cue_count += 1;
+
+        if f.text.contains('!') {
+            exclam_cues += 1;
+        }
+        if f.text.contains("?!") || f.text.contains("!?") || f.text.contains("!!") {
+            intense_punct_cues += 1;
+        }
+
         // Ограничиваем вклад одной реплики в active_speech_sec разумным пределом (до 5.5с),
         // на случай если Whisper растянул таймкод короткой фразы на 9 секунд тишины/ходьбы
         let words = f.text.split_whitespace().count();
@@ -954,15 +998,19 @@ fn build_complete_phrase_window(
         return None;
     }
 
-    let avg_score = sum_score / (cue_count as f64);
+    cue_scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    let peak_score = cue_scores[0];
+    let second_score = cue_scores.get(1).copied().unwrap_or(peak_score);
+    let top2_avg = (peak_score + second_score) * 0.5;
+    let avg_score: f64 = cue_scores.iter().sum::<f64>() / (cue_count as f64);
     let speech_density = (active_speech_sec / clip_dur).clamp(0.0, 1.0);
 
     // Бонус за идеальную целостность начала и конца диалога
     let is_clean_start = crate::text_analyzer::is_sentence_start(fragments, start_idx)
         && !crate::text_analyzer::starts_with_discourse_continuation(&fragments[start_idx].text);
     let completeness_bonus = match (is_clean_start, is_clean_end) {
-        (true, true) => 0.07,
-        (true, false) | (false, true) => 0.01,
+        (true, true) => 0.03,
+        (true, false) | (false, true) => 0.0,
         (false, false) => -0.08,
     };
 
@@ -975,25 +1023,45 @@ fn build_complete_phrase_window(
         0.0
     };
 
-    // Бонус за совпадение с визуальной динамикой / аудио-пиком
+    // Бонус/штраф эмоционального накала внутри окна:
+    // - Спокойный разговор без единого восклицательного знака получает штраф `-0.06`, чтобы не попадать в высокоинтенсивные выборки!
+    // - Настоящая взрывная кульминация (несколько восклицаний, `?!`/`!!`, высокий пик) получает бонус до `+0.07`, позволяя пробить 0.90–0.96!
+    let emotion_burst_modifier = if exclam_cues == 0 {
+        -0.06
+    } else if exclam_cues >= 3 || (exclam_cues >= 2 && intense_punct_cues >= 1) {
+        0.055
+    } else if exclam_cues == 2 || intense_punct_cues >= 1 {
+        0.03
+    } else {
+        0.005
+    };
+
+    // Бонус за совпадение с сильной визуальной динамикой / аудио-пиком
     let max_scene_in_win = scenes
         .iter()
         .filter(|s| s.timestamp_sec >= clip_start && s.timestamp_sec <= clip_end)
         .map(|s| s.intensity)
         .fold(0.0_f64, f64::max);
-    let scene_bonus = if max_scene_in_win > 0.0 {
-        (max_scene_in_win * 0.05).clamp(0.01, 0.05)
+    let scene_bonus = if max_scene_in_win >= 0.72 {
+        ((max_scene_in_win - 0.65) * 0.16).clamp(0.01, 0.045)
     } else {
         0.0
     };
 
-    let window_score = (peak_score * 0.48
-        + avg_score * 0.30
-        + speech_density.min(0.85) * 0.11
+    // Широкий динамический диапазон оценки окна (0.32 .. 0.96):
+    // - Спокойные сцены без восклицаний: 0.42 – 0.62
+    // - Умеренно напряженные диалоги: 0.64 – 0.76
+    // - Сильные эмоциональные сцены: 0.78 – 0.88
+    // - Супер-интенсивные кульминации (для порога 0.90+): 0.90 – 0.96
+    let window_score = (peak_score * 0.55
+        + top2_avg * 0.25
+        + avg_score * 0.12
+        + speech_density.min(0.85) * 0.06
         + completeness_bonus
+        + emotion_burst_modifier
         + scene_bonus
         - transition_penalty)
-        .clamp(0.35, 0.97);
+        .clamp(0.32, 0.96);
 
     let format_preview_text = |txt: &str, _is_last: bool| -> String {
         let t = txt
