@@ -1747,23 +1747,27 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
 
             // Сверхкороткие междометия без восклицания не должны сами по себе становиться ядром клипа
             if word_count <= 1 && !txt.contains('!') && !txt.contains('?') {
+                return 0.15;
+            }
+            if word_count <= 2 && !txt.contains('!') && !txt.contains('?') {
                 return 0.20;
             }
 
             // Спокойная базовая линия (без искусственного завышения)
-            let mut score: f64 = 0.28;
+            let mut score: f64 = 0.22;
 
             // 1. Эмоциональная пунктуация — главный индикатор реального голосового накала в субтитрах
             let has_exclam = txt.contains('!');
             let has_double_punct = txt.contains("!!") || txt.contains("?!") || txt.contains("!?");
+
             if has_exclam {
-                score += 0.14;
+                score += 0.12;
             }
             if has_double_punct {
-                score += 0.13;
+                score += 0.18;
             }
             if txt.contains('?') && !has_double_punct {
-                score += 0.05;
+                score += 0.04;
             }
             if txt.contains('…') || txt.contains("...") {
                 score += 0.02;
@@ -1779,6 +1783,7 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
                     }
                 }
             }
+
             let mut mod_hits = 0usize;
             for kw in &moderate_plot_keywords {
                 if txt.contains(kw) {
@@ -1789,14 +1794,14 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
                 }
             }
 
-            score += (extreme_hits as f64) * 0.12;
-            score += (mod_hits as f64) * 0.045;
+            score += (extreme_hits as f64) * 0.15;
+            score += (mod_hits as f64) * 0.035;
 
             // 3. Хук-маркеры и целостность границ фразы
             if is_sentence_start(fragments, idx) {
-                score += 0.04;
+                score += 0.03;
                 if hook_starters.iter().any(|h| txt.starts_with(h) || txt.contains(h)) {
-                    score += 0.05;
+                    score += 0.04;
                 }
             } else {
                 // Середина незаконченного предложения
@@ -1811,20 +1816,20 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
             let duration = (f.end - f.start).max(0.4);
             let speech_rate = (word_count as f64) / duration;
             if speech_rate >= 2.4 && speech_rate <= 5.5 {
-                score += ((speech_rate - 2.2) * 0.028).clamp(0.01, 0.07);
+                score += ((speech_rate - 2.2) * 0.022).clamp(0.01, 0.05);
             }
 
             // 5. Насыщенность реплики по числу слов
             if word_count >= 6 {
-                score += ((word_count as f64 - 5.0) * 0.008).min(0.05);
+                score += ((word_count as f64 - 5.0) * 0.006).min(0.04);
             }
 
-            // Спокойные повествовательные фразы без `!` и без экстремальных триггеров не могут превышать 0.64
-            if !has_exclam && extreme_hits == 0 {
-                score = score.min(0.64);
+            // Спокойные повествовательные фразы без `!` и без экстремальных триггеров не могут превышать 0.55
+            if !has_exclam && extreme_hits == 0 && !has_double_punct {
+                score = score.min(0.55);
             }
 
-            score.clamp(0.14, 0.95)
+            score.clamp(0.12, 0.96)
         })
         .collect();
 

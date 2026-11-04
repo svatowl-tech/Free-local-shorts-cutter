@@ -1024,16 +1024,16 @@ fn build_complete_phrase_window(
     };
 
     // Бонус/штраф эмоционального накала внутри окна:
-    // - Спокойный разговор без единого восклицательного знака получает штраф `-0.06`, чтобы не попадать в высокоинтенсивные выборки!
-    // - Настоящая взрывная кульминация (несколько восклицаний, `?!`/`!!`, высокий пик) получает бонус до `+0.07`, позволяя пробить 0.90–0.96!
-    let emotion_burst_modifier = if exclam_cues == 0 {
-        -0.06
+    // - Спокойный разговор без единого восклицательного знака получает ощутимый штраф `-0.10`, чтобы не попадать в выборки высокого уровня эмоций (0.85+)!
+    // - Настоящая взрывная кульминация (несколько восклицаний, `?!`/`!!`, высокий пик) получает бонус `+0.07`, позволяя пробить 0.90–0.97!
+    let emotion_burst_modifier = if exclam_cues == 0 && intense_punct_cues == 0 {
+        -0.10
     } else if exclam_cues >= 3 || (exclam_cues >= 2 && intense_punct_cues >= 1) {
-        0.055
+        0.07
     } else if exclam_cues == 2 || intense_punct_cues >= 1 {
-        0.03
+        0.035
     } else {
-        0.005
+        0.0
     };
 
     // Бонус за совпадение с сильной визуальной динамикой / аудио-пиком
@@ -1042,26 +1042,34 @@ fn build_complete_phrase_window(
         .filter(|s| s.timestamp_sec >= clip_start && s.timestamp_sec <= clip_end)
         .map(|s| s.intensity)
         .fold(0.0_f64, f64::max);
-    let scene_bonus = if max_scene_in_win >= 0.72 {
-        ((max_scene_in_win - 0.65) * 0.16).clamp(0.01, 0.045)
+
+    let scene_bonus = if max_scene_in_win >= 0.75 {
+        ((max_scene_in_win - 0.70) * 0.18).clamp(0.01, 0.05)
     } else {
         0.0
     };
 
-    // Широкий динамический диапазон оценки окна (0.32 .. 0.96):
-    // - Спокойные сцены без восклицаний: 0.42 – 0.62
-    // - Умеренно напряженные диалоги: 0.64 – 0.76
-    // - Сильные эмоциональные сцены: 0.78 – 0.88
-    // - Супер-интенсивные кульминации (для порога 0.90+): 0.90 – 0.96
-    let window_score = (peak_score * 0.55
+    // Широкий динамический диапазон оценки окна (0.28 .. 0.98):
+    // - Спокойные разговорные сцены: 0.38 – 0.62
+    // - Умеренно напряженные диалоги: 0.65 – 0.78
+    // - Сильные эмоциональные сцены: 0.80 – 0.88
+    // - Супер-интенсивные кульминации (для порога 0.90+): 0.90 – 0.97
+    let mut raw_window_score = peak_score * 0.50
         + top2_avg * 0.25
-        + avg_score * 0.12
-        + speech_density.min(0.85) * 0.06
+        + avg_score * 0.15
+        + speech_density.min(0.85) * 0.05
         + completeness_bonus
         + emotion_burst_modifier
         + scene_bonus
-        - transition_penalty)
-        .clamp(0.32, 0.96);
+        - transition_penalty;
+
+    // Окно без единого восклицательного знака / двойной пунктуации и без явного визуального пика (>= 0.82)
+    // жестко ограничено сверху порогом 0.68, чтобы исключить его попадание в выборку при настройке эмоций 0.90
+    if exclam_cues == 0 && intense_punct_cues == 0 && max_scene_in_win < 0.82 {
+        raw_window_score = raw_window_score.min(0.68);
+    }
+
+    let window_score = raw_window_score.clamp(0.28, 0.98);
 
     let format_preview_text = |txt: &str, _is_last: bool| -> String {
         let t = txt
