@@ -1,6 +1,6 @@
 {
   "productName": "Video Cutter Pro",
-  "version": "2.0.54",
+  "version": "2.0.55",
   "identifier": "com.developer.videocutter",
   "build": {
     "beforeDevCommand": "npm run dev",
