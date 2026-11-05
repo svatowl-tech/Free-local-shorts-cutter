@@ -741,7 +741,14 @@ fn build_complete_phrase_window(
         && (anchor_idx - start_idx) < 6
     {
         let gap = (fragments[start_idx].start - fragments[start_idx - 1].end).max(0.0);
-        if gap > 1.8 {
+        let max_back_gap = if !crate::text_analyzer::has_terminal_punctuation(&fragments[start_idx - 1].text)
+            || crate::text_analyzer::starts_with_lowercase_continuation(&fragments[start_idx].text)
+        {
+            4.5
+        } else {
+            1.8
+        };
+        if gap > max_back_gap {
             break;
         }
         start_idx -= 1;
@@ -758,7 +765,14 @@ fn build_complete_phrase_window(
                 && (start_idx - prompt_start) < 4
             {
                 let g = (fragments[prompt_start].start - fragments[prompt_start - 1].end).max(0.0);
-                if g > 1.8 {
+                let max_prompt_gap = if !crate::text_analyzer::has_terminal_punctuation(&fragments[prompt_start - 1].text)
+                    || crate::text_analyzer::starts_with_lowercase_continuation(&fragments[prompt_start].text)
+                {
+                    4.5
+                } else {
+                    1.8
+                };
+                if g > max_prompt_gap {
                     break;
                 }
                 prompt_start -= 1;
@@ -923,7 +937,14 @@ fn build_complete_phrase_window(
                 && (cursor - prev_start) < 5
             {
                 let g = (fragments[prev_start].start - fragments[prev_start - 1].end).max(0.0);
-                if g > 1.8 {
+                let max_prev_gap = if !crate::text_analyzer::has_terminal_punctuation(&fragments[prev_start - 1].text)
+                    || crate::text_analyzer::starts_with_lowercase_continuation(&fragments[prev_start].text)
+                {
+                    4.5
+                } else {
+                    1.8
+                };
+                if g > max_prev_gap {
                     break;
                 }
                 prev_start -= 1;
@@ -1034,13 +1055,15 @@ fn build_complete_phrase_window(
 
     // Бонус/штраф эмоционального накала внутри окна:
     // - Спокойный разговор без единого восклицательного знака получает ощутимый штраф `-0.10`, чтобы не попадать в выборки высокого уровня эмоций (0.85+)!
-    // - Настоящая взрывная кульминация (несколько восклицаний, `?!`/`!!`, высокий пик) получает бонус `+0.07`, позволяя пробить 0.90–0.97!
+    // - Настоящая взрывная кульминация (несколько восклицаний подряд, `?!`/`!!`, высокий пик) получает бонус `+0.085..+0.11`, позволяя пробить 0.90–0.96!
     let emotion_burst_modifier = if exclam_cues == 0 && intense_punct_cues == 0 {
         -0.10
+    } else if exclam_cues >= 4 || (exclam_cues >= 3 && peak_score >= 0.85) {
+        0.11
     } else if exclam_cues >= 3 || (exclam_cues >= 2 && intense_punct_cues >= 1) {
-        0.07
+        0.085
     } else if exclam_cues == 2 || intense_punct_cues >= 1 {
-        0.035
+        0.045
     } else {
         0.0
     };
@@ -1058,27 +1081,30 @@ fn build_complete_phrase_window(
         0.0
     };
 
-    // Широкий динамический диапазон оценки окна (0.28 .. 0.98):
-    // - Спокойные разговорные сцены: 0.38 – 0.62
-    // - Умеренно напряженные диалоги: 0.65 – 0.78
-    // - Сильные эмоциональные сцены: 0.80 – 0.88
-    // - Супер-интенсивные кульминации (для порога 0.90+): 0.90 – 0.97
-    let mut raw_window_score = peak_score * 0.50
-        + top2_avg * 0.25
-        + avg_score * 0.15
-        + speech_density.min(0.85) * 0.05
+    // Широкий динамический диапазон оценки окна (0.28 .. 0.97):
+    // - Спокойные разговорные сцены (0 восклицаний): 0.38 – 0.68
+    // - Одиночные реплики с 1 восклицанием: 0.68 – 0.81
+    // - Сильные эмоциональные сцены (2 восклицания / драма): 0.82 – 0.88
+    // - Супер-интенсивные кульминации (3+ восклицаний / бой, для порога 0.90+): 0.89 – 0.96
+    let mut raw_window_score = peak_score * 0.56
+        + top2_avg * 0.26
+        + avg_score * 0.10
+        + speech_density.min(0.85) * 0.04
         + completeness_bonus
         + emotion_burst_modifier
         + scene_bonus
         - transition_penalty;
 
     // Окно без единого восклицательного знака / двойной пунктуации и без явного визуального пика (>= 0.82)
-    // жестко ограничено сверху порогом 0.68, чтобы исключить его попадание в выборку при настройке эмоций 0.90
+    // жестко ограничено сверху порогом 0.68, а с одиночным обычным восклицанием — порогом 0.81,
+    // чтобы при пороге 0.85–0.90 отбирались только по-настоящему бурные эмоциональные сцены!
     if exclam_cues == 0 && intense_punct_cues == 0 && max_scene_in_win < 0.82 {
         raw_window_score = raw_window_score.min(0.68);
+    } else if exclam_cues == 1 && intense_punct_cues == 0 && peak_score < 0.85 && max_scene_in_win < 0.85 {
+        raw_window_score = raw_window_score.min(0.81);
     }
 
-    let window_score = raw_window_score.clamp(0.28, 0.98);
+    let window_score = raw_window_score.clamp(0.28, 0.97);
 
     let format_preview_text = |txt: &str, _is_last: bool| -> String {
         let t = txt

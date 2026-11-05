@@ -383,7 +383,12 @@ pub fn is_sentence_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     let curr_trimmed = curr.text.trim();
 
     // Если текущая строка начинается с маленькой буквы (или предыдущая не имеет финальной точки) — это середина незаконченного предложения!
-    if starts_with_lowercase_continuation(curr_trimmed) && gap < 2.2 {
+    if starts_with_lowercase_continuation(curr_trimmed)
+        && (gap < 3.5 || !has_terminal_punctuation(&prev.text))
+    {
+        return false;
+    }
+    if !has_terminal_punctuation(&prev.text) && gap < 2.5 {
         return false;
     }
 
@@ -487,6 +492,20 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         return true;
     }
 
+    // Одиночное короткое слово-выкрик в самом конце клипа («Бой!», «Ай!», «Ой!», «Эй!», «Что?!», «Стой!»),
+    // если перед ним уже есть законченное предложение — это оторванный выкрик следующего кадра, а не панчлайн!
+    if word_count == 1
+        && idx > 0
+        && has_terminal_punctuation(&fragments[idx - 1].text)
+        && (clean.chars().count() <= 7
+            || matches!(
+                clean.as_str(),
+                "бой" | "ай" | "ой" | "эй" | "стой" | "что" | "а" | "ох" | "ах" | "ух" | "хм" | "ну"
+            ))
+    {
+        return true;
+    }
+
     // 5. Короткий вопрос-переспрос из 1–3 слов («Ловушек?», «Создатель?», «А почему?», «Капитан?»),
     // одиночный возглас из 1 слова («Быстрый!»), либо короткая эмоциональная подводка-восклицание («Какая мерзость!», «Как, как, так и вышло!», «Вот засада!»),
     // если за ней сразу без паузы следует основная панчлайн-реплика того же персонажа
@@ -496,7 +515,7 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         if word_count <= 3 && raw_trimmed.ends_with('?') && gap_next < 2.0 {
             return true;
         }
-        if word_count == 1 && gap_next < 1.2 {
+        if word_count == 1 && gap_next < 2.2 {
             return true;
         }
         if word_count <= 2 && gap_next < 0.35 && !raw_trimmed.contains('!') {
@@ -583,13 +602,22 @@ fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64
             {
                 out.push(0.05);
             } else {
-                // Смешиваем оценку LLM (65%) со строгим локальным анализатором эмоций (35%) и применяем контрастную кривую,
-                // чтобы обычные спокойные фразы не раздувались до 0.85+, а оставались в 0.30–0.65, выделяя настоящие пики >= 0.88
-                let raw_blend = val.clamp(0.08, 0.96) * 0.65 + fallback[i] * 0.35;
-                let contrasted = if raw_blend < 0.72 {
-                    (raw_blend * 0.90).clamp(0.12, 0.68)
+                // Смешиваем оценку LLM со строгим локальным анализатором эмоций:
+                // если в реплике есть реальное восклицание (`!`) и детерминированный анализатор видит пик кульминации (`fallback[i] >= 0.80`),
+                // не позволяем заниженной оценке LLM на коротком выкрике («НАМ КОНЕЦ!») утянуть пик вниз
+                let has_exclam = chunk[i].text.contains('!');
+                let effective_llm = if has_exclam && fallback[i] >= 0.78 {
+                    val.clamp(0.08, 0.96).max(fallback[i] * 0.95)
                 } else {
-                    raw_blend.clamp(0.72, 0.96)
+                    val.clamp(0.08, 0.96)
+                };
+                let raw_blend = effective_llm * 0.62 + fallback[i] * 0.38;
+                let contrasted = if !has_exclam && !chunk[i].text.contains('?') {
+                    (raw_blend * 0.88).clamp(0.12, 0.56)
+                } else if raw_blend < 0.70 {
+                    (raw_blend * 0.92).clamp(0.12, 0.68)
+                } else {
+                    raw_blend.clamp(0.70, 0.96)
                 };
                 out.push(contrasted);
             }
@@ -1759,27 +1787,31 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
     // 1. Словник ЭКСТРЕМАЛЬНОГО эмоционального накала и кульминации
     let extreme_climax_keywords = [
         "ха-ха", "ахах", "haha", "что?!", "не может быть", "невозможно", "немедленно",
-        "закрой свой рот", "прекрати", "довольно!", "замолчи", "бей", "беги", "боже",
-        "шок", "ужас", "смерть", "крик", "огонь!", "уничтож", "кров", "взрыв", "лжешь",
-        "врёшь", "поклялся", "никогда!", "ненавижу", "убью", "умри", "дьявол", "монстр",
-        "кайдзю", "берегись", "держись", "черт", "чёрт", "проклят", "безум", "сдохн",
-        "разнес", "сотру", "в атаку", "штурм", "прорыв", "impossible", "destroy",
+        "закрой свой рот", "прекрати", "довольно", "замолчи", "бей", "беги", "боже",
+        "шок", "ужас", "смерт", "крик", "огонь", "уничтож", "кров", "взрыв", "лжешь",
+        "врёшь", "поклялся", "никогда!", "ненавижу", "убью", "умри", "умрем", "умрём",
+        "дьявол", "монстр", "кайдзю", "берегись", "держись", "черт", "чёрт", "проклят",
+        "безум", "сдохн", "разнес", "сотру", "в атаку", "штурм", "прорыв", "прорв",
+        "нам конец", "конец!", "спасены", "не умрем", "не умрём", "погибн", "подкреплен",
+        "главных сил", "существо икс", "костьми лягу", "настойчивость", "недооценивать",
+        "пощады", "в аду", "в бой", "стреляй", "тревога", "не подведи", "прикрой",
+        "испытания", "играючи", "impossible", "destroy",
     ];
 
     // 2. Словник умеренного сюжетного/тактического интереса (не должен сам по себе задирать оценку до 0.9!)
     let moderate_plot_keywords = [
-        "вперёд", "стоп", "быстрее", "постой", "подожди", "смотри", "победа", "атака",
+        "вперёд", "вперед", "стоп", "быстрее", "постой", "подожди", "смотри", "победа", "атака",
         "удар", "сила", "войн", "приказ", "враг", "преступлен", "спас", "биться", "секрет",
         "тайна", "правда", "прости", "обещаю", "люблю", "защищ", "опасно", "ловушк",
         "план", "победил", "проиграл", "герой", "магия", "способност", "сердц", "душа",
         "судьб", "выбор", "шанс", "капитан", "командир", "генерал", "лейтенант", "оружи",
-        "батальон", "штаб", "импери",
+        "батальон", "штаб", "импери", "сонар", "турбин", "линкор", "авианосец", "магов",
     ];
 
     let hook_starters = [
         "слушай", "знаешь", "смотри", "погоди", "неужели", "почему", "зачем",
         "как же", "на самом деле", "представь", "эй", "послушай", "внимание",
-        "осторожно", "клянусь",
+        "осторожно", "клянусь", "довольно", "отлично", "господи",
     ];
 
     // Шаг 1. Базовая оценка каждой отдельной реплики
@@ -1793,7 +1825,8 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
                 return 0.05;
             }
 
-            let txt = f.text.trim().to_lowercase();
+            let raw_trim = f.text.trim();
+            let txt = raw_trim.to_lowercase().replace('ё', "е");
             let word_count = txt.split_whitespace().count();
 
             if word_count == 0 {
@@ -1811,15 +1844,29 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
             // Спокойная базовая линия (без искусственного завышения)
             let mut score: f64 = 0.22;
 
-            // 1. Эмоциональная пунктуация — главный индикатор реального голосового накала в субтитрах
-            let has_exclam = txt.contains('!');
-            let has_double_punct = txt.contains("!!") || txt.contains("?!") || txt.contains("!?");
+            // 1. Эмоциональная пунктуация и КАПС — главные индикаторы реального голосового накала в субтитрах
+            let exclam_count = raw_trim.chars().filter(|&c| c == '!').count();
+            let has_exclam = exclam_count > 0;
+            let has_double_punct =
+                raw_trim.contains("!!") || raw_trim.contains("?!") || raw_trim.contains("!?");
+
+            // Проверяем, содержит ли реплика слова, написанные КАПСОМ (крик на надрыве, например «НАМ КОНЕЦ!»)
+            let has_all_caps_scream = raw_trim.split_whitespace().any(|w| {
+                let alphas: Vec<char> = w.chars().filter(|c| c.is_alphabetic()).collect();
+                alphas.len() >= 3 && alphas.iter().all(|c| c.is_uppercase())
+            });
 
             if has_exclam {
-                score += 0.12;
+                score += 0.15;
+                if exclam_count >= 2 {
+                    score += 0.10;
+                }
             }
             if has_double_punct {
-                score += 0.18;
+                score += 0.16;
+            }
+            if has_all_caps_scream && (has_exclam || raw_trim.contains('?')) {
+                score += 0.22;
             }
             if txt.contains('?') && !has_double_punct {
                 score += 0.04;
@@ -1849,8 +1896,8 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
                 }
             }
 
-            score += (extreme_hits as f64) * 0.15;
-            score += (mod_hits as f64) * 0.035;
+            score += (extreme_hits as f64) * 0.16;
+            score += (mod_hits as f64) * 0.04;
 
             // 3. Хук-маркеры и целостность границ фразы
             if is_sentence_start(fragments, idx) {
@@ -1880,7 +1927,7 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
             }
 
             // Спокойные повествовательные фразы без `!` и без экстремальных триггеров не могут превышать 0.55
-            if !has_exclam && extreme_hits == 0 && !has_double_punct {
+            if !has_exclam && extreme_hits == 0 && !has_double_punct && !has_all_caps_scream {
                 score = score.min(0.55);
             }
 
@@ -1910,6 +1957,43 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
         }
 
         i = sent_end + 1;
+    }
+
+    // Шаг 3. Кластерный импульс для сцен с серией восклицаний подряд (боевая кульминация / накал страстей):
+    // если вокруг восклицательной реплики в радиусе ±6.5с есть еще >= 2 восклицательных реплик,
+    // усиливаем эмоциональное ядро кластера, чтобы настоящие кульминации достигали 0.86–0.95
+    let snapshot_scores = raw_scores.clone();
+    for idx in 0..fragments.len() {
+        if !fragments[idx].text.contains('!') || snapshot_scores[idx] < 0.48 {
+            continue;
+        }
+        let mut exclam_neighbors = 0usize;
+        let mut max_neighbor_score = 0.0_f64;
+        let start_scan = idx.saturating_sub(3);
+        let end_scan = (idx + 3).min(fragments.len().saturating_sub(1));
+        for n_idx in start_scan..=end_scan {
+            if n_idx == idx {
+                continue;
+            }
+            let time_dist = if fragments[n_idx].start > fragments[idx].end {
+                fragments[n_idx].start - fragments[idx].end
+            } else if fragments[idx].start > fragments[n_idx].end {
+                fragments[idx].start - fragments[n_idx].end
+            } else {
+                0.0
+            };
+            if time_dist <= 6.5 && fragments[n_idx].text.contains('!') && snapshot_scores[n_idx] >= 0.45 {
+                exclam_neighbors += 1;
+                if snapshot_scores[n_idx] > max_neighbor_score {
+                    max_neighbor_score = snapshot_scores[n_idx];
+                }
+            }
+        }
+        if exclam_neighbors >= 2 {
+            let cluster_boost = (exclam_neighbors.min(4) as f64) * 0.055
+                + if max_neighbor_score >= 0.75 { 0.04 } else { 0.0 };
+            raw_scores[idx] = (snapshot_scores[idx] + cluster_boost).clamp(0.16, 0.95);
+        }
     }
 
     raw_scores

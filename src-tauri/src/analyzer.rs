@@ -363,12 +363,37 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         }
     }
 
-    let clean = clean
+    let mut clean = clean
         .trim()
         .trim_matches(['"', '\'', '`', ' '])
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
+
+    // Если модель поставила в начало выдуманный КАПС-заголовок через двоеточие
+    // (например «OASIAN MARITIME HOPES: A bustling harbor scene in OASIAN MARITIME HOPES, featuring...»),
+    // вырезаем этот заголовок и его повтор внутри предложения
+    if let Some(colon_idx) = clean.find(':') {
+        let prefix = clean[..colon_idx].trim();
+        let prefix_alphas: Vec<char> = prefix.chars().filter(|c| c.is_alphabetic()).collect();
+        if !prefix_alphas.is_empty()
+            && prefix.len() <= 42
+            && prefix_alphas.iter().all(|c| c.is_uppercase())
+            && !matches!(
+                prefix,
+                "PIT" | "MAN" | "WOMAN" | "GIRL" | "BOY" | "SOLDIER" | "VOICE" | "TITLE" | "TEXT"
+            )
+        {
+            let mut rest = clean[colon_idx + 1..].trim().to_string();
+            let in_pat_comma = format!(" in {},", prefix);
+            let in_pat_plain = format!(" in {}", prefix);
+            rest = rest.replace(&in_pat_comma, ",");
+            rest = rest.replace(&in_pat_plain, "");
+            rest = rest.replace(prefix, "").split_whitespace().collect::<Vec<_>>().join(" ");
+            clean = rest;
+        }
+    }
+
     let lower = clean.to_lowercase();
     if clean.len() < 8 {
         return None;
@@ -377,7 +402,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
     // Отсекаем капслок-галлюцинации и псевдо-субтитры вроде «DADDISH THIEF" PIT: "UNDERMANDED GENRES»
     let alpha_total = clean.chars().filter(|c| c.is_alphabetic()).count();
     let upper_total = clean.chars().filter(|c| c.is_uppercase()).count();
-    if alpha_total < 6 || (upper_total * 100 / alpha_total.max(1)) > 40 {
+    if alpha_total < 6 || (upper_total * 100 / alpha_total.max(1)) > 35 {
         return None;
     }
     if clean.contains('"')

@@ -339,13 +339,26 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("тефон дегуршав", "фон Дегуршаф"),
         ("фонди гуршав", "фон Дегуршаф"),
         ("фонди грушав", "фон Дегуршаф"),
+        ("фонди куршав", "фон Дегуршаф"),
+        ("фон дегрушав", "фон Дегуршаф"),
         ("фандегур шап", "фон Дегуршаф"),
         ("дегушав", "Дегуршаф"),
+        ("ола уберст летит от фон дегрушав", "алло, оберст-лейтенант фон Дегуршаф"),
+        ("обе с лейтенантом фонды гюльшев", "оберст-лейтенант фон Дегуршаф"),
+        ("опер с лейтенанта дегуршав", "оберст-лейтенанта Дегуршаф"),
+        ("перс лейтенант фонди куршав", "оберст-лейтенант фон Дегуршаф"),
         ("господи ноберст", "господин оберст"),
         ("госпожаобес лейтенант", "госпожа обер-лейтенант"),
         ("убер с лейтенанфан югер", "оберст-лейтенант фон Угар"),
         ("оберс лейтенант фун югер", "оберст-лейтенант фон Угар"),
         ("образь лейтенант югерь", "оберст-лейтенант Угар"),
+        ("оборский лейтенант", "оберст-лейтенант"),
+        ("оборот лейтенант", "оберст-лейтенант"),
+        ("оберзлятенант", "оберст-лейтенант"),
+        ("обе с лейтенант", "оберст-лейтенант"),
+        ("мобес летинад", "оберст-лейтенант"),
+        ("в брестлитинент", "оберст-лейтенант"),
+        ("брестлитинент", "оберст-лейтенант"),
         ("выброс лейтенант", "оберст-лейтенант"),
         ("бресс лейтенант", "оберст-лейтенант"),
         ("он берст лейтенант", "оберст-лейтенант"),
@@ -369,6 +382,25 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("рынского дьявола", "Рейнского дьявола"),
         ("рынский дьявол", "Рейнский дьявол"),
         ("гаинский дьевол", "Рейнский дьявол"),
+        ("доволен существують", "довольно, Существо Икс"),
+        ("я все твои три года испытания играю, чьи пройду", "я все твои невзгоды и испытания играючи пройду"),
+        ("три года испытания играю, чьи пройду", "невзгоды и испытания играючи пройду"),
+        ("три года испытания играючи пройду", "невзгоды и испытания играючи пройду"),
+        ("играю, чьи пройду", "играючи пройду"),
+        ("недооценивать на стойчивость", "недооценивать настойчивость"),
+        ("на стойчивость современного", "настойчивость современного"),
+        ("я кость ими лягу, но устроя себе", "я костьми лягу, но устрою себе"),
+        ("кость ими лягу", "костьми лягу"),
+        ("проще парю на репы", "проще пареной репы"),
+        ("на буганадесе, а сам не плашать", "на Бога надейся, а сам не плошай"),
+        ("на буганадесе", "на Бога надейся"),
+        ("сам не плашать", "сам не плошай"),
+        ("сам не плашай", "сам не плошай"),
+        ("есть сигнал на сценарии", "есть сигнал на сонаре"),
+        ("зуб корабельных турбин", "звук корабельных турбин"),
+        ("обеоносятся и линка", "авианосец и линкор"),
+        ("авиастец и линкера", "авианосец и линкор"),
+        ("приближение магов засеклин", "приближение магов засекли"),
         ("поохвально", "похвально"),
         ("какое тончанное предложение", "какое утончённое предложение"),
         ("я полевая командир", "я полевой командир"),
@@ -695,13 +727,30 @@ fn is_bound_russian_word_tail(w_prev_lower: &str, w_next_alpha_lower: &str) -> b
         return false;
     }
 
-    // Особый случай: предлог/первая буква перед разорванным словом («в|ойдет», «л|овочку», «п|унктуальность», «ф|анатом»)
+    // Особый случай: предлог/приставка или первая буква перед разорванным словом («в|ойдет», «л|овочку», «п|унктуальность», «ф|анатом», «на|стойчивость»)
     if (w_prev_lower == "в" && w_next_alpha_lower == "ойдет")
         || (w_prev_lower == "л" && w_next_alpha_lower == "овочку")
         || (w_prev_lower == "п" && w_next_alpha_lower.starts_with("унктуальн"))
         || (w_prev_lower == "ф" && w_next_alpha_lower.starts_with("анатом"))
         || (w_prev_lower == "к" && w_next_alpha_lower == "уш")
         || (w_prev_lower == "м" && w_next_alpha_lower == "ена")
+        || (w_prev_lower == "на"
+            && (w_next_alpha_lower.starts_with("стойчив")
+                || w_next_alpha_lower == "верняка"
+                || w_next_alpha_lower == "сквозь"
+                || w_next_alpha_lower == "пролет"))
+        || (w_prev_lower == "не"
+            && (w_next_alpha_lower.starts_with("дооцен")
+                || w_next_alpha_lower == "ужели"
+                || w_next_alpha_lower == "смотря"
+                || w_next_alpha_lower.starts_with("достаточ")
+                || w_next_alpha_lower.starts_with("возмож")
+                || w_next_alpha_lower.starts_with("вероят")))
+        || (w_prev_lower == "по"
+            && (w_next_alpha_lower == "скольку"
+                || w_next_alpha_lower == "просту"
+                || w_next_alpha_lower == "всюду"))
+        || (w_prev_lower == "до" && w_next_alpha_lower.starts_with("статоч"))
     {
         return true;
     }
@@ -871,26 +920,78 @@ fn repair_split_words_and_orphans(
                         let remainder = curr_text[w_next_raw.len()..].trim_start().to_string();
                         let combined_chars = prev.text.chars().count() + curr_text.chars().count();
 
-                        // Если после склейки слова вторая строка пустая или короткая (общая длина <= 85 символов) —
+                        // Если после склейки слова вторая строка пустая или короткая (общая длина <= 95 символов) —
                         // объединяем оба блока в одну цельную фразу!
-                        if remainder.is_empty() || combined_chars <= 85 {
+                        if remainder.is_empty() || combined_chars <= 95 {
                             prev.text.push_str(&w_next_raw);
                             if !remainder.is_empty() {
                                 prev.text.push(' ');
                                 prev.text.push_str(&remainder);
                             }
+                            prev.text = fix_common_whisper_glued_words(&prev.text);
                             prev.end = prev.end.max(frag.end);
                             continue;
                         } else {
                             // Иначе приклеиваем оторванный хвост слова к `prev`, а остаток фразы оставляем в `curr`
                             prev.text.push_str(&w_next_raw);
+                            prev.text = fix_common_whisper_glued_words(&prev.text);
                             curr_text = remainder;
                         }
                     }
                 }
             }
 
-            // 3. Склеиваем короткие оторванные хвосты предложений (1–3 слова, до 24 символов, например «ты так.», «бою.», «нужна сила.», «вооружие.», «бойцом.»),
+            // 2.5. Если `prev` оборвался без финальной пунктуации (например «Довольно, Существо Икс! Я все твои невзгоды и испытания»),
+            // а `curr_text` начинается со строчного завершения этой фразы (1–4 слова со знаком `.`, `!`, `?`, `…`), после которого в том же `curr_text`
+            // с заглавной буквы начинается уже следующее предложение («играючи пройду! Нечего было недооценивать...») —
+            // переносим этот короткий хвост в конец `prev`, чтобы оба предложения стали грамматически полными!
+            if !word_stitched
+                && gap <= 0.35
+                && !crate::text_analyzer::has_terminal_punctuation(&prev.text)
+                && curr_text.chars().next().map_or(false, |c| c.is_lowercase())
+            {
+                let mut split_byte_idx: Option<usize> = None;
+                let char_indices: Vec<(usize, char)> = curr_text.char_indices().collect();
+                for idx in 0..char_indices.len() {
+                    let (byte_pos, ch) = char_indices[idx];
+                    if matches!(ch, '!' | '?' | '.' | '…') {
+                        // Пропускаем повторяющиеся знаки («...», «?!»)
+                        let mut end_idx = idx;
+                        while end_idx + 1 < char_indices.len()
+                            && matches!(char_indices[end_idx + 1].1, '!' | '?' | '.' | '…')
+                        {
+                            end_idx += 1;
+                        }
+                        let after_punct_byte =
+                            char_indices[end_idx].0 + char_indices[end_idx].1.len_utf8();
+                        let rest_slice = curr_text[after_punct_byte..].trim_start();
+                        if rest_slice.chars().next().map_or(false, |c| c.is_uppercase()) {
+                            let prefix_slice = curr_text[..after_punct_byte].trim();
+                            let prefix_words = prefix_slice.split_whitespace().count();
+                            let prefix_chars = prefix_slice.chars().count();
+                            if (1..=4).contains(&prefix_words) && prefix_chars <= 36 {
+                                split_byte_idx = Some(after_punct_byte);
+                            }
+                        }
+                        let _ = byte_pos;
+                        break;
+                    }
+                }
+
+                if let Some(split_at) = split_byte_idx {
+                    let prefix_tail = curr_text[..split_at].trim();
+                    let remainder = curr_text[split_at..].trim_start().to_string();
+                    if !prefix_tail.is_empty() && !remainder.is_empty() {
+                        prev.text.push(' ');
+                        prev.text.push_str(prefix_tail);
+                        prev.text = fix_common_whisper_glued_words(&prev.text);
+                        curr_text = fix_common_whisper_glued_words(&remainder);
+                        repaired_count += 1;
+                    }
+                }
+            }
+
+            // 3. Склеиваем короткие оторванные хвосты предложений (1–3 слова, до 28 символов, например «ты так.», «бою.», «нужна сила.», «вооружие.», «бойцом.»),
             // которые whisper.cpp перенес в конец сегмента при срабатывании лимита длины строки `-ml`.
             // ВАЖНО: Если короткий кусок НЕ имеет финальной точки/!/? и начинается с подчинительного союза («что для меня», «если я», «когда он»),
             // то это НЕ хвост предыдущей фразы, а оторванное начало следующей клаузы — его нельзя оставлять висящим на конце `prev`!
@@ -923,6 +1024,7 @@ fn repair_split_words_and_orphans(
                 {
                     prev.text.push(' ');
                     prev.text.push_str(&curr_text);
+                    prev.text = fix_common_whisper_glued_words(&prev.text);
                     prev.end = prev.end.max(frag.end);
                     repaired_count += 1;
                     continue;
@@ -930,12 +1032,13 @@ fn repair_split_words_and_orphans(
 
                 let is_short_orphan_tail = !starts_dialog
                     && (curr_has_punct || (!starts_subordinate && curr_words == 1))
-                    && ((starts_lower && curr_words <= 3 && curr_chars <= 24 && curr_dur <= 1.6)
+                    && ((starts_lower && curr_words <= 3 && curr_chars <= 28 && curr_dur <= 2.2)
                         || (curr_words == 1 && curr_chars <= 14 && curr_dur <= 1.0 && gap <= 0.08));
 
                 if is_short_orphan_tail && (prev.text.chars().count() + 1 + curr_chars) <= 105 {
                     prev.text.push(' ');
                     prev.text.push_str(&curr_text);
+                    prev.text = fix_common_whisper_glued_words(&prev.text);
                     prev.end = prev.end.max(frag.end);
                     repaired_count += 1;
                     continue;
@@ -946,7 +1049,7 @@ fn repair_split_words_and_orphans(
         out.push(crate::text_analyzer::SubtitleFragment {
             start: frag.start,
             end: frag.end,
-            text: curr_text,
+            text: fix_common_whisper_glued_words(&curr_text),
         });
     }
 
@@ -1019,15 +1122,18 @@ pub fn tighten_subtitle_timestamps(
         } else {
             false
         };
-        let prev_sentence_closed = if i > 0 {
-            crate::text_analyzer::has_terminal_punctuation(&fragments[i - 1].text)
+        let prev_continues_into_curr = if i > 0 && (orig_start - raw_bounds[i - 1].1).abs() <= 0.25 {
+            !crate::text_analyzer::has_terminal_punctuation(&fragments[i - 1].text)
+                || crate::text_analyzer::starts_with_lowercase_continuation(&fragments[i].text)
         } else {
-            true
+            false
         };
 
-        // Если конец реплики вплотную упирается в начало следующей реплики (особенно когда предложение продолжается в `i + 1`
-        // или предыдущее предложение `i - 1` было завершено), значит тишина была ПЕРЕД этой репликой — сдвигаем `start` вперед к `orig_end - spoken_dur`!
-        if touches_next_cue && (continues_into_next || prev_sentence_closed) {
+        // Если конец реплики вплотную упирается в начало следующей реплики И текущая реплика НЕ является продолжением
+        // незакрытого предложения из `i - 1` (`!prev_continues_into_curr`), значит тишина была ПЕРЕД этой репликой —
+        // сдвигаем `start` вперед к `orig_end - spoken_dur`.
+        // Если же `prev_continues_into_curr == true`, никогда не отрываем `start` от конца предыдущей реплики!
+        if touches_next_cue && !prev_continues_into_curr {
             let new_end = orig_end;
             let new_start = (new_end - spoken_dur)
                 .max(orig_start)
@@ -1035,12 +1141,17 @@ pub fn tighten_subtitle_timestamps(
                 .min(new_end - 0.60);
             fragments[i].start = new_start;
             fragments[i].end = new_end;
-        } else {
+        } else if !continues_into_next {
             let new_start = orig_start.max(prev_new_end + 0.05);
             let target_end = new_start + spoken_dur;
             let new_end = target_end.min(orig_end).max(new_start + 0.60);
             fragments[i].start = new_start;
             fragments[i].end = new_end;
+        } else {
+            // Фраза продолжается и из `i - 1`, и в `i + 1` (внутреннее звено длинной речи) —
+            // сохраняем непрерывность стыков с обеих сторон
+            fragments[i].start = orig_start.max(prev_new_end + 0.02);
+            fragments[i].end = orig_end;
         }
     }
 
