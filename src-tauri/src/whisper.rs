@@ -267,11 +267,23 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         return true;
     }
 
-    // Фонетические галлюцинации на вокале опенинга/эндинга («Повторяй на Сент-Чьи», «Повторяй на Вище», «Возьми несколько зажиманий!»)
+    // Фонетические галлюцинации на вокале опенинга/эндинга («Повторяй на Сент-Чьи», «Повторяй на Вище», «Возьми несколько зажиманий!», «Хайбовумина уйдет!», «Сейгио, удару, ГОГОРО!»)
     if lower.starts_with("повторяй на сент")
         || lower.starts_with("повторяй на вищ")
         || lower.contains("возьми несколько зажиманий")
         || lower.contains("сисло, то прайд")
+        || lower.contains("счистое то прайд")
+        || lower.contains("но кюс, то кюп")
+        || lower.contains("круйдаши те и ино")
+        || lower.contains("сейгио, удару")
+        || lower.contains("гогоро")
+        || lower.contains("хайбовумина")
+        || lower.contains("сильвестка не азера")
+        || lower.contains("и гибла висова")
+        || lower.contains("оба шоку лемли")
+        || lower.contains("гиды, аки, мусельцы")
+        || lower.contains("странасут, холдов")
+        || lower.contains("вновь в течение тысячи")
         || lower.contains("по, вис, о, ю, тю")
     {
         return true;
@@ -312,25 +324,44 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("всёеще", "всё ещё"),
         ("ничегоне", "ничего не"),
         ("никогдане", "никогда не"),
+        ("доздравствует", "да здравствует"),
+        ("провоздушное", "про воздушное"),
+        ("крационально", "рационально"),
+        ("напередовой", "на передовой"),
+        ("выброс лейтенант фандегур шап", "оберст-лейтенант фон Дегуршаф"),
         ("оберез лейтенант сфотографируй", "обер-лейтенант фон Дегуршаф"),
         ("оберез лейтенант фон дегуршав", "обер-лейтенант фон Дегуршаф"),
         ("оберс лейтенант фонди гуршав", "обер-лейтенант фон Дегуршаф"),
+        ("оберст лейтенант фонди гуршав", "оберст-лейтенант фон Дегуршаф"),
         ("уберс лейтенант фонди гуршав", "обер-лейтенант фон Дегуршаф"),
         ("оберстлетенанта фонди грушав", "обер-лейтенанта фон Дегуршаф"),
+        ("обер с лейтенант фонди гуршав", "оберст-лейтенант фон Дегуршаф"),
         ("тефон дегуршав", "фон Дегуршаф"),
         ("фонди гуршав", "фон Дегуршаф"),
         ("фонди грушав", "фон Дегуршаф"),
+        ("фандегур шап", "фон Дегуршаф"),
         ("дегушав", "Дегуршаф"),
+        ("господи ноберст", "господин оберст"),
         ("госпожаобес лейтенант", "госпожа обер-лейтенант"),
         ("убер с лейтенанфан югер", "оберст-лейтенант фон Угар"),
         ("оберс лейтенант фун югер", "оберст-лейтенант фон Угар"),
+        ("образь лейтенант югерь", "оберст-лейтенант Угар"),
+        ("выброс лейтенант", "оберст-лейтенант"),
+        ("бресс лейтенант", "оберст-лейтенант"),
+        ("он берст лейтенант", "оберст-лейтенант"),
+        ("оберс лейтенант", "оберст-лейтенант"),
+        ("обер с лейтенант", "оберст-лейтенант"),
         ("оберез лейтенант", "обер-лейтенант"),
-        ("оберс лейтенант", "обер-лейтенант"),
-        ("обер с лейтенант", "обер-лейтенант"),
         ("уберс лейтенант", "обер-лейтенант"),
         ("убер, лейтенант", "обер-лейтенант"),
         ("увес, лейтенант", "обер-лейтенант"),
         ("образ, лейтенант", "обер-лейтенант"),
+        ("оберст, лейтенант", "оберст-лейтенант"),
+        ("лейтенан серебрякова", "лейтенант Серебрякова"),
+        ("генералу рудер сдорф", "генерал Рудерсдорф"),
+        ("генерал рудер сдоров", "генерал Рудерсдорф"),
+        ("генерал родерсторф", "генерал Рудерсдорф"),
+        ("тот амберис лерген", "сам оберст Лерген"),
         ("рейтинан сью, довольна", "лейтенант Сью, довольно"),
         ("рейтинан сью", "лейтенант Сью"),
         ("прошеские колдуне", "вражеские колдуны"),
@@ -349,6 +380,13 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("квот сюда", "вот сюда"),
         ("военная докприна", "военная доктрина"),
         ("запушечное мясо", "за пушечное мясо"),
+        ("уванительные", "увольнительные"),
+        ("выжито лимон", "выжатый лимон"),
+        ("в честилеще", "в чистилище"),
+        ("траванные процессией", "траурные процессии"),
+        ("травурную процессию", "траурную процессию"),
+        ("траворный наряд", "траурный наряд"),
+        ("райх", "Рейх"),
     ];
 
     let mut result = text.to_string();
@@ -383,25 +421,39 @@ pub fn fix_whisper_stutters(text: &str) -> String {
 
     let mut changed = false;
 
-    // 1. Внутрисловные дефисные заикания («П-поверьте...» -> «Поверьте...», «Н-н-н-н-н-н,» -> удаляем или схлопываем)
+    // 1. Внутрисловные дефисные заикания («П-поверьте...» -> «Поверьте...», «Э-э-э-э-э-э-э!» -> «Э-э-э!», «Н-н-н-н-н-н,» -> удаляем или схлопываем)
     let mut k = 0;
     while k < words.len() {
         let w = words[k].clone();
         let lead_punct: String = w.chars().take_while(|c| matches!(c, '-' | '—' | '«' | '"' | '(')).collect();
         let body = &w[lead_punct.len()..];
+
         if body.contains('-') {
             let parts: Vec<&str> = body.split('-').collect();
             if parts.len() >= 2 {
                 let first_alpha: String = parts[0].chars().filter(|c| c.is_alphabetic()).collect();
-                // Многократное заикание одной буквы через дефис: «Н-н-н-н-н-н,»
+                // Многократное заикание одной буквы через дефис: «Н-н-н-н-н-н,» или «Э-э-э-э-э-э-э-э-э-э-э!»
                 let all_single_same = first_alpha.chars().count() == 1
                     && parts.iter().all(|p| {
                         let pa: String = p.chars().filter(|c| c.is_alphabetic()).collect();
                         pa.chars().count() == 1 && pa.to_lowercase() == first_alpha.to_lowercase()
                     });
+
                 if all_single_same && parts.len() >= 3 {
+                    let is_vowel = first_alpha
+                        .chars()
+                        .next()
+                        .map(|c| matches!(c.to_lowercase().next().unwrap_or(' '), 'а' | 'е' | 'ё' | 'и' | 'о' | 'у' | 'ы' | 'э' | 'ю' | 'я'))
+                        .unwrap_or(false);
+                    let tail_punct: String = body.chars().rev().take_while(|c| !c.is_alphabetic()).collect::<String>().chars().rev().collect();
+
                     if k + 1 < words.len() && first_alpha.to_lowercase() == "н" && words[k + 1].to_lowercase().starts_with("что") {
                         words[k] = format!("{}На", lead_punct);
+                    } else if is_vowel && words.len() == 1 {
+                        let low_v = first_alpha.to_lowercase();
+                        let cap_v = first_alpha.to_uppercase();
+                        let end_p = if tail_punct.is_empty() { "!" } else { tail_punct.as_str() };
+                        words[k] = format!("{}{}-{}-{}{}", lead_punct, cap_v, low_v, low_v, end_p);
                     } else {
                         words.remove(k);
                         changed = true;
@@ -1026,11 +1078,17 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
             continue;
         }
 
-        // Если видео русскоязычное, а строка состоит только из латиницы без единой русской буквы — это песня OP/ED или английский шум Whisper
+        // Если видео русскоязычное, а строка состоит из латиницы или содержит английские слова вокала песни OP/ED («Сильвестка не азера, Your move!») — отбрасываем
         if is_predominantly_russian {
             let has_cyr = cleaned_text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
-            let has_lat = cleaned_text.chars().any(|c| c.is_ascii_alphabetic());
-            if !has_cyr && has_lat {
+            let lat_count = cleaned_text.chars().filter(|c| c.is_ascii_alphabetic()).count();
+            if !has_cyr && lat_count > 0 {
+                continue;
+            }
+            let has_eng_word = cleaned_text
+                .split(|c: char| !c.is_ascii_alphabetic())
+                .any(|w| w.len() >= 3 && w.chars().any(|ch| matches!(ch.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y')));
+            if has_eng_word && lat_count >= 4 {
                 continue;
             }
         }
@@ -1108,15 +1166,13 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
     let mut total_tightened_cues = 0usize;
 
     // Многопроходная конвергенция (до достижения полной неподвижной точки):
-    // сначала склеиваем разорванные полуслова/хвосты и убираем многострочное эхо, затем подтягиваем таймкоды,
-    // чтобы повторный вызов `sanitize_srt_file` на кэшированном SRT всегда давал 0 изменений!
+    // сначала склеиваем разорванные полуслова/хвосты (пока их таймкоды еще вплотную стыкуются) и убираем многострочное эхо,
+    // а затем подтягиваем растянутые таймкоды уже цельных предложений!
     for _pass in 0..4 {
         let prev_len = clean_fragments.len();
-        let (tightened_frags, t_cnt1) = tighten_subtitle_timestamps(clean_fragments);
-        let (repaired_frags, s_cnt) = repair_split_words_and_orphans(tightened_frags);
+        let (repaired_frags, s_cnt) = repair_split_words_and_orphans(clean_fragments);
         let dedup_frags = deduplicate_multiline_loops(repaired_frags);
-        let (final_frags, t_cnt2) = tighten_subtitle_timestamps(dedup_frags);
-        let t_cnt = t_cnt1 + t_cnt2;
+        let (final_frags, t_cnt) = tighten_subtitle_timestamps(dedup_frags);
         total_tightened_cues += t_cnt;
         total_stitched_words += s_cnt;
         let len_changed = final_frags.len() != prev_len;

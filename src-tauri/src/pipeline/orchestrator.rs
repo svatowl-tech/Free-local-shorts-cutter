@@ -855,6 +855,15 @@ fn build_complete_phrase_window(
                     b_quality -= 0.22;
                 }
 
+                // 3б. Если сразу после `end_idx` (пауза <= 0.40с) следует завершающий вывод мысли («И, патологически, нужна вера.», «Поэтому...») —
+                // штрафуем раннюю остановку, чтобы клип захватил финальную точку мысли, если позволяет длительность
+                if end_idx + 1 < fragments.len()
+                    && pause_after <= 0.40
+                    && crate::text_analyzer::starts_with_discourse_continuation(&fragments[end_idx + 1].text)
+                {
+                    b_quality -= 0.55;
+                }
+
                 // 4. Штраф за склейку двух разных сцен через длинную паузу >= 2.2с
                 if crossed_scene_transition {
                     b_quality -= 0.65;

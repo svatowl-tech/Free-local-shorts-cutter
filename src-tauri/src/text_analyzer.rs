@@ -195,7 +195,10 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
         .to_lowercase();
 
     let continuation_prefixes = [
+        "поэтому-то",
+        "поэтому,",
         "поэтому ",
+        "потому-то",
         "потому что ",
         "так что ",
         "ведь ",
@@ -510,6 +513,15 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
                 || clean.starts_with("как так")
                 || clean.starts_with("вот засад")
                 || clean.starts_with("да вы "))
+        {
+            return true;
+        }
+        // Уступительная или оправдательная подводка («Возвольте, но я всего лишь командир одного крыла.», «Позвольте, но я всего лишь...»),
+        // за которой сразу без паузы (< 0.40с) следует продолжение аргумента («Пусть я и прошла курс...»)
+        if gap_next <= 0.40
+            && (clean.starts_with("позвольте, но ")
+                || clean.starts_with("возвольте, но ")
+                || clean.contains("всего лишь "))
         {
             return true;
         }
@@ -1626,16 +1638,60 @@ pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -
         .count();
     let is_cyrillic_track = !fragments.is_empty() && cyrillic_lines * 10 >= fragments.len() * 4;
 
-    // 1. В русскоязычном видео строки, состоящие из латинских слов без кириллицы («We will like to start!», «you'll be speedy. Yes!») — это вокал песни/опенинга
+    // 1. В русскоязычном видео строки, содержащие латинские слова («We will like to start!», «Сильвестка не азера, Your move!») — это вокал песни/опенинга
     if is_cyrillic_track {
         let has_cyrillic = text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
         let latin_letters = text.chars().filter(|c| c.is_ascii_alphabetic()).count();
         if !has_cyrillic && latin_letters >= 3 {
             return true;
         }
+        // Смешанная кириллица + английские слова в одной реплике (например «Сильвестка не азера, Your move!»)
+        let has_english_word = text
+            .split(|c: char| !c.is_ascii_alphabetic())
+            .any(|w| w.len() >= 3 && w.chars().any(|ch| matches!(ch.to_ascii_lowercase(), 'a' | 'e' | 'i' | 'o' | 'u' | 'y')));
+        if has_english_word && latin_letters >= 4 {
+            return true;
+        }
     }
 
-    // 2. Проверяем, не находится ли реплика внутри 30-секундного вокального блока опенинга/эндинга,
+    // 2. Детектор изолированного вокального «острова» опенинга/эндинга (длительностью до 95 секунд),
+    // который с обеих сторон ограничен длинными музыкальными паузами (>= 14с, где были вырезаны теги [Звучит музыка] и строки с ♪)
+    let mut cluster_start = idx;
+    while cluster_start > 0 && (fragments[cluster_start].start - fragments[cluster_start - 1].end) < 13.5 {
+        cluster_start -= 1;
+        if idx - cluster_start > 15 {
+            break;
+        }
+    }
+    let mut cluster_end = idx;
+    while cluster_end + 1 < fragments.len() && (fragments[cluster_end + 1].start - fragments[cluster_end].end) < 13.5 {
+        cluster_end += 1;
+        if cluster_end - idx > 15 {
+            break;
+        }
+    }
+    let gap_before_cluster = if cluster_start > 0 {
+        (fragments[cluster_start].start - fragments[cluster_start - 1].end).max(0.0)
+    } else {
+        0.0
+    };
+    let gap_after_cluster = if cluster_end + 1 < fragments.len() {
+        (fragments[cluster_end + 1].start - fragments[cluster_end].end).max(0.0)
+    } else {
+        20.0
+    };
+    let cluster_span = (fragments[cluster_end].end - fragments[cluster_start].start).max(0.0);
+    let cluster_count = cluster_end - cluster_start + 1;
+    if gap_before_cluster >= 14.0
+        && gap_after_cluster >= 14.0
+        && cluster_span <= 95.0
+        && cluster_count <= 14
+        && (f.start <= 260.0 || f.start >= 1200.0)
+    {
+        return true;
+    }
+
+    // 3. Проверяем, не находится ли реплика внутри 30-секундного вокального блока опенинга/эндинга,
     // который следует сразу после длинной музыкальной паузы (>= 14с, где были удалены теги [музыка]),
     // и где Whisper нарезает вокал ровно по целочисленным секундам (3.000с, 4.000с, 5.000с)
     let is_exact_int_dur = |frag: &SubtitleFragment| -> bool {
@@ -1657,8 +1713,7 @@ pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -
         let has_latin_nearby = is_cyrillic_track
             && (win_start..=win_end).any(|k| {
                 let t = &fragments[k].text;
-                !t.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
-                    && t.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 3
+                t.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 3
             });
 
         if int_dur_neighbors >= 4 && (has_music_gap_nearby || has_latin_nearby) {
