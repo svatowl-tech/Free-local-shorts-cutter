@@ -285,11 +285,12 @@ pub async fn run_pipeline(
         stage: "Формирование цельных диалогов и хайлайтов (10–20 сек)...".to_string() 
     });
 
-    let target_dur = config.max_clip_duration_sec.min(video_duration).max(6.0);
-    // Вместо жесткой привязки к 15.0 секундам задаем гибкий коридор длительности (например, от 10 до 20 секунд при цели 15с),
-    // чтобы каждый ролик начинался ровно с начала первой фразы и заканчивался ровно после завершения последней фразы!
-    let min_dur = (target_dur - 5.0).max(5.0).min(video_duration);
-    let max_dur = (target_dur + 5.0).max(min_dur + 4.0).min(video_duration);
+    // `config.max_clip_duration_sec` задает реальный верхний потолок длительности ролика (например, 12с или 20с),
+    // а `min_dur` и `target_dur` масштабируются пропорционально, чтобы клипы не превышали выбранный пользователем лимит
+    // и не склеивали две разные сцены ради искусственного набора 15+ секунд.
+    let max_dur = config.max_clip_duration_sec.clamp(8.0, 60.0).min(video_duration);
+    let min_dur = (max_dur * 0.50).clamp(6.0, 10.0).min((max_dur - 2.0).max(4.0));
+    let target_dur = ((min_dur + max_dur) * 0.52).clamp(min_dur + 1.0, max_dur - 1.0);
     let (is_auto_clips, max_clips_limit) = match config.max_clips_count {
         Some(0) => (true, 60usize),
         Some(n) => (false, n.clamp(1, 100)),
@@ -734,7 +735,7 @@ fn build_complete_phrase_window(
     }
 
     // 1. Сдвигаем точку старта назад до истинного НАЧАЛА предложения / мысли
-    // (чтобы клип не начинался со слов «Поэтому...», «И в моих руках...» или с середины незаконченной фразы)
+    // (чтобы клип не начинался со слов «Поэтому...», «Я как следует им закупилась...», «Лёгкая остринка...» или с середины незаконченной фразы)
     let mut start_idx = anchor_idx;
     while start_idx > 0
         && !crate::text_analyzer::is_sentence_start(fragments, start_idx)
@@ -745,6 +746,8 @@ fn build_complete_phrase_window(
             || crate::text_analyzer::starts_with_lowercase_continuation(&fragments[start_idx].text)
         {
             4.5
+        } else if crate::text_analyzer::starts_with_discourse_continuation(&fragments[start_idx].text) {
+            3.6
         } else {
             1.8
         };
@@ -769,6 +772,8 @@ fn build_complete_phrase_window(
                     || crate::text_analyzer::starts_with_lowercase_continuation(&fragments[prompt_start].text)
                 {
                     4.5
+                } else if crate::text_analyzer::starts_with_discourse_continuation(&fragments[prompt_start].text) {
+                    3.6
                 } else {
                     1.8
                 };
@@ -797,6 +802,7 @@ fn build_complete_phrase_window(
 
         let mut best_choice: Option<(usize, f64, f64, bool, bool, f64)> = None; // (end_idx, c_start, c_end, is_clean_end, crossed_scene_transition, boundary_quality)
         let mut crossed_scene_transition = false;
+        let mut exclamations_seen = 0usize;
 
         for end_idx in s_idx..fragments.len() {
             if crate::whisper::is_whisper_hallucination(&fragments[end_idx].text) {
@@ -806,16 +812,22 @@ fn build_complete_phrase_window(
             if end_idx > s_idx {
                 let gap = (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0);
                 let prev_dur = fragments[end_idx - 1].end - pre_roll;
-                // Если мы еще на самом минимуме длительности (< 12.2с), допускаем драматичную паузу до 4.3с
-                // (чтобы не обрезать кульминацию после эмоционального возгласа, как в «Немедленно закрой свой рот... Какой бы ни была цена...»).
-                // Когда уже набрано >= 12.2с, закрываем сцену при паузе > 3.2с.
-                let max_bridge_gap = if prev_dur < 12.2 { 4.3 } else { 3.2 };
+                // Если мы еще на самом минимуме длительности (< min_dur + 1.8с), допускаем драматичную паузу до 4.2с
+                // (чтобы не обрезать кульминацию после эмоционального возгласа).
+                // Когда уже набрано достаточно секунд, закрываем сцену при паузе > 3.0с.
+                let max_bridge_gap = if prev_dur < min_dur + 1.8 { 4.2 } else { 3.0 };
                 if gap > max_bridge_gap && prev_dur >= min_dur * 0.9 {
                     break;
                 }
                 if gap >= 2.2 {
                     crossed_scene_transition = true;
                 }
+            }
+
+            let curr_txt = fragments[end_idx].text.trim();
+            let curr_is_exclam_or_q = curr_txt.contains('!') || curr_txt.contains('?');
+            if curr_is_exclam_or_q {
+                exclamations_seen += 1;
             }
 
             let mut post_roll = (fragments[end_idx].end + 0.24).min(video_duration);
@@ -827,8 +839,8 @@ fn build_complete_phrase_window(
             }
 
             let dur = post_roll - pre_roll;
-            // Допускаем аккуратное адаптивное расширение до +1.2с сверх max_dur для завершения красивого панчлайна/мысли
-            let max_ceiling = max_dur + 1.2;
+            // Допускаем минимальное расширение (+0.6с) сверх max_dur только для закрытия последнего слова фразы
+            let max_ceiling = max_dur + 0.6;
             if dur > max_ceiling {
                 break;
             }
@@ -836,7 +848,7 @@ fn build_complete_phrase_window(
             if dur >= min_dur {
                 let is_sent_end = crate::text_analyzer::is_sentence_end(fragments, end_idx);
                 let is_weak_end = crate::text_analyzer::is_weak_clip_ending(fragments, end_idx);
-                let has_punct = crate::text_analyzer::has_terminal_punctuation(&fragments[end_idx].text);
+                let has_punct = crate::text_analyzer::has_terminal_punctuation(curr_txt);
                 let pause_after = if end_idx + 1 < fragments.len() {
                     (fragments[end_idx + 1].start - fragments[end_idx].end).max(0.0)
                 } else {
@@ -855,10 +867,10 @@ fn build_complete_phrase_window(
                     b_quality += 0.45;
                 }
 
-                // 2. Сильный штраф за обрыв на слабой реплике («- Да уж.», «- Ясно.», «Какая мерзость!», «Значит, ты и есть та самая дочка...»),
-                // чтобы алгоритм продолжал окно еще на 2–3 секунды и захватывал финальный панчлайн собеседника!
+                // 2. Сильный штраф за обрыв на слабой реплике («- Да уж.», «- Ясно.», «Генерал Ромель.», «Сначала они...»),
+                // чтобы алгоритм выбирал настоящий панчлайн, а не зачин следующей сцены!
                 if is_weak_end {
-                    b_quality -= 1.45;
+                    b_quality -= 1.55;
                 }
 
                 // 3. Бонус за естественную паузу после финальной реплики (признак завершения микро-диалога),
@@ -869,12 +881,27 @@ fn build_complete_phrase_window(
                     b_quality -= 0.22;
                 }
 
-                // 3б. Если сразу после `end_idx` (пауза <= 0.40с) следует завершающий вывод мысли («И, патологически, нужна вера.», «Поэтому...») —
+                // 3б. Если сразу после `end_idx` (пауза <= 0.55с) следует завершающий вывод мысли («И, патологически, нужна вера.», «Поэтому...», «А ещё...») —
                 // штрафуем раннюю остановку, чтобы клип захватил финальную точку мысли, если позволяет длительность
                 if end_idx + 1 < fragments.len()
-                    && pause_after <= 0.40
+                    && pause_after <= 0.55
                     && crate::text_analyzer::starts_with_discourse_continuation(&fragments[end_idx + 1].text)
                 {
+                    b_quality -= 0.65;
+                }
+
+                // 3в. Защита от захвата начала следующей спокойной сцены после эмоциональной кульминации:
+                // Если текущая фраза — яркий эмоциональный панчлайн с `!` или `?` (например «Готовимся к ближнему бою!» или «Как же мне из этого выпутаться?»),
+                // а следующая реплика уже переходит к спокойному повествованию без `!`/`?` (или приветствию в новой сцене) — поощряем закрытие клипа на панчлайне!
+                if is_sent_end && !is_weak_end && curr_is_exclam_or_q {
+                    let next_is_calm = end_idx + 1 < fragments.len()
+                        && !fragments[end_idx + 1].text.contains('!')
+                        && !fragments[end_idx + 1].text.contains('?');
+                    if next_is_calm || pause_after >= 0.35 {
+                        b_quality += 0.52;
+                    }
+                } else if !curr_is_exclam_or_q && exclamations_seen >= 2 && dur >= min_dur + 1.5 {
+                    // Если позади уже была бурная кульминация (>= 2 восклицаний), а текущая реплика — спокойная фраза из следующего эпизода («Сначала они...», «Генерал Ромель.»)
                     b_quality -= 0.55;
                 }
 
@@ -889,13 +916,14 @@ fn build_complete_phrase_window(
                     b_quality += 0.25;
                 }
 
-                // 6. Бонус «золотой середины» (12.5с..=17.8с вокруг 15с), чтобы алгоритм не обрывал клип
-                // на первой же короткой фразе в 10.0–10.6с, если следом органично помещается следующее предложение!
-                if dur >= 12.5 && dur <= 17.8 {
-                    b_quality += 0.42;
+                // 6. Бонус «золотой середины» внутри выбранного пользователем диапазона [min_dur .. max_dur]
+                let sweet_min = (min_dur + 1.2).min(target_dur);
+                let sweet_max = (max_dur - 1.0).max(target_dur);
+                if dur >= sweet_min && dur <= sweet_max {
+                    b_quality += 0.38;
                 }
 
-                // Четкое центрирование вокруг целевой длительности target_dur (15с: типично 13с–17с, максимум ~20с)
+                // Четкое центрирование вокруг целевой длительности target_dur
                 let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.70;
                 b_quality -= dist_penalty;
 

@@ -394,6 +394,25 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         }
     }
 
+    // Если модель после валидного описания кадра дописала псевдо-диалог («...casting a warm glow. GUEST: A figure...»),
+    // отрезаем этот хвост до проверки стоп-слов
+    for role_tail in [
+        " GUEST:",
+        " HOST:",
+        " SPEAKER:",
+        " USER:",
+        " ASSISTANT:",
+        " QUESTION:",
+        " ANSWER:",
+    ] {
+        if let Some(pos) = clean.find(role_tail) {
+            let prefix = clean[..pos].trim();
+            if prefix.len() >= 20 {
+                clean = prefix.to_string();
+            }
+        }
+    }
+
     let lower = clean.to_lowercase();
     if clean.len() < 8 {
         return None;
