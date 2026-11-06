@@ -363,6 +363,27 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         }
     }
 
+    let mut clean = clean.trim().to_string();
+
+    // Если модель начала ответ с выдуманного заголовка в кавычках
+    // (например «"LEGENDARY PICTURE OF THE COMMANDER" A person's hand holds a piece of paper...»
+    // или «"SAGA OF TANGA THE ENLIGHTENED" album cover, featuring a dark gray background...»),
+    // вырезаем закавыченный заголовок, сохраняя реальное описание кадра
+    if clean.starts_with('"') {
+        if let Some(close_q) = clean[1..].find('"') {
+            if close_q <= 55 {
+                let after_q = clean[close_q + 2..].trim_start_matches([':', '-', ',', ' ']);
+                if after_q.len() >= 18 {
+                    let mut chars = after_q.chars();
+                    clean = match chars.next() {
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                        None => after_q.to_string(),
+                    };
+                }
+            }
+        }
+    }
+
     let mut clean = clean
         .trim()
         .trim_matches(['"', '\'', '`', ' '])
@@ -392,6 +413,33 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
             rest = rest.replace(prefix, "").split_whitespace().collect::<Vec<_>>().join(" ");
             clean = rest;
         }
+    }
+
+    // Если модель поставила КАПС-заголовок в начале без двоеточия перед стандартным зачином
+    // (например «HISTORIC TRAIN STATION The image depicts a historic train station...»)
+    for start_marker in [" The image ", " This image ", " In this ", " A ", " An "] {
+        if let Some(pos) = clean.find(start_marker) {
+            if (4..=42).contains(&pos) {
+                let prefix = clean[..pos].trim();
+                let prefix_alphas: Vec<char> = prefix.chars().filter(|c| c.is_alphabetic()).collect();
+                if prefix_alphas.len() >= 4 && prefix_alphas.iter().all(|c| c.is_uppercase()) {
+                    clean = clean[pos + 1..].trim().to_string();
+                    break;
+                }
+            }
+        }
+    }
+
+    // Если модель после валидного описания кадра попыталась процитировать нечитаемый текст на бумаге/вывеске в кавычках
+    // (например «A person's hand holds a piece of paper with German text, "Абзагания КАРОСТА...»),
+    // отрезаем цитату после запятой и очищаем одиночные кавычки вокруг коротких названий («sign reading "HOMA" in Japanese»)
+    if let Some(q_comma_pos) = clean.find(", \"") {
+        if q_comma_pos >= 24 {
+            clean = format!("{}.", clean[..q_comma_pos].trim_end_matches(['.', ',', ' ']));
+        }
+    }
+    if clean.contains('"') {
+        clean = clean.replace('"', "");
     }
 
     // Если модель после валидного описания кадра дописала псевдо-диалог («...casting a warm glow. GUEST: A figure...»),
@@ -424,8 +472,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
     if alpha_total < 6 || (upper_total * 100 / alpha_total.max(1)) > 35 {
         return None;
     }
-    if clean.contains('"')
-        || clean.contains("PIT:")
+    if clean.contains("PIT:")
         || clean.contains("MAN:")
         || clean.contains("WOMAN:")
         || clean.contains("GIRL:")

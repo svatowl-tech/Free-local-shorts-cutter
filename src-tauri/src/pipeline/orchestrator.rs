@@ -279,18 +279,18 @@ pub async fn run_pipeline(
         cancel_rx.resubscribe()
     ).await.unwrap_or_default();
 
-    // 5. Умное построение списка лучших фрагментов (Хайлайтов) с динамической длительностью (10–20с) по границам полных фраз
-    let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
-        percent: 85.0, 
-        stage: "Формирование цельных диалогов и хайлайтов (10–20 сек)...".to_string() 
-    });
-
+    // 5. Умное построение списка лучших фрагментов (Хайлайтов) с динамической длительностью по границам полных фраз
     // `config.max_clip_duration_sec` задает реальный верхний потолок длительности ролика (например, 12с или 20с),
     // а `min_dur` и `target_dur` масштабируются пропорционально, чтобы клипы не превышали выбранный пользователем лимит
     // и не склеивали две разные сцены ради искусственного набора 15+ секунд.
     let max_dur = config.max_clip_duration_sec.clamp(8.0, 60.0).min(video_duration);
     let min_dur = (max_dur * 0.50).clamp(6.0, 10.0).min((max_dur - 2.0).max(4.0));
     let target_dur = ((min_dur + max_dur) * 0.52).clamp(min_dur + 1.0, max_dur - 1.0);
+
+    let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
+        percent: 85.0, 
+        stage: format!("Формирование цельных диалогов и хайлайтов ({:.0}–{:.0} сек)...", min_dur, max_dur) 
+    });
     let (is_auto_clips, max_clips_limit) = match config.max_clips_count {
         Some(0) => (true, 60usize),
         Some(n) => (false, n.clamp(1, 100)),
@@ -581,8 +581,10 @@ pub async fn run_pipeline(
         "Pipeline",
         "info",
         &format!(
-            "[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} качественных клипов (10–20с, порог эмоций: {:.2}, {}) для таймлайна",
+            "[Шаг 4/5] Отбор хайлайтов завершен: сформировано {} качественных клипов ({:.0}–{:.0}с, порог эмоций: {:.2}, {}) для таймлайна",
             suggested_fragments.len(),
+            min_dur,
+            max_dur,
             user_threshold,
             if is_auto_clips { format!("режим: Авто (лимит по интенсивности до {})", effective_limit) } else { format!("лимит: до {}", max_clips_limit) }
         ),
@@ -788,6 +790,16 @@ fn build_complete_phrase_window(
         }
     }
 
+    // Если `start_idx` оказался на коротком пустом подтверждении («Да.», «Ничего страшного.», «Принято.»),
+    // сдвигаем старт вперед на содержательное начало следующей реплики, чтобы клип не открывался пустой ремаркой
+    while start_idx + 1 < fragments.len()
+        && crate::text_analyzer::is_weak_clip_start(fragments, start_idx)
+        && crate::text_analyzer::is_sentence_start(fragments, start_idx + 1)
+        && (fragments[start_idx + 1].start - fragments[start_idx].end).max(0.0) <= 1.8
+    {
+        start_idx += 1;
+    }
+
     if fragments[start_idx].start < intro_skip || fragments[start_idx].start >= outro_limit {
         return None;
     }
@@ -890,16 +902,36 @@ fn build_complete_phrase_window(
                     b_quality -= 0.65;
                 }
 
-                // 3в. Защита от захвата начала следующей спокойной сцены после эмоциональной кульминации:
-                // Если текущая фраза — яркий эмоциональный панчлайн с `!` или `?` (например «Готовимся к ближнему бою!» или «Как же мне из этого выпутаться?»),
-                // а следующая реплика уже переходит к спокойному повествованию без `!`/`?` (или приветствию в новой сцене) — поощряем закрытие клипа на панчлайне!
-                if is_sent_end && !is_weak_end && curr_is_exclam_or_q {
+                // 3в. Защита от захвата начала следующей спокойной сцены после эмоциональной кульминации
+                // ИЛИ наоборот — защита от обрыва вопроса перед мгновенным панчлайном-ответом («...шансов на победу нет?!» -> «Шансов нет, ни единого...»):
+                let curr_is_question = curr_txt.ends_with('?')
+                    || curr_txt.ends_with("?!")
+                    || curr_txt.ends_with("!?");
+                let has_immediate_answer = curr_is_question
+                    && end_idx + 1 < fragments.len()
+                    && pause_after <= 0.35
+                    && (fragments[end_idx + 1].end - pre_roll) <= max_dur + 0.5
+                    && !crate::text_analyzer::is_weak_clip_ending(fragments, end_idx + 1);
+                let is_immediate_answer_to_prev_q = end_idx > s_idx
+                    && {
+                        let prev_t = fragments[end_idx - 1].text.trim();
+                        prev_t.ends_with('?') || prev_t.ends_with("?!") || prev_t.ends_with("!?")
+                    }
+                    && (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0) <= 0.35;
+
+                if has_immediate_answer {
+                    // Не обрываем диалог на вопросе, если собеседник отвечает в ту же секунду и ответ помещается в хронометраж клипа!
+                    b_quality -= 0.48;
+                } else if is_sent_end && !is_weak_end && curr_is_exclam_or_q {
                     let next_is_calm = end_idx + 1 < fragments.len()
                         && !fragments[end_idx + 1].text.contains('!')
                         && !fragments[end_idx + 1].text.contains('?');
                     if next_is_calm || pause_after >= 0.35 {
                         b_quality += 0.52;
                     }
+                } else if is_immediate_answer_to_prev_q && is_sent_end && !is_weak_end {
+                    // Поощряем закрытие клипа на хлёстком ответе сразу после эмоционального вопроса
+                    b_quality += 0.36;
                 } else if !curr_is_exclam_or_q && exclamations_seen >= 2 && dur >= min_dur + 1.5 {
                     // Если позади уже была бурная кульминация (>= 2 восклицаний), а текущая реплика — спокойная фраза из следующего эпизода («Сначала они...», «Генерал Ромель.»)
                     b_quality -= 0.55;
@@ -983,6 +1015,10 @@ fn build_complete_phrase_window(
                 || (fragments[start_idx].start - fragments[prev_start].start) > 11.5
             {
                 break;
+            }
+            if crate::text_analyzer::is_weak_clip_start(fragments, prev_start) {
+                cursor = prev_start;
+                continue;
             }
             if let Some(alt) = find_best_end(prev_start) {
                 let is_better = match &chosen {
