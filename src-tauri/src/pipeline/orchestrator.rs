@@ -969,6 +969,8 @@ fn build_complete_phrase_window(
                     || crate::text_analyzer::starts_with_lowercase_continuation(&fragments[prev_start].text)
                 {
                     4.5
+                } else if crate::text_analyzer::starts_with_discourse_continuation(&fragments[prev_start].text) {
+                    3.6
                 } else {
                     1.8
                 };

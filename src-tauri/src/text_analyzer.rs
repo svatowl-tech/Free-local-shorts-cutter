@@ -174,7 +174,7 @@ pub fn has_terminal_punctuation(text: &str) -> bool {
 }
 
 /// Определяет, начинается ли текст со строчной (маленькой) буквы или союза-продолжения после запятой
-fn starts_with_lowercase_continuation(text: &str) -> bool {
+pub fn starts_with_lowercase_continuation(text: &str) -> bool {
     let trimmed = text
         .trim()
         .trim_start_matches(['"', '\'', '«', '(', '[']);
