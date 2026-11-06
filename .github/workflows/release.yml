@@ -3,22 +3,6 @@ name: Automated Release & Multi-Platform Build
 on:
   workflow_dispatch:
     inputs:
-      bump:
-        description: 'Тип обновления версии (semantic versioning)'
-        required: true
-        default: 'patch'
-        type: choice
-        options:
-          - patch
-          - minor
-          - major
-          - custom
-          - none
-      custom_version:
-        description: 'Пользовательская версия (если выбран тип custom, например 2.1.0)'
-        required: false
-        default: ''
-        type: string
       draft:
         description: 'Создать как черновик (Draft)'
         required: false
@@ -31,8 +15,6 @@ on:
         type: boolean
 
   push:
-    tags:
-      - 'v*'
     branches:
       - main
       - master
@@ -46,11 +28,10 @@ permissions:
   packages: write
 
 jobs:
-  # 1. Подготовка версии, тега и инициализация GitHub Release
+  # 1. Чтение текущей фиксированной версии проекта (без авто-бампа и без git push в ветку)
   prepare-release:
-    name: 🔖 Определение версии и создание релиза
+    name: 🔖 Определение версии релиза
     runs-on: ubuntu-latest
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     outputs:
       version: ${{ steps.version-step.outputs.version }}
       tag: ${{ steps.version-step.outputs.tag }}
@@ -60,108 +41,28 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
 
       - name: Проверка необходимости публикации
         id: check-trigger
         run: |
           echo "should_release=true" >> $GITHUB_OUTPUT
 
-      - name: Установка зависимостей Node
-        run: npm ci || npm install
-
-      - name: Вычисление и обновление версии
+      - name: Чтение версии из конфигурации проекта
         id: version-step
         run: |
-          git fetch --tags --force origin || true
           CURRENT_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
-
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            # Извлекаем версию из тега (например v2.0.1 -> 2.0.1)
-            RAW_TAG="${GITHUB_REF#refs/tags/}"
-            VER="${RAW_TAG#v}"
-            GITHUB_OUTPUT="" node scripts/bump-version.js "$VER"
-            NEW_VER="$VER"
-            NEW_TAG="$RAW_TAG"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            BUMP_TYPE="${{ github.event.inputs.bump }}"
-            if [ "$BUMP_TYPE" = "custom" ]; then
-              TARGET_VER="${{ github.event.inputs.custom_version }}"
-              GITHUB_OUTPUT="" node scripts/bump-version.js "$TARGET_VER"
-            elif [ "$BUMP_TYPE" = "none" ]; then
-              GITHUB_OUTPUT="" node scripts/bump-version.js "$CURRENT_VER"
-            else
-              GITHUB_OUTPUT="" node scripts/bump-version.js "$BUMP_TYPE"
-            fi
-            NEW_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
-            NEW_TAG="v$NEW_VER"
-          else
-            # Обычный push в main/master:
-            # Если пользователь УЖЕ поднял версию вручную в коммите (и тега v$CURRENT_VER еще нет в репозитории),
-            # используем эту версию без лишнего коммита поверх main!
-            if ! git rev-parse -q --verify "refs/tags/v$CURRENT_VER" >/dev/null 2>&1; then
-              echo "Тег v$CURRENT_VER еще не существует — используем версию $CURRENT_VER из текущего коммита."
-              GITHUB_OUTPUT="" node scripts/bump-version.js "$CURRENT_VER"
-            else
-              echo "Тег v$CURRENT_VER уже существует — автоматически инкрементируем patch-версию..."
-              GITHUB_OUTPUT="" node scripts/bump-version.js patch
-              while git rev-parse -q --verify "refs/tags/v$(node -p "require('./src-tauri/tauri.conf.json').version")" >/dev/null 2>&1; do
-                GITHUB_OUTPUT="" node scripts/bump-version.js patch
-              done
-            fi
-            NEW_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
-            NEW_TAG="v$NEW_VER"
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
-
+          TAG="v$CURRENT_VER"
           TARGET_SHA=$(git rev-parse HEAD)
-
-          if [[ "${{ github.ref }}" != refs/tags/v* ]] && ! git diff --cached --quiet; then
-            git commit -m "chore(release): bump version to $NEW_TAG [skip ci]"
-            PUSHED_OK=false
-            for attempt in 1 2 3; do
-              echo "Попытка отправки коммита версии в ${{ github.ref_name }} (#$attempt)..."
-              git pull --rebase origin "${{ github.ref_name }}" || true
-              if git push origin "HEAD:${{ github.ref_name }}"; then
-                PUSHED_OK=true
-                TARGET_SHA=$(git rev-parse HEAD)
-                break
-              fi
-              sleep 3
-            done
-            if [ "$PUSHED_OK" != "true" ]; then
-              echo "::warning::Не удалось отправить авто-бамп коммит в ветку ${{ github.ref_name }} (commit_refs / branch protection). Релиз $NEW_TAG будет создан на исходном коммите $TARGET_SHA."
-              git reset --hard "$TARGET_SHA"
-            fi
-          fi
-
-          echo "version=$NEW_VER" >> $GITHUB_OUTPUT
-          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          echo "version=$CURRENT_VER" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "target_sha=$TARGET_SHA" >> $GITHUB_OUTPUT
-          echo "Итоговая версия релиза: $NEW_VER (тег: $NEW_TAG, commit: $TARGET_SHA)"
-
-      - name: Создание структуры черновика релиза
-        if: steps.check-trigger.outputs.should_release == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.version-step.outputs.tag }}
-          name: "Video Cutter Pro ${{ steps.version-step.outputs.tag }}"
-          target_commitish: ${{ steps.version-step.outputs.target_sha }}
-          draft: true
-          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "Сборка выполняется для фиксированной версии: $CURRENT_VER (релиз: $TAG)"
 
   # 2. Кроссплатформенная матричная сборка (Windows, Linux, macOS)
   build-and-package:
@@ -234,9 +135,6 @@ jobs:
       - name: Установка Node.js зависимостей
         run: npm ci || npm install
 
-      - name: Синхронизация версии релиза (${{ needs.prepare-release.outputs.version }})
-        run: GITHUB_OUTPUT="" node scripts/bump-version.js "${{ needs.prepare-release.outputs.version }}"
-
       - name: Кеширование предустановленных ИИ-моделей
         uses: actions/cache@v4
         with:
@@ -276,15 +174,26 @@ jobs:
           path: dist-releases/*
           if-no-files-found: error
 
-  # 3. Финализация релиза: публикация из черновика и сводная таблица
+  # 3. Финализация релиза: публикация/перезапись файлов в одном релизе текущей версии
   finalize-release:
-    name: 🚀 Публикация релиза
+    name: 🚀 Публикация в релиз ${{ needs.prepare-release.outputs.tag }}
     needs: [prepare-release, build-and-package]
     runs-on: ubuntu-latest
     if: needs.prepare-release.outputs.should_release == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Обновление тега ${{ needs.prepare-release.outputs.tag }} на текущий коммит
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="${{ needs.prepare-release.outputs.tag }}"
+          git tag -f -a "$TAG" "${{ needs.prepare-release.outputs.target_sha }}" -m "Release $TAG"
+          git push origin "refs/tags/$TAG" --force || true
 
       - name: Скачивание всех собранных артефактов
         uses: actions/download-artifact@v4
@@ -299,10 +208,11 @@ jobs:
           echo "=== СОДЕРЖИМОЕ all-dist-releases ==="
           ls -la all-dist-releases
 
-      - name: Опубликовать релиз
+      - name: Опубликовать или обновить релиз ${{ needs.prepare-release.outputs.tag }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
+          name: "Video Cutter Pro ${{ needs.prepare-release.outputs.tag }}"
           target_commitish: ${{ needs.prepare-release.outputs.target_sha }}
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
