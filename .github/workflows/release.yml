@@ -37,6 +37,10 @@ on:
       - main
       - master
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
   packages: write
@@ -46,9 +50,11 @@ jobs:
   prepare-release:
     name: 🔖 Определение версии и создание релиза
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
     outputs:
       version: ${{ steps.version-step.outputs.version }}
       tag: ${{ steps.version-step.outputs.tag }}
+      target_sha: ${{ steps.version-step.outputs.target_sha }}
       should_release: ${{ steps.check-trigger.outputs.should_release }}
     steps:
       - name: Checkout repository
@@ -74,67 +80,75 @@ jobs:
       - name: Вычисление и обновление версии
         id: version-step
         run: |
+          git fetch --tags --force origin || true
+          CURRENT_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             # Извлекаем версию из тега (например v2.0.1 -> 2.0.1)
             RAW_TAG="${GITHUB_REF#refs/tags/}"
             VER="${RAW_TAG#v}"
-            node scripts/bump-version.js "$VER"
-            echo "version=$VER" >> $GITHUB_OUTPUT
-            echo "tag=$RAW_TAG" >> $GITHUB_OUTPUT
+            GITHUB_OUTPUT="" node scripts/bump-version.js "$VER"
+            NEW_VER="$VER"
+            NEW_TAG="$RAW_TAG"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             BUMP_TYPE="${{ github.event.inputs.bump }}"
             if [ "$BUMP_TYPE" = "custom" ]; then
               TARGET_VER="${{ github.event.inputs.custom_version }}"
-              node scripts/bump-version.js "$TARGET_VER"
+              GITHUB_OUTPUT="" node scripts/bump-version.js "$TARGET_VER"
             elif [ "$BUMP_TYPE" = "none" ]; then
-              # Используем текущую версию без инкремента
-              CURRENT_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
-              node scripts/bump-version.js "$CURRENT_VER"
+              GITHUB_OUTPUT="" node scripts/bump-version.js "$CURRENT_VER"
             else
-              node scripts/bump-version.js "$BUMP_TYPE"
+              GITHUB_OUTPUT="" node scripts/bump-version.js "$BUMP_TYPE"
             fi
-            
             NEW_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
             NEW_TAG="v$NEW_VER"
-            echo "version=$NEW_VER" >> $GITHUB_OUTPUT
-            echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
-
-            # Коммитим обновленные манифесты и создаем Git тег
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
-            if ! git diff --cached --quiet; then
-              git commit -m "chore(release): bump version to $NEW_TAG [skip ci]"
-              git tag -f -a "$NEW_TAG" -m "Release $NEW_TAG"
-              git push origin HEAD:${{ github.ref_name }} --force --tags
-            else
-              echo "Никаких изменений для фиксации. Пересоздаем тег..."
-              git tag -f -a "$NEW_TAG" -m "Release $NEW_TAG"
-              git push origin "$NEW_TAG" --force
-            fi
           else
-            # Авто-бамп patch при пуше с [release]
-            node scripts/bump-version.js patch
+            # Обычный push в main/master:
+            # Если пользователь УЖЕ поднял версию вручную в коммите (и тега v$CURRENT_VER еще нет в репозитории),
+            # используем эту версию без лишнего коммита поверх main!
+            if ! git rev-parse -q --verify "refs/tags/v$CURRENT_VER" >/dev/null 2>&1; then
+              echo "Тег v$CURRENT_VER еще не существует — используем версию $CURRENT_VER из текущего коммита."
+              GITHUB_OUTPUT="" node scripts/bump-version.js "$CURRENT_VER"
+            else
+              echo "Тег v$CURRENT_VER уже существует — автоматически инкрементируем patch-версию..."
+              GITHUB_OUTPUT="" node scripts/bump-version.js patch
+              while git rev-parse -q --verify "refs/tags/v$(node -p "require('./src-tauri/tauri.conf.json').version")" >/dev/null 2>&1; do
+                GITHUB_OUTPUT="" node scripts/bump-version.js patch
+              done
+            fi
             NEW_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
             NEW_TAG="v$NEW_VER"
-            echo "version=$NEW_VER" >> $GITHUB_OUTPUT
-            echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          fi
 
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
-            git tag -d "$NEW_TAG" || true
-            if ! git diff --cached --quiet; then
-              git commit -m "chore(release): auto-bump version to $NEW_TAG [skip ci]"
-              git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
-              git push origin HEAD:${{ github.ref_name }} --force
-              git push origin "$NEW_TAG" --force
-            else
-              echo "Никаких изменений для фиксации. Пересоздаем тег..."
-              git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
-              git push origin "$NEW_TAG" --force
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml
+
+          TARGET_SHA=$(git rev-parse HEAD)
+
+          if [[ "${{ github.ref }}" != refs/tags/v* ]] && ! git diff --cached --quiet; then
+            git commit -m "chore(release): bump version to $NEW_TAG [skip ci]"
+            PUSHED_OK=false
+            for attempt in 1 2 3; do
+              echo "Попытка отправки коммита версии в ${{ github.ref_name }} (#$attempt)..."
+              git pull --rebase origin "${{ github.ref_name }}" || true
+              if git push origin "HEAD:${{ github.ref_name }}"; then
+                PUSHED_OK=true
+                TARGET_SHA=$(git rev-parse HEAD)
+                break
+              fi
+              sleep 3
+            done
+            if [ "$PUSHED_OK" != "true" ]; then
+              echo "::warning::Не удалось отправить авто-бамп коммит в ветку ${{ github.ref_name }} (commit_refs / branch protection). Релиз $NEW_TAG будет создан на исходном коммите $TARGET_SHA."
+              git reset --hard "$TARGET_SHA"
             fi
           fi
+
+          echo "version=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          echo "target_sha=$TARGET_SHA" >> $GITHUB_OUTPUT
+          echo "Итоговая версия релиза: $NEW_VER (тег: $NEW_TAG, commit: $TARGET_SHA)"
 
       - name: Создание структуры черновика релиза
         if: steps.check-trigger.outputs.should_release == 'true'
@@ -142,7 +156,7 @@ jobs:
         with:
           tag_name: ${{ steps.version-step.outputs.tag }}
           name: "Video Cutter Pro ${{ steps.version-step.outputs.tag }}"
-          target_commitish: ${{ github.ref_name }}
+          target_commitish: ${{ steps.version-step.outputs.target_sha }}
           draft: true
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           generate_release_notes: true
@@ -220,6 +234,9 @@ jobs:
       - name: Установка Node.js зависимостей
         run: npm ci || npm install
 
+      - name: Синхронизация версии релиза (${{ needs.prepare-release.outputs.version }})
+        run: GITHUB_OUTPUT="" node scripts/bump-version.js "${{ needs.prepare-release.outputs.version }}"
+
       - name: Кеширование предустановленных ИИ-моделей
         uses: actions/cache@v4
         with:
@@ -286,7 +303,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare-release.outputs.tag }}
-          target_commitish: ${{ github.ref_name }}
+          target_commitish: ${{ needs.prepare-release.outputs.target_sha }}
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
           files: |
