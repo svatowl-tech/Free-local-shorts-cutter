@@ -6,7 +6,7 @@ const https = require('https');
 const http = require('http');
 
 console.log('\n======================================================');
-console.log('🚀 ПОДГОТОВКА СТОРОННИХ БИНАРНИКОВ И ПРЕДУСТАНОВЛЕННЫХ МОДЕЛЕЙ');
+console.log('🚀 ПОДГОТОВКА СТОРОННИХ БИНАРНИКОВ К СБОРКЕ');
 console.log('======================================================');
 
 // Определяем целевую архитектуру
@@ -39,6 +39,12 @@ fs.mkdirSync(tempDir, { recursive: true });
 const placeholderDll = path.join(resourcesDir, 'placeholder.dll');
 if (!fs.existsSync(placeholderDll)) {
     fs.writeFileSync(placeholderDll, '# Placeholder DLL file for tauri glob matching\n');
+}
+
+// Гарантируем наличие placeholder для маски models/* в tauri.conf.json (все модели скачиваются пользователем по требованию в приложении)
+const placeholderModel = path.join(modelsDir, '.gitkeep');
+if (!fs.existsSync(placeholderModel)) {
+    fs.writeFileSync(placeholderModel, '# Models are downloaded on demand in-app\n');
 }
 
 // Ссылки на архивы
@@ -98,22 +104,6 @@ const sidecars = [
         binName: isWindows ? 'llama-cli.exe' : 'llama-cli',
         url: llamaUrl,
         archiveName: 'llama.zip'
-    }
-];
-
-// Список предустановленных моделей нейросетей для автономной работы
-const preinstalledModels = [
-    {
-        name: 'Whisper Base (Русский + Мультиязычный)',
-        filename: 'ggml-base.bin',
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
-        minSize: 140 * 1024 * 1024 // ~148 MB
-    },
-    {
-        name: 'Whisper Tiny (Сверхбыстрый)',
-        filename: 'ggml-tiny.bin',
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
-        minSize: 70 * 1024 * 1024 // ~75 MB
     }
 ];
 
@@ -238,30 +228,17 @@ function extractArchive(archivePath, destDir) {
     }
 }
 
-// Загрузка предустановленных моделей
-async function downloadPreinstalledModels() {
-    console.log('\n--- 1. Проверка и загрузка предустановленных моделей ИИ в src-tauri/models ---');
-    for (const model of preinstalledModels) {
-        const destPath = path.join(modelsDir, model.filename);
-        if (fs.existsSync(destPath)) {
-            const size = fs.statSync(destPath).size;
-            if (size >= model.minSize) {
-                console.log(`✓ Модель "${model.name}" уже существует: ${model.filename} (${(size / (1024 * 1024)).toFixed(1)} MB)`);
-                continue;
-            }
-        }
-
-        console.log(`\nСкачивание предустановленной модели "${model.name}"...`);
-        try {
-            await downloadFile(model.url, destPath);
-        } catch (err) {
-            console.warn(`[ПРЕДУПРЕЖДЕНИЕ] Не удалось скачать модель ${model.filename}: ${err.message}`);
-            if (!fs.existsSync(destPath) || fs.statSync(destPath).size === 0) {
-                console.log(`Создаем информационный плейсхолдер для ${model.filename}`);
-                fs.writeFileSync(destPath, `# Model placeholder for ${model.filename}\n`);
-            }
-        }
+// Подготовка директории моделей (модели скачиваются пользователем по требованию в приложении)
+function prepareModelsDirectory() {
+    console.log('\n--- 1. Подготовка директории src-tauri/models (модели загружаются пользователем из приложения) ---');
+    if (!fs.existsSync(modelsDir)) {
+        fs.mkdirSync(modelsDir, { recursive: true });
     }
+    const placeholderModel = path.join(modelsDir, '.gitkeep');
+    if (!fs.existsSync(placeholderModel)) {
+        fs.writeFileSync(placeholderModel, '# Models are downloaded on demand in-app\n');
+    }
+    console.log('✓ Директория src-tauri/models готова (без тяжелых моделей в дистрибутиве).');
 }
 
 // Загрузка и подготовка бинарников Sidecar
@@ -371,7 +348,7 @@ function copyAllDlls(fromDir, toDir) {
 }
 
 async function run() {
-    await downloadPreinstalledModels();
+    prepareModelsDirectory();
     await downloadSidecars();
 
     try {
@@ -381,7 +358,7 @@ async function run() {
     }
 
     console.log('\n======================================================');
-    console.log('✅ ВСЕ МОДЕЛИ И БИНАРНИКИ УСПЕШНО ПОДГОТОВЛЕНЫ К СБОРКЕ!');
+    console.log('✅ ВСЕ БИНАРНИКИ УСПЕШНО ПОДГОТОВЛЕНЫ К СБОРКЕ!');
     console.log('======================================================\n');
 }
 
