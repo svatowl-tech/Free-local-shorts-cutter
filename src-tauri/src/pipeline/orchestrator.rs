@@ -1198,6 +1198,31 @@ fn build_complete_phrase_window(
                     b_quality -= 0.35;
                 }
 
+                // 3г. Если фраза заканчивается на слова благодарности («спасибо, [Имя]», «благодарю»),
+                // а следом (pause_after <= 0.45с) идет ответ собеседника («рада, что смогла помочь», «не за что», «всегда пожалуйста»),
+                // и он укладывается в max_ceiling — не обрываем клип на «спасибо», захватываем ответ!
+                let curr_low = curr_txt.to_lowercase().replace('ё', "е");
+                let curr_is_thanks = curr_low.ends_with("спасибо")
+                    || curr_low.ends_with("спасибо.")
+                    || curr_low.ends_with("спасибо!")
+                    || curr_low.contains("огромное спасибо")
+                    || curr_low.ends_with("благодарю")
+                    || curr_low.ends_with("благодарю.");
+                let next_is_thanks_reply = end_idx + 1 < fragments.len()
+                    && {
+                        let nt = fragments[end_idx + 1].text.to_lowercase().replace('ё', "е");
+                        nt.contains("рада")
+                            || nt.contains("рад,")
+                            || nt.contains("рад ")
+                            || nt.contains("не за что")
+                            || nt.contains("пожалуйста")
+                            || nt.contains("помочь вам")
+                            || nt.contains("смогла помочь");
+                    };
+                if curr_is_thanks && next_is_thanks_reply && pause_after <= 0.45 && next_fits_ceiling {
+                    b_quality -= 1.85;
+                }
+
                 // 4. Штраф за склейку двух разных сцен через длинную паузу >= 2.0с
                 if crossed_scene_transition {
                     b_quality -= 0.85;
