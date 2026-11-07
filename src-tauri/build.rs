@@ -34,7 +34,11 @@ fn main() {
 
     // Определяем текущий target triple (например, x86_64-pc-windows-msvc)
     let target = std::env::var("TARGET").unwrap_or_else(|_| "x86_64-pc-windows-msvc".to_string());
-    println!("cargo:warning=Сборка под целевую платформу: {}", target);
+    println!("Сборка под целевую платформу: {}", target);
+
+    // Очищаем устаревшую переменную окружения STATIC_VCRUNTIME (которую выставляет @tauri-apps/cli ~2.0.0),
+    // чтобы tauri-build не генерировал предупреждение об устаревании STATIC_VCRUNTIME
+    std::env::remove_var("STATIC_VCRUNTIME");
 
     let is_windows = target.contains("windows");
     let is_mac = target.contains("apple-darwin");
@@ -46,7 +50,7 @@ fn main() {
     // Для мобильных таргетов (Android / iOS) создаем легкие заглушки sidecar-файлов без скачивания десктопных архивов
     if is_mobile {
         println!(
-            "cargo:warning=Мобильная целевая платформа ({}): создание кроссплатформенных stub-ресурсов без десктопных бинарников.",
+            "Мобильная целевая платформа ({}): создание кроссплатформенных stub-ресурсов без десктопных бинарников.",
             target
         );
         for sidecar_name in &sidecar_names {
@@ -143,11 +147,11 @@ fn main() {
         let sidecar_fullname = resources_dir.join(&sidecar_filename);
 
         if sidecar_fullname.exists() {
-            println!("cargo:warning=Бинарник {} уже скачан.", sidecar_filename);
+            println!("Бинарник {} уже скачан.", sidecar_filename);
             continue;
         }
 
-        println!("cargo:warning=Запуск подготовки {}...", sidecar_filename);
+        println!("Запуск подготовки {}...", sidecar_filename);
 
         // Путь скачанного архива
         let archive_path = temp_download_dir.join(archive_file_name);
@@ -177,7 +181,7 @@ fn main() {
                 );
             }
             println!(
-                "cargo:warning=Успешно извлечён и подготовлен sidecar {}",
+                "Успешно извлечён и подготовлен sidecar {}",
                 sidecar_filename
             );
         } else {
@@ -199,7 +203,7 @@ fn main() {
                         );
                     }
                     println!(
-                        "cargo:warning=Успешно подготовлен fallback-sidecar {} из {:?}",
+                        "Успешно подготовлен fallback-sidecar {} из {:?}",
                         sidecar_filename, src_bin_path
                     );
                     found = true;
@@ -227,7 +231,7 @@ fn main() {
 }
 
 fn download_file(url: &str, dest: &Path) -> Result<(), String> {
-    println!("cargo:warning=Скачивание архива: {} -> {:?}", url, dest);
+    println!("Скачивание архива: {} -> {:?}", url, dest);
 
     // Сначала пробуем использовать системный curl с передачей OsStr без unwrap()
     let output = Command::new("curl")
@@ -276,7 +280,7 @@ fn download_file(url: &str, dest: &Path) -> Result<(), String> {
 
 fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
     println!(
-        "cargo:warning=Распаковка архива: {:?} -> {:?}",
+        "Распаковка архива: {:?} -> {:?}",
         archive_path, dest_dir
     );
     fs::create_dir_all(dest_dir).map_err(|e| e.to_string())?;
@@ -416,7 +420,7 @@ fn copy_all_dlls(from_dir: &Path, to_dir: &Path) {
                 if let Some(file_name) = path.file_name() {
                     let dest = to_dir.join(file_name);
                     let _ = fs::copy(&path, &dest);
-                    println!("cargo:warning=Скопирована зависимая библиотека DLL: {:?}", file_name);
+                    println!("Скопирована зависимая библиотека DLL: {:?}", file_name);
                 }
             }
         }

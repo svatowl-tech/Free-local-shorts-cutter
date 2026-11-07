@@ -13,6 +13,7 @@ pub mod logger;
 mod commands;
 mod models;
 
+#[cfg(target_os = "windows")]
 use tauri::Manager;
 
 pub struct AppState {

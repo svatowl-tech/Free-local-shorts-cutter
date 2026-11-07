@@ -553,14 +553,14 @@ pub fn refine_clip_bounds_by_audio(
 
     // --- 1. ВЫРАВНИВАНИЕ НАЧАЛА КЛИПА (`new_start`) ---
     let mut min_allowed_start = (raw_start - max_shift).max(0.0);
-    let mut max_allowed_start = (raw_start + 0.45.min(max_shift)).min(raw_end - min_clip_dur.max(3.5));
+    let mut max_allowed_start = (raw_start + max_shift.min(0.45)).min(raw_end - min_clip_dur.max(3.5));
 
     if let Some(f_idx) = first_cue_idx {
         let first_cue = &fragments[f_idx];
         // Не сдвигаем старт позже, чем за 0.08с до начала первой реплики клипа,
         // и не уводим раньше, чем за 0.65с до первой реплики (чтобы фоновый шум/BGM не утягивал старт на 2.3с в предыдущую сцену!)
         max_allowed_start = max_allowed_start.min((first_cue.start - 0.08).max(raw_start));
-        min_allowed_start = min_allowed_start.max((first_cue.start - 0.65.min(max_shift)).max(0.0));
+        min_allowed_start = min_allowed_start.max((first_cue.start - max_shift.min(0.65)).max(0.0));
 
         if f_idx > 0 {
             let prev_cue = &fragments[f_idx - 1];
@@ -588,12 +588,12 @@ pub fn refine_clip_bounds_by_audio(
         )
     } else {
         // В точке `raw_start` относительно тихо — находим самую чистую точку тишины (минимальный RMS + Peak)
-        let local_min_bound = (raw_start - 0.45.min(max_shift)).max(min_allowed_start);
+        let local_min_bound = (raw_start - max_shift.min(0.45)).max(min_allowed_start);
         find_cleanest_quiet_point(profile, raw_start, local_min_bound, max_allowed_start)
     };
 
     // --- 2. ВЫРАВНИВАНИЕ КОНЦА КЛИПА (`new_end`) ---
-    let mut min_allowed_end = (raw_end - 0.45.min(max_shift)).max(new_start + min_clip_dur.max(4.0));
+    let mut min_allowed_end = (raw_end - max_shift.min(0.45)).max(new_start + min_clip_dur.max(4.0));
     let mut max_allowed_end = (raw_end + max_shift)
         .min(profile.duration_sec)
         .min(new_start + max_clip_dur + 3.8);
@@ -602,7 +602,7 @@ pub fn refine_clip_bounds_by_audio(
         let last_cue = &fragments[l_idx];
         // Разрешаем отступить назад максимум до `last_cue.end - 0.22`, а вперед — не далее `last_cue.end + 0.95`
         min_allowed_end = min_allowed_end.max(last_cue.start + 0.65).max(last_cue.end - 0.22);
-        max_allowed_end = max_allowed_end.min((last_cue.end + 0.95.min(max_shift)).min(profile.duration_sec));
+        max_allowed_end = max_allowed_end.min((last_cue.end + max_shift.min(0.95)).min(profile.duration_sec));
 
         if l_idx + 1 < fragments.len() {
             let next_cue = &fragments[l_idx + 1];
@@ -629,7 +629,7 @@ pub fn refine_clip_bounds_by_audio(
             local_end_valley_db,
         )
     } else {
-        let local_max_bound = (raw_end + 0.50.min(max_shift)).min(max_allowed_end);
+        let local_max_bound = (raw_end + max_shift.min(0.50)).min(max_allowed_end);
         find_cleanest_quiet_point(profile, raw_end, min_allowed_end, local_max_bound)
     };
 
