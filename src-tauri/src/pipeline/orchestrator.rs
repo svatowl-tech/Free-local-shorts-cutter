@@ -709,6 +709,44 @@ pub async fn run_pipeline(
         .cloned()
         .collect();
 
+    // 2б. Адаптивное пополнение для длинных видео / стримов:
+    // Если пользователь запросил подборку клипов (например 5–10), а строгий порог пропустил слишком мало (меньше половины от лимита или меньше 3),
+    // мягко расширяем порог с шагом 0.05..0.12 (не опускаясь ниже безопасного порога содержательности 0.62),
+    // чтобы пользователь не остался с 1 клипом на двухчасовом стриме.
+    let min_desired = if is_auto_clips {
+        effective_limit.min(3)
+    } else {
+        (effective_limit / 2).max(2).min(effective_limit)
+    };
+
+    if selected_intervals.len() < min_desired && !non_overlapping_scenes.is_empty() {
+        let relaxed_floor = (user_threshold - 0.12).max(0.62);
+        let needed = effective_limit.saturating_sub(selected_intervals.len());
+        let additional: Vec<(f64, f64, f64, String, String)> = non_overlapping_scenes
+            .iter()
+            .filter(|cand| cand.2 < user_threshold && cand.2 >= relaxed_floor)
+            .take(needed)
+            .cloned()
+            .collect();
+
+        if !additional.is_empty() {
+            crate::logger::emit_log(
+                &app_handle,
+                "Pipeline",
+                "info",
+                &format!(
+                    "Адаптивная довыборка клипов (найдено {} из {} при пороге {:.2}): порог мягко скорректирован до {:.2} для получения полноценной подборки лучших моментов длинного видео (+{} сцен).",
+                    selected_intervals.len(),
+                    effective_limit,
+                    user_threshold,
+                    relaxed_floor,
+                    additional.len()
+                ),
+            );
+            selected_intervals.extend(additional);
+        }
+    }
+
     // 3. Если пользователь выставил экстремальный порог (например 0.90–0.95), а в данной серии пиковая сцена имеет 0.86–0.89:
     // НИ В КОЕМ СЛУЧАЕ не сбрасываем фильтр до 20 проходных сцен по 0.66!
     // Выбираем ТОЛЬКО узкую верхушку абсолютных пиков серии (не более 2–3 сцен в пределах 0.05 от максимума серии).
@@ -1110,8 +1148,13 @@ fn build_complete_phrase_window(
             }
 
             let dur = post_roll - pre_roll;
-            // Эластичный потолок (+3.5с сверх max_dur) для гарантированного закрытия начатой мысли, ответа на вопрос или панчлайна
-            let max_ceiling = (max_dur + 3.5).min(video_duration);
+            // Эластичный потолок (+3.5с..+5.5с сверх max_dur для эмоциональных восклицаний и реакций стримера)
+            // для гарантированного закрытия начатой мысли, ответа на вопрос или панчлайна
+            let has_high_energy = curr_is_pure_exclam
+                || exclamations_seen > 0
+                || (end_idx + 1 < fragments.len() && (fragments[end_idx + 1].text.contains('!') || fragments[end_idx + 1].text.contains("?!")));
+            let ceiling_extra = if has_high_energy { 5.5 } else { 3.5 };
+            let max_ceiling = (max_dur + ceiling_extra).min(video_duration);
             if dur > max_ceiling {
                 break;
             }
@@ -1146,16 +1189,19 @@ fn build_complete_phrase_window(
 
                 // 3. Оценка паузы после финальной реплики:
                 // - Если `pause_after >= 0.60с` (естественная пауза после завершенной мысли) — солидный бонус!
-                // - Если `pause_after < 0.25с` (персонаж продолжает говорить следующую фразу без вдоха, `gap == 0.00с`)
+                // - Если `pause_after <= 0.20с` (персонаж продолжает говорить следующую фразу без вдоха, `gap == 0.00с`)
                 //   и следующая фраза НЕ является новой сценой и помещается в `max_ceiling` — сильный штраф за разрыв на полуслове!
                 let next_fits_ceiling = end_idx + 1 < fragments.len()
                     && (fragments[end_idx + 1].end - pre_roll) <= max_ceiling
                     && !crate::text_analyzer::is_new_scene_opener(&fragments[end_idx + 1].text);
+                let is_zero_pause_continuation = pause_after <= 0.20 && next_fits_ceiling;
 
                 if pause_after >= 0.60 {
                     b_quality += (pause_after * 0.48).min(0.92);
                 } else if pause_after >= 0.35 {
                     b_quality += 0.25;
+                } else if is_zero_pause_continuation {
+                    b_quality -= 2.00;
                 } else if pause_after < 0.25 && next_fits_ceiling {
                     b_quality -= 1.25;
                 }
@@ -1173,21 +1219,20 @@ fn build_complete_phrase_window(
                 }
 
                 // 3в. Корректная обработка вопросов (`?`) и восклицательных панчлайнов (`!`):
-                // НИКОГДА не поощряем остановку на вопросе, если следом идет ответ собеседника (pause_after <= 5.5с)!
+                // НИКОГДА не поощряем остановку на вопросе, если следом идет ответ собеседника (pause_after <= 8.5с)!
                 let has_following_answer = curr_is_question
                     && end_idx + 1 < fragments.len()
-                    && pause_after <= 5.5
-                    && (fragments[end_idx + 1].end - pre_roll) <= max_ceiling;
+                    && pause_after <= 8.5;
 
                 let is_answer_to_prev_q = end_idx > s_idx
                     && {
                         let prev_t = fragments[end_idx - 1].text.trim();
                         prev_t.ends_with('?') || prev_t.ends_with("?!") || prev_t.ends_with("!?")
                     }
-                    && (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0) <= 5.5;
+                    && (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0) <= 8.5;
 
                 if has_following_answer {
-                    b_quality -= 1.60;
+                    b_quality -= 2.50;
                 } else if is_sent_end && !is_weak_end && curr_is_pure_exclam && pause_after >= 0.35 {
                     // Настоящий восклицательный панчлайн с паузой после него!
                     b_quality += 0.62;
@@ -1217,7 +1262,7 @@ fn build_complete_phrase_window(
                             || nt.contains("не за что")
                             || nt.contains("пожалуйста")
                             || nt.contains("помочь вам")
-                            || nt.contains("смогла помочь");
+                            || nt.contains("смогла помочь")
                     };
                 if curr_is_thanks && next_is_thanks_reply && pause_after <= 0.45 && next_fits_ceiling {
                     b_quality -= 1.85;
@@ -1243,9 +1288,8 @@ fn build_complete_phrase_window(
                 let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.42;
                 b_quality -= dist_penalty;
 
-                // Слабое/незавершенное окончание (`is_weak_end`, например открытый вопрос «А это ещё что?», «Ли, так кого надо проверить?»)
-                // НИКОГДА не должно перебивать уже найденное чистое завершение предложения (`prev.3 == true`)!
-                let curr_clean = is_sent_end && !is_weak_end;
+                // Чистое окончание предложения (без слабого обрыва, без продолжения без вдоха втугую и без открытого вопроса)
+                let curr_clean = is_sent_end && !is_weak_end && !is_zero_pause_continuation && !has_following_answer;
                 let beats_prev = match &best_choice {
                     None => true,
                     Some(prev) => {

@@ -37,9 +37,10 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     let lower = trimmed.to_lowercase().replace('ё', "е");
 
     // 1. Технические теги звуков, музыки и субтитров вида [музыка], (музыка), *музыка*, ♪ и т.д.
-    if (lower.starts_with('[') && lower.ends_with(']'))
-        || (lower.starts_with('(') && lower.ends_with(')'))
-        || (lower.starts_with('*') && lower.ends_with('*'))
+    let stripped_symbols = lower.trim_matches(['.', '!', '?', ',', '-', '—', '"', '\'', '«', '»', ' ']);
+    if (stripped_symbols.starts_with('[') && stripped_symbols.ends_with(']'))
+        || (stripped_symbols.starts_with('(') && stripped_symbols.ends_with(')'))
+        || (stripped_symbols.starts_with('*') && stripped_symbols.ends_with('*'))
         || lower.contains('♪')
         || lower.contains('♫')
         || lower.contains('🎵')
@@ -108,6 +109,14 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "всхлип",
         "всхлипы",
         "песня",
+        "неразборчиво",
+        "не разборчиво",
+        "показывает",
+        "слышен",
+        "слышно",
+        "шепот",
+        "вздохи",
+        "тихие звуки",
     ];
     if exact_tags.contains(&clean_exact) {
         return true;
