@@ -259,9 +259,9 @@ pub async fn render_clips_from_fragments(
                 frag.start,
                 frag.end,
                 &srt_fragments,
-                2.5,
+                0.25,
                 min_d,
-                max_d + 2.5,
+                max_d + 1.0,
             );
             (ns, ne)
         } else {

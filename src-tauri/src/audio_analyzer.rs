@@ -503,6 +503,27 @@ fn find_music_plateau_in_range(
     None
 }
 
+/// Вычисляет локальный порог тихой впадины (22-й перцентиль RMS в окне ±3.5с вокруг `center_sec`),
+/// чтобы во время боевых сцен с фоновой музыкой / гулом двигателей (-21 dB) алгоритм не путал фоновую музыку с оборванной речью!
+fn compute_local_valley_db(profile: &AudioEnergyProfile, center_sec: f64) -> f32 {
+    let idx_s = profile.time_to_idx((center_sec - 3.5).max(0.0));
+    let idx_e = profile.time_to_idx((center_sec + 3.5).min(profile.duration_sec));
+    if idx_e <= idx_s + 6 {
+        return profile.quiet_valley_db;
+    }
+    let mut local_vals: Vec<f32> = profile.rms_db[idx_s..=idx_e]
+        .iter()
+        .copied()
+        .filter(|&v| v > -82.0)
+        .collect();
+    if local_vals.len() < 8 {
+        return profile.quiet_valley_db;
+    }
+    local_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p22 = local_vals[local_vals.len() * 22 / 100];
+    p22.max(profile.quiet_valley_db).min(profile.loud_peak_db - 3.5)
+}
+
 /// Выравнивает начало и конец клипа по тихим местам в широком окне до `±2.5 сек` (`max_shift_sec = 2.5`):
 /// 1) Исключает обрыв начала голосовой фразы (если актёр начал говорить раньше таймкода Whisper — сдвигает старт назад в тишину перед атакой голоса).
 /// 2) Исключает обрыв конца фразы (если в расчетной точке `end_sec` голос ещё звучит — доводит границу вперёд до реального спада звука в тихую паузу).
@@ -520,7 +541,7 @@ pub fn refine_clip_bounds_by_audio(
         return (raw_start, raw_end, false, false);
     }
 
-    let max_shift = max_shift_sec.clamp(0.4, 2.5);
+    let max_shift = max_shift_sec.clamp(0.15, 2.5);
 
     // Определяем первую и последнюю реплики внутри клипа (если есть субтитры), чтобы знать безопасные границы соседних чужих фраз
     let first_cue_idx = fragments
@@ -530,77 +551,85 @@ pub fn refine_clip_bounds_by_audio(
         .iter()
         .rposition(|f| f.end > raw_start + 0.20 && f.start < raw_end - 0.20);
 
-    // --- 1. ВЫРАВНИВАНИЕ НАЧАЛА КЛИПА (`new_start`) В ОКНЕ ДО 2.5 СЕК ---
+    // --- 1. ВЫРАВНИВАНИЕ НАЧАЛА КЛИПА (`new_start`) ---
     let mut min_allowed_start = (raw_start - max_shift).max(0.0);
-    let mut max_allowed_start = (raw_start + 0.55).min(raw_end - min_clip_dur.max(3.5));
+    let mut max_allowed_start = (raw_start + 0.45.min(max_shift)).min(raw_end - min_clip_dur.max(3.5));
 
     if let Some(f_idx) = first_cue_idx {
         let first_cue = &fragments[f_idx];
-        // Не сдвигаем старт позже, чем за 0.08с до официального начала первой реплики клипа
+        // Не сдвигаем старт позже, чем за 0.08с до начала первой реплики клипа,
+        // и не уводим раньше, чем за 0.65с до первой реплики (чтобы фоновый шум/BGM не утягивал старт на 2.3с в предыдущую сцену!)
         max_allowed_start = max_allowed_start.min((first_cue.start - 0.08).max(raw_start));
+        min_allowed_start = min_allowed_start.max((first_cue.start - 0.65.min(max_shift)).max(0.0));
 
         if f_idx > 0 {
             let prev_cue = &fragments[f_idx - 1];
             let gap_before = (first_cue.start - prev_cue.end).max(0.0);
-            // Если предыдущая реплика закончилась недавно, не залезаем на её фактическое звучание,
-            // но позволяем искать тихую впадину вплоть до `prev_cue.end - 0.15` (на случай если таймкод `prev_cue.end` чуть растянут)
             if gap_before <= max_shift + 0.5 {
-                min_allowed_start = min_allowed_start.max((prev_cue.end - 0.12).max(0.0));
+                min_allowed_start = min_allowed_start.max((prev_cue.end + 0.02).min(raw_start));
             }
         }
     }
 
     let raw_start_idx = profile.time_to_idx(raw_start);
     let start_rms = profile.smoothed_rms_at(raw_start_idx);
+    let local_start_valley_db = compute_local_valley_db(profile, raw_start);
     let mut rescued_start = false;
 
-    let new_start = if start_rms > profile.quiet_valley_db + 1.8 {
-        // В точке `raw_start` УЖЕ звучит голос или громкий звук (фраза началась раньше таймкода)!
-        // Ищем назад (до 2.5 сек) ближайшую устойчивую тихую впадину ПЕРЕД началом этой звуковой атаки.
+    let new_start = if start_rms > local_start_valley_db + 2.2 && start_rms > profile.quiet_valley_db + 1.8 {
+        // В точке `raw_start` УЖЕ звучит голос поверх локального фона (фраза началась раньше таймкода)!
         rescued_start = true;
-        find_quiet_valley_before_onset(profile, raw_start, min_allowed_start, max_allowed_start)
+        find_quiet_valley_before_onset(
+            profile,
+            raw_start,
+            min_allowed_start,
+            max_allowed_start,
+            local_start_valley_db,
+        )
     } else {
         // В точке `raw_start` относительно тихо — находим самую чистую точку тишины (минимальный RMS + Peak)
-        // в окрестности `[ (raw_start - 0.65).max(min_allowed_start) .. max_allowed_start ]`,
-        // чтобы разрез прошел строго по дну впадины без щелчков и вдохов
-        let local_min_bound = (raw_start - 0.65).max(min_allowed_start);
+        let local_min_bound = (raw_start - 0.45.min(max_shift)).max(min_allowed_start);
         find_cleanest_quiet_point(profile, raw_start, local_min_bound, max_allowed_start)
     };
 
-    // --- 2. ВЫРАВНИВАНИЕ КОНЦА КЛИПА (`new_end`) В ОКНЕ ДО 2.5 СЕК ---
-    let mut min_allowed_end = (raw_end - 0.65).max(new_start + min_clip_dur.max(4.0));
+    // --- 2. ВЫРАВНИВАНИЕ КОНЦА КЛИПА (`new_end`) ---
+    let mut min_allowed_end = (raw_end - 0.45.min(max_shift)).max(new_start + min_clip_dur.max(4.0));
     let mut max_allowed_end = (raw_end + max_shift)
         .min(profile.duration_sec)
-        .min(new_start + max_clip_dur + 2.2);
+        .min(new_start + max_clip_dur + 3.8);
 
     if let Some(l_idx) = last_cue_idx {
         let last_cue = &fragments[l_idx];
-        // Разрешаем отступить назад максимум до `last_cue.end - 0.25` (если таймкод `last_cue.end` захватил паузу и первый слог следующей реплики)
-        min_allowed_end = min_allowed_end.max(last_cue.start + 0.65).max(last_cue.end - 0.28);
+        // Разрешаем отступить назад максимум до `last_cue.end - 0.22`, а вперед — не далее `last_cue.end + 0.95`
+        min_allowed_end = min_allowed_end.max(last_cue.start + 0.65).max(last_cue.end - 0.22);
+        max_allowed_end = max_allowed_end.min((last_cue.end + 0.95.min(max_shift)).min(profile.duration_sec));
 
         if l_idx + 1 < fragments.len() {
             let next_cue = &fragments[l_idx + 1];
             let gap_after = (next_cue.start - last_cue.end).max(0.0);
-            if gap_after >= 0.25 {
-                // Если после финальной реплики идет следующая реплика, ограничиваем поиск вперед началом следующей реплики + 0.15с
-                // (или до реального голосового вступления следующей реплики)
-                max_allowed_end = max_allowed_end.min(next_cue.start + 0.18);
+            if gap_after >= 0.08 {
+                // Строго не залезаем на начало следующей реплики!
+                max_allowed_end = max_allowed_end.min((next_cue.start - 0.04).max(last_cue.end + 0.04));
             }
         }
     }
 
     let raw_end_idx = profile.time_to_idx(raw_end);
     let end_rms = profile.smoothed_rms_at(raw_end_idx);
+    let local_end_valley_db = compute_local_valley_db(profile, raw_end);
     let mut rescued_end = false;
 
-    // Проверяем:
-    // А) Не начался ли прямо перед `raw_end` (после короткой тихой паузы) первый слог СЛЕДУЮЩЕЙ фразы?
-    // Б) Или наоборот, в точке `raw_end` всё ещё продолжается текущая фраза (голос не успел затихнуть)?
-    let new_end = if end_rms > profile.quiet_valley_db + 1.5 {
+    let new_end = if end_rms > local_end_valley_db + 2.0 && end_rms > profile.quiet_valley_db + 1.5 {
         rescued_end = true;
-        resolve_active_end_boundary(profile, raw_end, min_allowed_end, max_allowed_end)
+        resolve_active_end_boundary(
+            profile,
+            raw_end,
+            min_allowed_end,
+            max_allowed_end,
+            local_end_valley_db,
+        )
     } else {
-        let local_max_bound = (raw_end + 0.65).min(max_allowed_end);
+        let local_max_bound = (raw_end + 0.50.min(max_shift)).min(max_allowed_end);
         find_cleanest_quiet_point(profile, raw_end, min_allowed_end, local_max_bound)
     };
 
@@ -614,13 +643,14 @@ pub fn refine_clip_bounds_by_audio(
     (final_start, final_end, rescued_start, rescued_end)
 }
 
-/// Если в точке `raw_start` уже звучит голос, сканирует назад до `min_start` (до 2.5 сек),
-/// чтобы найти тихую впадину перед началом этой фразы и поставить точку старта за ~140 мс до голосовой атаки.
+/// Если в точке `raw_start` уже звучит голос, сканирует назад до `min_start`,
+/// чтобы найти тихую впадину перед началом этой фразы и поставить точку старта за ~100 мс до голосовой атаки.
 fn find_quiet_valley_before_onset(
     profile: &AudioEnergyProfile,
     raw_start: f64,
     min_start: f64,
     max_start: f64,
+    local_valley_db: f32,
 ) -> f64 {
     let idx_raw = profile.time_to_idx(raw_start);
     let idx_min = profile.time_to_idx(min_start);
@@ -630,10 +660,9 @@ fn find_quiet_valley_before_onset(
     // если `raw_start` зацепил самый последний затухающий хвост предыдущего шума перед паузой!
     for k in idx_raw..=idx_max {
         if k + 2 < profile.rms_db.len()
-            && profile.rms_db[k] <= profile.quiet_valley_db
-            && profile.rms_db[k + 1] <= profile.quiet_valley_db
+            && profile.rms_db[k] <= local_valley_db + 0.5
+            && profile.rms_db[k + 1] <= local_valley_db + 0.5
         {
-            // Нашли чистую паузу прямо перед первым словом клипа!
             let valley_center = (k + 1).min(idx_max);
             return profile.idx_to_time(valley_center);
         }
@@ -649,13 +678,12 @@ fn find_quiet_valley_before_onset(
             best_db = db;
             best_idx = k;
         }
-        // Если нашли устойчивую тихую паузу (>= 3 фреймов = 60 мс подряд ниже порога тихой впадины)
+        // Если нашли устойчивую тихую паузу (>= 3 фреймов = 60 мс подряд ниже локального порога тихой впадины)
         if k >= idx_min + 2
-            && profile.rms_db[k] <= profile.quiet_valley_db + 0.5
-            && profile.rms_db[k - 1] <= profile.quiet_valley_db + 0.5
-            && profile.rms_db[k - 2] <= profile.quiet_valley_db + 1.0
+            && profile.rms_db[k] <= local_valley_db + 0.8
+            && profile.rms_db[k - 1] <= local_valley_db + 0.8
+            && profile.rms_db[k - 2] <= local_valley_db + 1.2
         {
-            // Ставим старт внутри этой тихой паузы (за ~100–120 мс до подъема голоса)
             let target_idx = (k.saturating_sub(1)).max(idx_min);
             return profile.idx_to_time(target_idx);
         }
@@ -666,31 +694,31 @@ fn find_quiet_valley_before_onset(
 
 /// Когда в точке `raw_end` уровень звука высокий (голос ещё звучит):
 /// - Проверяет, не начался ли прямо перед `raw_end` (после тихой впадины) первый слог СЛЕДУЮЩЕЙ фразы. Если да — режет по этой тихой впадине!
-/// - Иначе (текущая фраза ещё договаривается за пределами таймкода субтитра) — идет вперёд (до +2.5 сек) до первой устойчивой тихой паузы после окончания фразы!
+/// - Иначе (текущая фраза ещё договаривается за пределами таймкода субтитра) — идет вперёд до первой устойчивой тихой паузы после окончания фразы!
 fn resolve_active_end_boundary(
     profile: &AudioEnergyProfile,
     raw_end: f64,
     min_end: f64,
     max_end: f64,
+    local_valley_db: f32,
 ) -> f64 {
     let idx_raw = profile.time_to_idx(raw_end);
     let idx_min = profile.time_to_idx(min_end);
     let idx_max = profile.time_to_idx(max_end);
 
-    // 1. Проверяем, была ли в последних 0.55с перед `raw_end` четкая тихая пауза (`>= 80 мс`), после которой начался новый всплеск речи
-    // (это значит, что `raw_end` уже зацепил первый слог следующей реплики!)
-    let lookback_start = idx_raw.saturating_sub(28).max(idx_min);
+    // 1. Проверяем, была ли в последних 0.45с перед `raw_end` четкая тихая пауза (`>= 60 мс`), после которой начался новый всплеск речи
+    let lookback_start = idx_raw.saturating_sub(22).max(idx_min);
     for k in (lookback_start..idx_raw.saturating_sub(2)).rev() {
-        if profile.rms_db[k] <= profile.quiet_valley_db
-            && profile.rms_db[k + 1] <= profile.quiet_valley_db
-            && profile.rms_db[k.saturating_sub(1)] <= profile.quiet_valley_db + 1.0
+        if profile.rms_db[k] <= local_valley_db + 0.6
+            && profile.rms_db[k + 1] <= local_valley_db + 0.6
+            && profile.rms_db[k.saturating_sub(1)] <= local_valley_db + 1.2
         {
             return profile.idx_to_time(k + 1);
         }
     }
 
-    // 2. Текущая фраза/возглас продолжается в точке `raw_end` — идем вперед до `idx_max` (+2.5 сек),
-    // пока фраза полностью не договорится и не уйдет в тихую впадину!
+    // 2. Текущая фраза/возглас продолжается в точке `raw_end` — идем вперед до `idx_max`,
+    // пока фраза полностью не договорится и не уйдет в локальную тихую впадину!
     let mut quiet_run = 0usize;
     let mut lowest_idx = idx_raw;
     let mut lowest_db = profile.smoothed_rms_at(idx_raw);
@@ -702,9 +730,8 @@ fn resolve_active_end_boundary(
             lowest_idx = k;
         }
 
-        if profile.rms_db[k] <= profile.quiet_valley_db + 0.8 {
+        if profile.rms_db[k] <= local_valley_db + 1.0 {
             quiet_run += 1;
-            // Как только голос стих на >= 4 фрейма (80 мс) — фиксируем конец клипа с мягким послезвучием 60 мс
             if quiet_run >= 4 {
                 let target_idx = (k.saturating_sub(1)).min(idx_max);
                 return profile.idx_to_time(target_idx);

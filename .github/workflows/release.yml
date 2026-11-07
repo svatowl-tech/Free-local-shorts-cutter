@@ -202,11 +202,29 @@ jobs:
           pattern: dist-*
           merge-multiple: true
 
-      - name: Список скачанных файлов релиза
+      - name: Список скачанных файлов релиза и очистка старых ассетов
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Если внутри all-dist-releases есть вложенные папки, поднимаем файлы в корень и удаляем пустые папки
+          find all-dist-releases -mindepth 2 -type f -exec mv -f {} all-dist-releases/ \; || true
+          find all-dist-releases -mindepth 1 -type d -empty -delete || true
           echo "=== СОДЕРЖИМОЕ all-dist-releases ==="
           ls -la all-dist-releases
+
+          # Последовательно удаляем предыдущие файлы из существующего релиза, чтобы избежать гонок параллельного удаления в GitHub API
+          TAG="${{ needs.prepare-release.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Релиз $TAG уже существует — очищаем старые бинарники перед загрузкой новой сборки..."
+            ASSETS=$(gh release view "$TAG" --json assets --jq '.assets[].name' || true)
+            while IFS= read -r asset_name; do
+              if [ -n "$asset_name" ]; then
+                echo "Удаление старого ассета: $asset_name"
+                gh release delete-asset "$TAG" "$asset_name" -y || true
+              fi
+            done <<< "$ASSETS"
+          fi
 
       - name: Опубликовать или обновить релиз ${{ needs.prepare-release.outputs.tag }}
         uses: softprops/action-gh-release@v2
@@ -216,9 +234,7 @@ jobs:
           target_commitish: ${{ needs.prepare-release.outputs.target_sha }}
           draft: ${{ github.event.inputs.draft == 'true' }}
           prerelease: ${{ github.event.inputs.prerelease == 'true' }}
-          files: |
-            all-dist-releases/*
-            all-dist-releases/**/*
+          files: all-dist-releases/*
           body: |
             ## 🎬 Video Cutter Pro ${{ needs.prepare-release.outputs.tag }}
 
@@ -238,3 +254,4 @@ jobs:
             *Сборка выполнена автоматически через GitHub Actions CI/CD.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

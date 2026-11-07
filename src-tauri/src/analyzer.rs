@@ -554,7 +554,8 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         "sits", "looking", "looks", "wearing", "wears", "holding", "holds", "walking",
         "walks", "running", "runs", "marching", "march", "talking", "speaks", "speaking",
         "smiling", "smiles", "smile", "smoking", "saluting", "leaps", "jumping", "flying",
-        "anime", "cartoon", "animated", "illustration",
+        "anime", "cartoon", "animated", "illustration", "creature", "creatures", "orb",
+        "glowing", "glow", "landscape", "circle", "circles", "figure", "figures", "bird",
     ];
     if !all_words.iter().any(|w| valid_visual_vocab.contains(w)) {
         return None;
