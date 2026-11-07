@@ -442,7 +442,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         clean = clean.replace('"', "");
     }
 
-    // Если модель после валидного описания кадра дописала псевдо-диалог («...casting a warm glow. GUEST: A figure...»),
+    // Если модель после валидного описания кадра дописала псевдо-диалог («...casting a warm glow. GUEST: A figure...», «...hand on his head. MAN: ...», «...ASSISTANT'S GUESSER: ...»),
     // отрезаем этот хвост до проверки стоп-слов
     for role_tail in [
         " GUEST:",
@@ -450,8 +450,19 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         " SPEAKER:",
         " USER:",
         " ASSISTANT:",
+        " ASSISTANT'S",
         " QUESTION:",
         " ANSWER:",
+        " MAN:",
+        " WOMAN:",
+        " FRIEND:",
+        " GIRL:",
+        " BOY:",
+        " SOLDIER:",
+        " VOICE:",
+        " PIT:",
+        " TITLE:",
+        " TEXT:",
     ] {
         if let Some(pos) = clean.find(role_tail) {
             let prefix = clean[..pos].trim();

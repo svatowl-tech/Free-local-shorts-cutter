@@ -37,6 +37,34 @@ struct SuggestedPayload {
     fragments: Vec<crate::commands::FragmentDto>,
 }
 
+#[derive(Serialize, Deserialize)]
+struct CachedTextScores {
+    version: u32,
+    engine: String,
+    model_name: String,
+    fragments_fingerprint: u64,
+    scores: Vec<f64>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedVisionScenes {
+    version: u32,
+    vision_model: String,
+    scenes: Vec<crate::analyzer::SceneCandidate>,
+}
+
+fn compute_fragments_fingerprint(frags: &[crate::text_analyzer::SubtitleFragment]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    frags.len().hash(&mut hasher);
+    for f in frags {
+        f.text.hash(&mut hasher);
+        ((f.start * 100.0).round() as i64).hash(&mut hasher);
+        ((f.end * 100.0).round() as i64).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 pub async fn run_pipeline(
     video_path: PathBuf,
     config: PipelineConfig,
@@ -71,6 +99,9 @@ pub async fn run_pipeline(
     };
 
     let file_stem = video_path.file_stem().and_then(|s| s.to_str()).unwrap_or("extracted");
+    let video_parent_dir = video_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let project_cache_dir = video_parent_dir.join(format!("{}_Проект", file_stem));
+    let _ = tokio::fs::create_dir_all(&project_cache_dir).await;
 
     // 1-2. Получение готовых субтитров из кэша проекта или первичная транскрибация через FFmpeg + Whisper
     crate::logger::emit_log(
@@ -125,12 +156,6 @@ pub async fn run_pipeline(
                 );
                 (Vec::new(), Vec::new())
             } else {
-                crate::logger::emit_log(
-                    &app_handle,
-                    "LLM",
-                    "info",
-                    &format!("Найдено {} чистых реплик в субтитрах. Запуск семантического анализа через движок '{}'...", frags.len(), config.text_engine),
-                );
                 let effective_model_name = if config.text_engine == "openai" {
                     config
                         .openai_model
@@ -189,66 +214,119 @@ pub async fn run_pipeline(
                     }
                 }
 
-                let text_config = crate::text_analyzer::TextAnalysisConfig {
-                    engine: match config.text_engine.as_str() {
-                        "openai" => crate::text_analyzer::TextEngine::OpenAi,
-                        "ollama" => crate::text_analyzer::TextEngine::Ollama,
-                        "llama" => crate::text_analyzer::TextEngine::LlamaCli,
-                        "builtin" => crate::text_analyzer::TextEngine::Builtin,
-                        _ => crate::text_analyzer::TextEngine::Builtin,
-                    },
-                    model_name: openai_model_name,
-                    ollama_url: config.ollama_url.clone(),
-                    openai_base_url,
-                    openai_api_key,
-                };
+                let text_scores_cache_path = project_cache_dir.join(format!("{}_text_scores.json", file_stem));
+                let frags_fp = compute_fragments_fingerprint(&frags);
+                let mut cached_scores_opt: Option<Vec<f64>> = None;
 
-                let scores = match crate::text_analyzer::analyze_text_with_llm(
-                    &frags, 
-                    &text_config, 
-                    &app_handle, 
-                    cancel_rx.resubscribe()
-                ).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        if e.to_string().contains("Отменено") {
-                            return Err(e);
-                        }
-                        crate::logger::emit_log(
-                            &app_handle,
-                            "LLM",
-                            "warn",
-                            &format!("Предохранитель текстового анализа: {}. Каскадный переход на llama-cli...", e),
-                        );
-                        match crate::text_analyzer::analyze_with_llama_cli(
-                            &frags,
-                            None,
-                            &app_handle,
-                            cancel_rx.resubscribe(),
-                        ).await {
-                            Ok(llama_s) => {
+                if text_scores_cache_path.exists() {
+                    if let Ok(raw_cache) = tokio::fs::read_to_string(&text_scores_cache_path).await {
+                        if let Ok(parsed_cache) = serde_json::from_str::<CachedTextScores>(&raw_cache) {
+                            if parsed_cache.version == 2
+                                && parsed_cache.engine == config.text_engine
+                                && parsed_cache.model_name == openai_model_name
+                                && parsed_cache.fragments_fingerprint == frags_fp
+                                && parsed_cache.scores.len() == frags.len()
+                            {
                                 crate::logger::emit_log(
                                     &app_handle,
                                     "LLM",
                                     "info",
-                                    &format!("✓ Резервный llama-cli успешно оценил {} реплик", frags.len()),
+                                    &format!(
+                                        "✓ Найдены готовые оценки диалогов в кэше проекта ({} реплик, движок '{}'). Повторный запуск LLM не требуется!",
+                                        frags.len(),
+                                        config.text_engine
+                                    ),
                                 );
-                                llama_s
-                            }
-                            Err(e2) => {
-                                if e2.to_string().contains("Отменено") {
-                                    return Err(e2);
-                                }
-                                crate::logger::emit_log(
-                                    &app_handle,
-                                    "LLM",
-                                    "warn",
-                                    &format!("Сбой llama-cli: {}. Финальный переход на высокоскоростной встроенный NLP расчет.", e2),
-                                );
-                                crate::text_analyzer::compute_text_scores_advanced(&frags)
+                                cached_scores_opt = Some(parsed_cache.scores);
                             }
                         }
                     }
+                }
+
+                let scores = if let Some(cached_s) = cached_scores_opt {
+                    cached_s
+                } else {
+                    crate::logger::emit_log(
+                        &app_handle,
+                        "LLM",
+                        "info",
+                        &format!("Найдено {} чистых реплик в субтитрах. Запуск семантического анализа через движок '{}'...", frags.len(), config.text_engine),
+                    );
+                    let text_config = crate::text_analyzer::TextAnalysisConfig {
+                        engine: match config.text_engine.as_str() {
+                            "openai" => crate::text_analyzer::TextEngine::OpenAi,
+                            "ollama" => crate::text_analyzer::TextEngine::Ollama,
+                            "llama" => crate::text_analyzer::TextEngine::LlamaCli,
+                            "builtin" => crate::text_analyzer::TextEngine::Builtin,
+                            _ => crate::text_analyzer::TextEngine::Builtin,
+                        },
+                        model_name: openai_model_name.clone(),
+                        ollama_url: config.ollama_url.clone(),
+                        openai_base_url,
+                        openai_api_key,
+                    };
+
+                    let computed = match crate::text_analyzer::analyze_text_with_llm(
+                        &frags,
+                        &text_config,
+                        &app_handle,
+                        cancel_rx.resubscribe()
+                    ).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            if e.to_string().contains("Отменено") {
+                                return Err(e);
+                            }
+                            crate::logger::emit_log(
+                                &app_handle,
+                                "LLM",
+                                "warn",
+                                &format!("Предохранитель текстового анализа: {}. Каскадный переход на llama-cli...", e),
+                            );
+                            match crate::text_analyzer::analyze_with_llama_cli(
+                                &frags,
+                                None,
+                                &app_handle,
+                                cancel_rx.resubscribe(),
+                            ).await {
+                                Ok(llama_s) => {
+                                    crate::logger::emit_log(
+                                        &app_handle,
+                                        "LLM",
+                                        "info",
+                                        &format!("✓ Резервный llama-cli успешно оценил {} реплик", frags.len()),
+                                    );
+                                    llama_s
+                                }
+                                Err(e2) => {
+                                    if e2.to_string().contains("Отменено") {
+                                        return Err(e2);
+                                    }
+                                    crate::logger::emit_log(
+                                        &app_handle,
+                                        "LLM",
+                                        "warn",
+                                        &format!("Сбой llama-cli: {}. Финальный переход на высокоскоростной встроенный NLP расчет.", e2),
+                                    );
+                                    crate::text_analyzer::compute_text_scores_advanced(&frags)
+                                }
+                            }
+                        }
+                    };
+
+                    if computed.len() == frags.len() {
+                        let cache_payload = CachedTextScores {
+                            version: 2,
+                            engine: config.text_engine.clone(),
+                            model_name: openai_model_name,
+                            fragments_fingerprint: frags_fp,
+                            scores: computed.clone(),
+                        };
+                        if let Ok(json_str) = serde_json::to_string(&cache_payload) {
+                            let _ = tokio::fs::write(&text_scores_cache_path, json_str).await;
+                        }
+                    }
+                    computed
                 };
                 (frags, scores)
             }
@@ -265,19 +343,61 @@ pub async fn run_pipeline(
         (Vec::new(), Vec::new())
     };
 
-    // 4. Визуальный и аудио-энергетический анализ ключевых сцен
+    // 4. Визуальный и аудио-энергетический анализ ключевых сцен (с кэшированием в папке проекта)
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 75.0, 
         stage: "Визуальный анализ ключевых сцен...".to_string() 
     });
 
-    let vision_model = config.vision_model_path.clone().map(PathBuf::from);
-    let scenes = crate::analyzer::analyze_video(
-        video_path.clone(),
-        vision_model,
-        app_handle.clone(),
-        cancel_rx.resubscribe()
-    ).await.unwrap_or_default();
+    let vision_model_str = config.vision_model_path.clone().unwrap_or_default();
+    let vision_cache_path = project_cache_dir.join(format!("{}_vision_scenes.json", file_stem));
+    let mut cached_scenes_opt: Option<Vec<crate::analyzer::SceneCandidate>> = None;
+
+    if vision_cache_path.exists() {
+        if let Ok(raw_vcache) = tokio::fs::read_to_string(&vision_cache_path).await {
+            if let Ok(parsed_vcache) = serde_json::from_str::<CachedVisionScenes>(&raw_vcache) {
+                if parsed_vcache.version == 2
+                    && parsed_vcache.vision_model == vision_model_str
+                    && !parsed_vcache.scenes.is_empty()
+                {
+                    crate::logger::emit_log(
+                        &app_handle,
+                        "Analyzer",
+                        "info",
+                        &format!(
+                            "✓ Найдены готовые визуальные сцены Vision AI в кэше проекта ({} сцен). Повторный запуск FFmpeg и Vision AI не требуется!",
+                            parsed_vcache.scenes.len()
+                        ),
+                    );
+                    cached_scenes_opt = Some(parsed_vcache.scenes);
+                }
+            }
+        }
+    }
+
+    let scenes = if let Some(cached_sc) = cached_scenes_opt {
+        cached_sc
+    } else {
+        let vision_model = config.vision_model_path.clone().map(PathBuf::from);
+        let analyzed_sc = crate::analyzer::analyze_video(
+            video_path.clone(),
+            vision_model,
+            app_handle.clone(),
+            cancel_rx.resubscribe()
+        ).await.unwrap_or_default();
+
+        if !analyzed_sc.is_empty() {
+            let vcache_payload = CachedVisionScenes {
+                version: 2,
+                vision_model: vision_model_str,
+                scenes: analyzed_sc.clone(),
+            };
+            if let Ok(json_str) = serde_json::to_string(&vcache_payload) {
+                let _ = tokio::fs::write(&vision_cache_path, json_str).await;
+            }
+        }
+        analyzed_sc
+    };
 
     // 4.5. Высокоточный профиль звуковой энергии (шаг 20 мс, адаптивный порог тишины, пики экшена и зоны OP/ED)
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
@@ -1053,10 +1173,10 @@ fn build_complete_phrase_window(
                 }
 
                 // 3в. Корректная обработка вопросов (`?`) и восклицательных панчлайнов (`!`):
-                // НИКОГДА не поощряем остановку на вопросе, если следом идет ответ собеседника (pause_after <= 3.2с)!
+                // НИКОГДА не поощряем остановку на вопросе, если следом идет ответ собеседника (pause_after <= 5.5с)!
                 let has_following_answer = curr_is_question
                     && end_idx + 1 < fragments.len()
-                    && pause_after <= 3.2
+                    && pause_after <= 5.5
                     && (fragments[end_idx + 1].end - pre_roll) <= max_ceiling;
 
                 let is_answer_to_prev_q = end_idx > s_idx
@@ -1064,10 +1184,10 @@ fn build_complete_phrase_window(
                         let prev_t = fragments[end_idx - 1].text.trim();
                         prev_t.ends_with('?') || prev_t.ends_with("?!") || prev_t.ends_with("!?")
                     }
-                    && (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0) <= 3.2;
+                    && (fragments[end_idx].start - fragments[end_idx - 1].end).max(0.0) <= 5.5;
 
                 if has_following_answer {
-                    b_quality -= 1.40;
+                    b_quality -= 1.60;
                 } else if is_sent_end && !is_weak_end && curr_is_pure_exclam && pause_after >= 0.35 {
                     // Настоящий восклицательный панчлайн с паузой после него!
                     b_quality += 0.62;
@@ -1098,12 +1218,28 @@ fn build_complete_phrase_window(
                 let dist_penalty = ((dur - target_dur).abs() / max_dur) * 0.42;
                 b_quality -= dist_penalty;
 
-                if best_choice.as_ref().map_or(true, |prev| b_quality > prev.5) {
+                // Слабое/незавершенное окончание (`is_weak_end`, например открытый вопрос «А это ещё что?», «Ли, так кого надо проверить?»)
+                // НИКОГДА не должно перебивать уже найденное чистое завершение предложения (`prev.3 == true`)!
+                let curr_clean = is_sent_end && !is_weak_end;
+                let beats_prev = match &best_choice {
+                    None => true,
+                    Some(prev) => {
+                        if curr_clean && !prev.3 {
+                            true
+                        } else if !curr_clean && prev.3 {
+                            false
+                        } else {
+                            b_quality > prev.5
+                        }
+                    }
+                };
+
+                if beats_prev {
                     best_choice = Some((
                         end_idx,
                         pre_roll,
                         post_roll,
-                        is_sent_end && !is_weak_end,
+                        curr_clean,
                         crossed_scene_transition,
                         b_quality,
                     ));
@@ -1190,7 +1326,9 @@ fn build_complete_phrase_window(
     let mut cue_count = 0usize;
     let mut song_cue_count = 0usize;
     let mut exclam_cues = 0usize;
+    let mut question_cues = 0usize;
     let mut intense_punct_cues = 0usize;
+    let mut high_llm_cues = 0usize;
     let mut active_speech_sec = 0.0;
     let mut max_internal_gap = 0.0_f64;
 
@@ -1212,9 +1350,15 @@ fn build_complete_phrase_window(
         let sc = text_scores.get(j).copied().unwrap_or(0.40);
         cue_scores.push(sc);
         cue_count += 1;
+        if sc >= 0.72 {
+            high_llm_cues += 1;
+        }
 
         if f.text.contains('!') {
             exclam_cues += 1;
+        }
+        if f.text.contains('?') {
+            question_cues += 1;
         }
         if f.text.contains("?!") || f.text.contains("!?") || f.text.contains("!!") {
             intense_punct_cues += 1;
@@ -1258,19 +1402,31 @@ fn build_complete_phrase_window(
         0.0
     };
 
-    // Бонус/штраф эмоционального накала внутри окна:
-    // - Спокойный разговор без единого восклицательного знака получает ощутимый штраф `-0.10`, чтобы не попадать в выборки высокого уровня эмоций (0.85+)!
-    // - Настоящая взрывная кульминация (несколько восклицаний подряд, `?!`/`!!`, высокий пик) получает бонус `+0.085..+0.11`, позволяя пробить 0.90–0.96!
-    let emotion_burst_modifier = if exclam_cues == 0 && intense_punct_cues == 0 {
-        -0.10
-    } else if exclam_cues >= 4 || (exclam_cues >= 3 && peak_score >= 0.85) {
+    // Бонус/штраф эмоционального накала внутри окна (учитывающий как восклицания в экшене, так и вопросы/драматический обмен в детективах/комедиях):
+    let emotion_burst_modifier = if exclam_cues >= 4
+        || (exclam_cues >= 3 && peak_score >= 0.82)
+        || (exclam_cues >= 2 && high_llm_cues >= 3)
+    {
         0.11
-    } else if exclam_cues >= 3 || (exclam_cues >= 2 && intense_punct_cues >= 1) {
+    } else if exclam_cues >= 3
+        || (exclam_cues >= 2 && (intense_punct_cues >= 1 || question_cues >= 1 || high_llm_cues >= 2))
+    {
         0.085
-    } else if exclam_cues == 2 || intense_punct_cues >= 1 {
-        0.045
-    } else {
+    } else if exclam_cues == 2
+        || intense_punct_cues >= 1
+        || (exclam_cues == 1 && (question_cues >= 1 || high_llm_cues >= 2))
+    {
+        0.055
+    } else if exclam_cues == 1
+        || question_cues >= 2
+        || high_llm_cues >= 2
+        || (question_cues == 1 && high_llm_cues >= 1)
+    {
+        0.025
+    } else if question_cues == 1 || high_llm_cues == 1 || speech_density >= 0.58 {
         0.0
+    } else {
+        -0.05
     };
 
     // Бонус за совпадение с сильной визуальной динамикой / аудио-пиком
@@ -1286,11 +1442,11 @@ fn build_complete_phrase_window(
         0.0
     };
 
-    // Широкий динамический диапазон оценки окна (0.28 .. 0.97):
-    // - Спокойные разговорные сцены (0 восклицаний): 0.38 – 0.68
-    // - Одиночные реплики с 1 восклицанием: 0.68 – 0.81
-    // - Сильные эмоциональные сцены (2 восклицания / драма): 0.82 – 0.88
-    // - Супер-интенсивные кульминации (3+ восклицаний / бой, для порога 0.90+): 0.89 – 0.96
+    // Широкий и сбалансированный динамический диапазон оценки окна (0.28 .. 0.97):
+    // - Спокойная экспозиция без вопросов и пиков: 0.45 – 0.68
+    // - Содержательные диалоговые сцены (детектив / комедия / вопросы / 1 восклицание): 0.65 – 0.82
+    // - Сильные эмоциональные сцены (2 восклицания / драма / расследование): 0.80 – 0.88
+    // - Супер-интенсивные кульминации (3+ восклицаний / бой / шок, для порога 0.85–0.90+): 0.87 – 0.96
     let mut raw_window_score = peak_score * 0.56
         + top2_avg * 0.26
         + avg_score * 0.10
@@ -1300,13 +1456,17 @@ fn build_complete_phrase_window(
         + scene_bonus
         - transition_penalty;
 
-    // Окно без единого восклицательного знака / двойной пунктуации и без явного визуального пика (>= 0.82)
-    // жестко ограничено сверху порогом 0.68, а с одиночным обычным восклицанием — порогом 0.81,
-    // чтобы при пороге 0.85–0.90 отбирались только по-настоящему бурные эмоциональные сцены!
-    if exclam_cues == 0 && intense_punct_cues == 0 && max_scene_in_win < 0.82 {
+    if exclam_cues == 0
+        && intense_punct_cues == 0
+        && question_cues == 0
+        && high_llm_cues == 0
+        && max_scene_in_win < 0.80
+    {
         raw_window_score = raw_window_score.min(0.68);
+    } else if exclam_cues == 0 && intense_punct_cues == 0 && max_scene_in_win < 0.82 {
+        raw_window_score = raw_window_score.min(0.79);
     } else if exclam_cues == 1 && intense_punct_cues == 0 && peak_score < 0.85 && max_scene_in_win < 0.85 {
-        raw_window_score = raw_window_score.min(0.81);
+        raw_window_score = raw_window_score.min(0.84);
     }
 
     let window_score = raw_window_score.clamp(0.28, 0.97);
