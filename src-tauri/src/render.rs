@@ -232,6 +232,17 @@ pub async fn render_clip(
         args.push(vf_filters.join(","));
     }
 
+    // Анти-клик микро-фейд 40 мс на входе и выходе клипа (полностью устраняет цифровые щелчки на границах нарезки аудио)
+    if duration_sec >= 0.25 {
+        let fade_out_start = (duration_sec - 0.040).max(0.05);
+        let af_filter = format!(
+            "afade=t=in:st=0:d=0.040,afade=t=out:st={:.3}:d=0.040",
+            fade_out_start
+        );
+        args.push("-af".to_string());
+        args.push(af_filter);
+    }
+
     // Кодеки видео и аудио (максимальная совместимость со всеми устройствами)
     args.push("-c:v".to_string());
     args.push("libx264".to_string());
@@ -253,7 +264,7 @@ pub async fn render_clip(
         &app_handle,
         "Render",
         "info",
-        &format!("Рендеринг клипа: [{:.2}с - {:.2}с] -> '{}' (вертикально={}, субтитры={})", start_sec, start_sec + duration_sec, output_path.display(), config.vertical_format, temp_clip_srt.is_some()),
+        &format!("Рендеринг клипа: [{:.2}с - {:.2}с] -> '{}' (вертикально={}, субтитры={}, микро-фейд=40мс)", start_sec, start_sec + duration_sec, output_path.display(), config.vertical_format, temp_clip_srt.is_some()),
     );
 
     let command = match shell.sidecar("ffmpeg") {

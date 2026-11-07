@@ -703,13 +703,22 @@ async fn run_two_factor_scene_analysis(
         total_frames: 100,
     });
 
-    // 3. Детектируем участки с эмоциональной звуковой активностью (поиск речи/всплесков громкости)
+    // 3. Детектируем участки с эмоциональной звуковой активностью и строим 20-мс профиль громкости (RMS/Peak/OP-ED)
     let audio_ranges = crate::ffmpeg::detect_audio_activity(
         video_path.clone(),
         duration,
         app_handle.clone(),
         cancel_rx.resubscribe(),
     ).await.unwrap_or_default();
+
+    let audio_profile_opt = crate::audio_analyzer::get_or_create_audio_profile(
+        &video_path,
+        &[],
+        &app_handle,
+        cancel_rx.resubscribe(),
+    )
+    .await
+    .ok();
 
     let _ = app_handle.emit("analyzer-progress", AnalyzerProgressPayload {
         percent: 90.0,
@@ -727,6 +736,13 @@ async fn run_two_factor_scene_analysis(
             continue;
         }
 
+        // Исключаем склейки внутри распознанных зон Опенинга и Эндинга (OP/ED), чтобы Vision AI не тратил время на заставку
+        if let Some(ref prof) = audio_profile_opt {
+            if prof.overlaps_op_ed((scene_t - 2.0).max(0.0), scene_t + 2.0) {
+                continue;
+            }
+        }
+
         // 1. Плотность монтажных склеек в 15-секундном окне вокруг точки (в обычном разговоре 2–5 склеек, в экшене 10–25+)
         let local_cuts = scene_cuts
             .iter()
@@ -738,13 +754,13 @@ async fn run_two_factor_scene_analysis(
             0.04 + ((local_cuts as f64 - 3.0) / 22.0).clamp(0.0, 0.24)
         };
 
-        // 2. Сопоставление со звуковой активностью
+        // 2. Сопоставление со звуковой активностью и пиковой громкостью из 20-мс аудио-профиля
         let matching_audio = audio_ranges.iter().find(|(a_start, a_end)| {
             scene_t >= (*a_start - 1.2) && scene_t <= (*a_end + 1.2)
         });
 
         let is_near_audio = matching_audio.is_some();
-        let audio_bonus = if let Some((a_start, a_end)) = matching_audio {
+        let mut audio_bonus = if let Some((a_start, a_end)) = matching_audio {
             let seg_len = (a_end - a_start).max(1.0);
             let rel_pos = ((scene_t - a_start) / seg_len).clamp(0.0, 1.0);
             let focus = 1.0 - (rel_pos - 0.35).abs();
@@ -752,6 +768,21 @@ async fn run_two_factor_scene_analysis(
         } else {
             0.0
         };
+
+        // Дополнительный бонус за экстремальный пик громкости (взрыв, выстрел, крик, экшн-кульминация) в радиусе ±1.5с
+        if let Some(ref prof) = audio_profile_opt {
+            let s_idx = prof.time_to_idx((scene_t - 1.5).max(0.0));
+            let e_idx = prof.time_to_idx((scene_t + 1.5).min(duration));
+            if e_idx > s_idx {
+                let local_rms_max = prof.rms_db[s_idx..=e_idx]
+                    .iter()
+                    .copied()
+                    .fold(-90.0f32, f32::max);
+                if local_rms_max >= prof.loud_peak_db {
+                    audio_bonus += 0.055;
+                }
+            }
+        }
 
         // 3. Защита от перекоса в сторону начальной заставки и конечных титров в длинных видео > 10 мин
         let narrative_factor = if duration > 600.0 && (scene_t < 60.0 || scene_t > duration - 60.0) {
@@ -779,7 +810,36 @@ async fn run_two_factor_scene_analysis(
         });
     }
 
-    // Б. Если смен сцен мало, добавляем центры самых громких участков звука
+    // Б. Включаем самые мощные звуковые экшн-пики серии (взрывы, сражения, магия в сочетании со сменой планов, вне OP/ED),
+    // чтобы они гарантированно прошли визуальную верификацию через Vision AI и попали в кандидаты даже без субтитров!
+    if let Some(ref prof) = audio_profile_opt {
+        let intro_skip = if duration > 180.0 { 4.0 } else { 0.0 };
+        let outro_limit = if duration > 300.0 { (duration - 25.0).max(10.0) } else { duration };
+        let action_peaks = crate::audio_analyzer::extract_high_intensity_action_windows(
+            prof,
+            &scene_cuts,
+            &[],
+            &[],
+            8.0,
+            11.0,
+            15.0,
+            intro_skip,
+            outro_limit,
+        );
+        for (a_idx, (w_start, w_end, a_score, _, _)) in action_peaks.into_iter().enumerate() {
+            let mid_ts = (w_start + w_end) * 0.5;
+            if !candidate_scenes.iter().any(|c| (c.timestamp_sec - mid_ts).abs() < 6.0) {
+                candidate_scenes.push(SceneCandidate {
+                    timestamp_sec: mid_ts,
+                    description: format!("Экшн-пик звука #{} ({:.1}с)", a_idx + 1, mid_ts),
+                    intensity: a_score.clamp(0.72, 0.91),
+                    actions: vec!["экшен/кульминация".to_string(), "звуковой пик".to_string()],
+                });
+            }
+        }
+    }
+
+    // Б2. Если смен сцен мало, добавляем центры самых громких участков звука
     if candidate_scenes.len() < 5 {
         for (idx, (a_start, a_end)) in audio_ranges.iter().enumerate() {
             let mid = ((a_start + a_end) / 2.0).min(duration - 2.0);

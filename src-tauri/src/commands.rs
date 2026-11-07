@@ -222,6 +222,25 @@ pub async fn render_clips_from_fragments(
         &format!("Директория сохранения готовых клипов: '{}'", clips_dir.display()),
     );
 
+    let srt_fragments = if let Some(ref srt) = srt_path {
+        tokio::fs::read_to_string(srt)
+            .await
+            .ok()
+            .map(|c| crate::text_analyzer::parse_srt(&c))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let audio_profile_opt = crate::audio_analyzer::get_or_create_audio_profile(
+        &video_buf,
+        &srt_fragments,
+        &app,
+        cancel_rx.resubscribe(),
+    )
+    .await
+    .ok();
+
     let mut generated_clips = Vec::new();
     let total_fragments = fragments.len().max(1);
 
@@ -232,13 +251,28 @@ pub async fn render_clips_from_fragments(
             stage: format!("Рендеринг клипа {} из {} ({})...", i + 1, fragments.len(), format_label) 
         });
 
-        let start_sec = frag.start;
-        let duration = (frag.end - frag.start).max(0.5);
+        let (start_sec, end_sec) = if let Some(ref prof) = audio_profile_opt {
+            let max_d = (frag.end - frag.start).max(8.0);
+            let min_d = (max_d * 0.5).clamp(4.0, 10.0);
+            let (ns, ne, _, _) = crate::audio_analyzer::refine_clip_bounds_by_audio(
+                prof,
+                frag.start,
+                frag.end,
+                &srt_fragments,
+                2.5,
+                min_d,
+                max_d + 2.5,
+            );
+            (ns, ne)
+        } else {
+            (frag.start, frag.end)
+        };
+        let duration = (end_sec - start_sec).max(0.5);
 
         let start_min = (start_sec / 60.0) as u32;
         let start_s = (start_sec % 60.0) as u32;
-        let end_min = (frag.end / 60.0) as u32;
-        let end_s = (frag.end % 60.0) as u32;
+        let end_min = (end_sec / 60.0) as u32;
+        let end_s = (end_sec % 60.0) as u32;
 
         let clip_filename = format!(
             "Клип {:02} [{:02}m{:02}s - {:02}m{:02}s].mp4",

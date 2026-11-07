@@ -5,6 +5,7 @@ mod error;
 mod ffmpeg;
 mod whisper;
 mod analyzer;
+pub mod audio_analyzer;
 mod text_analyzer;
 mod render;
 pub mod pipeline;

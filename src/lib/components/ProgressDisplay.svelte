@@ -160,7 +160,7 @@
   <div class="space-y-2 flex-1 flex flex-col min-h-[180px]">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="label-mono flex items-center gap-2">
-        <span>Консоль логирования (FFmpeg / Whisper / LLM / Рендер)</span>
+        <span>Консоль логирования (FFmpeg / Whisper / Аудио / LLM / Рендер)</span>
         <span class="text-xs text-[rgba(226,226,224,0.4)] font-mono">({$pipelineStore.logs.length} строк)</span>
       </div>
       

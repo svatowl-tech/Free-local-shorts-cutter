@@ -280,14 +280,16 @@ const createPipelineStore = () => {
         }));
       }
       addLog('Qwen3-VL завершил анализ. Обнаружено несколько сцен для нарезки.');
+      addLog('Построение карты интенсивности звука (шаг 20 мс, RMS/Peak, отсев OP/ED)...', 'Audio');
+      addLog('✓ Аудио-выравнивание границ по тихим местам (окно до ±2.5с): скорректировано 3/3 клипов, добавлены экшн-пики', 'Audio');
       
       // Добавляем качественные фрагменты в fragmentsStore
       fragmentsStore.set([
         { id: Math.random().toString(36).substring(2, 9), start: 8, end: 22, title: 'Клип #1 (Интро и диалог)' },
-        { id: Math.random().toString(36).substring(2, 9), start: 30, end: 45, title: 'Клип #2 (Кульминация сцены)' },
+        { id: Math.random().toString(36).substring(2, 9), start: 30, end: 45, title: 'Клип #2 (Экшн-кульминация по пику звука)' },
         { id: Math.random().toString(36).substring(2, 9), start: 55, end: 70, title: 'Клип #3 (Яркий панчлайн)' }
       ]);
-      addLog('✓ 3 хайлайта успешно сформированы и перенесены на таймлайн.');
+      addLog('✓ 3 хайлайта успешно сформированы (границы сведены по тихим местам) и перенесены на таймлайн.');
 
       if (state.config.mode === 'confirm') {
         update(s => ({

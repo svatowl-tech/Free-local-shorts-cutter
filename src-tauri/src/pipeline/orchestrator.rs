@@ -279,6 +279,20 @@ pub async fn run_pipeline(
         cancel_rx.resubscribe()
     ).await.unwrap_or_default();
 
+    // 4.5. Высокоточный профиль звуковой энергии (шаг 20 мс, адаптивный порог тишины, пики экшена и зоны OP/ED)
+    let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
+        percent: 81.0,
+        stage: "Построение карты интенсивности звука и поиск тихих границ...".to_string()
+    });
+    let audio_profile_opt = crate::audio_analyzer::get_or_create_audio_profile(
+        &video_path,
+        &fragments,
+        &app_handle,
+        cancel_rx.resubscribe(),
+    )
+    .await
+    .ok();
+
     // 5. Умное построение списка лучших фрагментов (Хайлайтов) с динамической длительностью по границам полных фраз
     // `config.max_clip_duration_sec` задает реальный верхний потолок длительности ролика (например, 12с или 20с),
     // а `min_dur` и `target_dur` масштабируются пропорционально, чтобы клипы не превышали выбранный пользователем лимит
@@ -335,6 +349,11 @@ pub async fn run_pipeline(
                 outro_limit,
                 video_duration,
             ) {
+                if let Some(ref prof) = audio_profile_opt {
+                    if prof.overlaps_op_ed(cand.0, cand.1) {
+                        continue;
+                    }
+                }
                 all_valid_windows.push(cand);
             }
         }
@@ -375,6 +394,11 @@ pub async fn run_pipeline(
                     outro_limit,
                     video_duration,
                 ) {
+                    if let Some(ref prof) = audio_profile_opt {
+                        if prof.overlaps_op_ed(cand.0, cand.1) {
+                            continue;
+                        }
+                    }
                     // Усиливаем окно только если сама визуальная сцена имеет высокий накал (>= 0.75)
                     if scene.intensity >= 0.75 {
                         cand.2 = (cand.2 + (scene.intensity - 0.72) * 0.14).min(0.96);
@@ -395,6 +419,35 @@ pub async fn run_pipeline(
                     scene.description.clone(),
                 ));
             }
+        }
+    }
+
+    // В. Включаем самые мощные звуковые экшн-сцены серии (взрывы, сражения, магия + частая смена планов, вне OP/ED),
+    // чтобы взрывной экшен без диалогов (или с короткими выкриками) попадал в пул кандидатов!
+    if let Some(ref prof) = audio_profile_opt {
+        let scene_cut_times: Vec<f64> = scenes.iter().map(|s| s.timestamp_sec).collect();
+        let action_windows = crate::audio_analyzer::extract_high_intensity_action_windows(
+            prof,
+            &scene_cut_times,
+            &fragments,
+            &scenes,
+            min_dur,
+            target_dur,
+            max_dur,
+            intro_skip,
+            outro_limit,
+        );
+        if !action_windows.is_empty() {
+            crate::logger::emit_log(
+                &app_handle,
+                "Audio",
+                "info",
+                &format!(
+                    "✓ В пул кандидатов добавлено {} мощных экшн-сцен по пикам звуковой интенсивности и смене кадров (OP/ED отфильтрованы)",
+                    action_windows.len()
+                ),
+            );
+            all_valid_windows.extend(action_windows);
         }
     }
 
@@ -570,6 +623,32 @@ pub async fn run_pipeline(
 
     // Сортируем по времени начала в хронологическом порядке
     selected_intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // 4. НОВЫЙ АУДИО-ЭТАП: Мягкая доводка границ выбранных клипов по тихим местам в окне до ±2.5 сек!
+    // Гарантирует, что ролик не обрывается на начале или хвосте голосовой фразы, вышедшей за тайминг субтитров,
+    // и начинается/заканчивается строго во впадине тишины без щелчков и обрезков слов.
+    if let Some(ref prof) = audio_profile_opt {
+        let stats = crate::audio_analyzer::refine_selected_intervals_with_audio(
+            prof,
+            &mut selected_intervals,
+            &fragments,
+            min_dur,
+            max_dur,
+        );
+        crate::logger::emit_log(
+            &app_handle,
+            "Audio",
+            "info",
+            &format!(
+                "✓ Аудио-выравнивание границ по тихим местам (окно до ±2.5с): скорректировано {}/{} клипов (макс. сдвиг {:.2}с, спасено от обрыва: {} начал и {} окончаний фраз)",
+                stats.adjusted_clips,
+                stats.total_clips,
+                stats.max_shift_sec,
+                stats.rescued_speech_starts,
+                stats.rescued_speech_ends
+            ),
+        );
+    }
 
     let suggested_fragments: Vec<crate::commands::FragmentDto> = selected_intervals
         .iter()

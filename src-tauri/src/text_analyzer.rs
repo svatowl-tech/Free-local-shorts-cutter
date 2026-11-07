@@ -202,12 +202,18 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
         "потому-то",
         "потому что ",
         "так что ",
+        "ведь,",
         "ведь ",
+        "причем,",
         "причем ",
         "к тому же",
         "более того",
         "тем более",
+        "однако,",
         "однако ",
+        "иначе,",
+        "иначе говоря",
+        "значит,",
         "зато ",
         "он еще и ",
         "она еще и ",
@@ -229,7 +235,6 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
         "вам многом из-за",
         "благодаря этому",
         "в результате ",
-        "иначе говоря",
         "другими словами",
         "короче говоря",
         "тем не менее",
@@ -240,6 +245,7 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
         "в духе ",
         "впрочем,",
         "впрочем ",
+        "то есть,",
         "то есть ",
         "легкая остринка",
         "легкая астринка",
@@ -521,6 +527,7 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         "да", "нет", "ну да", "конечно", "согласен", "интересно", "привет",
         "разрешите войти", "разрешите представиться", "прошу сюда", "вот именно",
         "ничего страшного", "принято", "совершенно верно", "вы совершенно правы",
+        "например", "к примеру", "какой еще сюрприз",
     ];
     if weak_backchannels.contains(&clean.as_str()) {
         return true;
@@ -559,6 +566,9 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         || clean.starts_with("заходи, я представл")
         || clean.starts_with("госпожа обер")
         || clean.starts_with("господин обер")
+        || clean.starts_with("товарищ полковник,")
+        || clean.starts_with("товарищ генерал,")
+        || clean.contains("хочет подготовить сюрприз")
         || clean.contains("вы же понимаете, что мы не можем")
         || clean.contains("как считаете, на какие уступки")
         || clean.contains("могу я быть с вами честен")
