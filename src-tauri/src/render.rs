@@ -1440,12 +1440,12 @@ fn build_ffmpeg_piecewise_ratio_expr(segments: &[CameraSegment]) -> String {
 }
 
 /// Рендерит видео хайлайтов в формате 16:9 YouTube, объединяя все отобранные клипы-интервалы
-/// с применением мягкого перекрёстного наплыва (Crossfade 0.5с) и синхронизацией аудио.
+/// с применением мягкого перекрёстного наплыва (Crossfade 0.4с) и предварительным выравниванием по тишине.
 pub async fn render_highlights_assembly(
     video_path: PathBuf,
     intervals: &[(f64, f64)],
     output_path: PathBuf,
-    _srt_path: Option<PathBuf>,
+    srt_path: Option<PathBuf>,
     app_handle: AppHandle,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<()> {
@@ -1457,14 +1457,37 @@ pub async fn render_highlights_assembly(
         let _ = tokio::fs::create_dir_all(parent).await;
     }
 
+    // Выравнивание границ хайлайтов по тишине (-0.8с .. +1.5с) через кэшированный 20-мс профиль звуковой энергии
+    let mut aligned_intervals: Vec<(f64, f64)> = intervals.to_vec();
+    let srt_fragments = if let Some(ref sp) = srt_path {
+        tokio::fs::read_to_string(sp).await.ok().map(|c| crate::text_analyzer::parse_srt(&c)).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    if let Ok(prof) = crate::audio_analyzer::get_or_create_audio_profile(
+        &video_path,
+        &srt_fragments,
+        &app_handle,
+        cancel_rx.resubscribe(),
+    ).await {
+        crate::logger::emit_log(
+            &app_handle,
+            "Audio",
+            "info",
+            &format!("Выравнивание границ {} фрагментов хайлайтов по точкам тишины (-0.8с .. +1.5с)...", aligned_intervals.len()),
+        );
+        crate::audio_analyzer::refine_speech_intervals_by_silence(&prof, &mut aligned_intervals, 4.0);
+    }
+
     let temp_dir = output_path.parent().unwrap_or_else(|| Path::new(".")).join("temp_highlights_render");
     let _ = tokio::fs::create_dir_all(&temp_dir).await;
 
     let mut temp_clips: Vec<PathBuf> = Vec::new();
     let mut clip_durations: Vec<f64> = Vec::new();
-    let total = intervals.len();
+    let total = aligned_intervals.len();
 
-    for (i, &(start_sec, end_sec)) in intervals.iter().enumerate() {
+    for (i, &(start_sec, end_sec)) in aligned_intervals.iter().enumerate() {
         if cancel_rx.try_recv().is_ok() {
             let _ = tokio::fs::remove_dir_all(&temp_dir).await;
             return Err(AppError::Anyhow(anyhow::anyhow!("Операция сборки хайлайтов отменена пользователем")));
@@ -1479,7 +1502,30 @@ pub async fn render_highlights_assembly(
         });
 
         // Нарезка 16:9 фрагмента с принудительной подгонкой под Full HD (1920x1080)
-        let vf_arg = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30";
+        let mut vf_filters: Vec<String> = vec![
+            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30".to_string(),
+        ];
+
+        // В хайлайты ОБЯЗАТЕЛЬНО включаем субтитры, если файл субтитров доступен
+        let mut temp_seg_srt: Option<PathBuf> = None;
+        if let Some(ref sp) = srt_path {
+            if let Some(seg_srt) = create_clip_srt(sp, start_sec, dur).await {
+                let srt_escaped = seg_srt
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .replace(':', "\\:")
+                    .replace('\'', "\\'")
+                    .replace('[', "\\[")
+                    .replace(']', "\\]");
+                let sub_filter = format!(
+                    "subtitles='{}':force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=2,MarginV=38'",
+                    srt_escaped
+                );
+                vf_filters.push(sub_filter);
+                temp_seg_srt = Some(seg_srt);
+            }
+        }
+        let vf_arg = vf_filters.join(",");
 
         let args = vec![
             "-y".to_string(),
@@ -1490,7 +1536,7 @@ pub async fn render_highlights_assembly(
             "-t".to_string(),
             format!("{:.3}", dur),
             "-vf".to_string(),
-            vf_arg.to_string(),
+            vf_arg,
             "-af".to_string(),
             "aresample=48000".to_string(),
             "-c:v".to_string(),
@@ -1533,6 +1579,10 @@ pub async fn render_highlights_assembly(
                     }
                 }
             }
+        }
+
+        if let Some(ref srt_f) = temp_seg_srt {
+            let _ = tokio::fs::remove_file(srt_f).await;
         }
 
         if !success || !temp_clip.exists() {
@@ -1726,12 +1776,29 @@ pub async fn render_talk_video_assembly(
         return Ok(());
     }
 
+    // Выравнивание речевых блоков по тишине и естественным паузам (-0.8с .. +1.5с) через кэшированный 20-мс профиль звуковой энергии
+    let mut aligned_speech = valid_speech;
+    if let Ok(prof) = crate::audio_analyzer::get_or_create_audio_profile(
+        &video_path,
+        &all_fragments,
+        &app_handle,
+        cancel_rx.resubscribe(),
+    ).await {
+        crate::logger::emit_log(
+            &app_handle,
+            "Audio",
+            "info",
+            &format!("Выравнивание границ {} реплик разговорного видео/демки по тишине (-0.8с .. +1.5с)...", aligned_speech.len()),
+        );
+        crate::audio_analyzer::refine_speech_intervals_by_silence(&prof, &mut aligned_speech, 0.25);
+    }
+
     // 2. Объединение речевых блоков с паузами < 0.45с в сплошные речевые интервалы
     let mut merged_blocks: Vec<(f64, f64)> = Vec::new();
-    let mut curr_start = valid_speech[0].0;
-    let mut curr_end = valid_speech[0].1;
+    let mut curr_start = aligned_speech[0].0;
+    let mut curr_end = aligned_speech[0].1;
 
-    for &(st, en) in valid_speech.iter().skip(1) {
+    for &(st, en) in aligned_speech.iter().skip(1) {
         if st - curr_end <= 0.45 {
             curr_end = curr_end.max(en);
         } else {
@@ -1768,11 +1835,34 @@ pub async fn render_talk_video_assembly(
         });
 
         // Чередование плана 1.0x и 1.15x на каждой склейке (jump-cut)
-        let vf_arg = if k % 2 == 1 {
-            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,scale=2208:1242,crop=1920:1080:(iw-1920)/2:(ih-1080)/2,fps=30".to_string()
+        let base_scale = if k % 2 == 1 {
+            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,scale=2208:1242,crop=1920:1080:(iw-1920)/2:(ih-1080)/2,fps=30"
         } else {
-            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30".to_string()
+            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
         };
+        let mut vf_filters: Vec<String> = vec![base_scale.to_string()];
+
+        // В демки озвучки персонажа (has_char_filter = true) ВКЛЮЧАЕМ субтитры.
+        // В монтаж разговорного видео (has_char_filter = false) субтитры НЕ включаем!
+        let mut temp_blk_srt: Option<PathBuf> = None;
+        if has_char_filter {
+            if let Some(blk_srt) = create_clip_srt(srt, st, dur).await {
+                let srt_escaped = blk_srt
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .replace(':', "\\:")
+                    .replace('\'', "\\'")
+                    .replace('[', "\\[")
+                    .replace(']', "\\]");
+                let sub_filter = format!(
+                    "subtitles='{}':force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=2,MarginV=38'",
+                    srt_escaped
+                );
+                vf_filters.push(sub_filter);
+                temp_blk_srt = Some(blk_srt);
+            }
+        }
+        let vf_arg = vf_filters.join(",");
         let af_arg = format!("afade=t=in:st=0:d=0.03,afade=t=out:st={:.3}:d=0.03,aresample=48000", (dur - 0.03).max(0.01));
 
         let args = vec![
@@ -1813,6 +1903,9 @@ pub async fn render_talk_video_assembly(
             tokio::select! {
                 _ = cancel_rx.recv() => {
                     let _ = child.kill();
+                    if let Some(ref srt_f) = temp_blk_srt {
+                        let _ = tokio::fs::remove_file(srt_f).await;
+                    }
                     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
                     return Err(AppError::Anyhow(anyhow::anyhow!("Отмена монтажа разговорного видео")));
                 }
@@ -1827,6 +1920,10 @@ pub async fn render_talk_video_assembly(
                     }
                 }
             }
+        }
+
+        if let Some(ref srt_f) = temp_blk_srt {
+            let _ = tokio::fs::remove_file(srt_f).await;
         }
 
         if success && temp_file.exists() {

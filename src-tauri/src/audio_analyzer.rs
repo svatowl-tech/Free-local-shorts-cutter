@@ -850,6 +850,77 @@ pub fn refine_selected_intervals_with_audio(
     stats
 }
 
+/// Выравнивает границы речевых блоков для Разговорного видео (Ток-видео), персонажных Демок и Хайлайтов
+/// по естественным точкам тишины и затухания звука с расширенным окном удержания вдоха (-0.8с) и хвоста речи (+1.5с).
+/// Предотвращает обрезание фраз поперек, если субтитры не совпадают с реальной озвучкой по таймингу.
+pub fn refine_speech_intervals_by_silence(
+    profile: &AudioEnergyProfile,
+    intervals: &mut Vec<(f64, f64)>,
+    min_dur: f64,
+) {
+    if intervals.is_empty() || profile.rms_db.is_empty() {
+        return;
+    }
+
+    for idx in 0..intervals.len() {
+        let (raw_s, raw_e) = intervals[idx];
+        if raw_e <= raw_s + 0.15 {
+            continue;
+        }
+
+        // Пределы расширения: до 0.8с до начала (захват тихого вдоха) и до 1.5с после конца (хвост реплики/затухание)
+        let min_s_limit = if idx > 0 {
+            // Не залезаем на окончание предыдущей фразы (оставляем зазор 0.05с)
+            (raw_s - 0.80).max(intervals[idx - 1].1 + 0.05).max(0.0)
+        } else {
+            (raw_s - 0.80).max(0.0)
+        };
+        let max_s_limit = (raw_s + 0.35).min(raw_e - min_dur.min(0.20));
+
+        let min_e_limit = (raw_s + min_dur.min(0.25)).max(raw_e - 0.35);
+        let max_e_limit = if idx + 1 < intervals.len() {
+            // Не залезаем на начало следующей реплики (оставляем зазор 0.05с)
+            (raw_e + 1.50).min(intervals[idx + 1].0 - 0.05).min(profile.duration_sec)
+        } else {
+            (raw_e + 1.50).min(profile.duration_sec)
+        };
+
+        if max_s_limit < min_s_limit || max_e_limit < min_e_limit {
+            continue;
+        }
+
+        let local_s_valley = compute_local_valley_db(profile, raw_s);
+        let raw_s_idx = profile.time_to_idx(raw_s);
+        let s_rms = profile.smoothed_rms_at(raw_s_idx);
+
+        let new_s = if s_rms > local_s_valley + 1.8 && s_rms > profile.quiet_valley_db + 1.2 {
+            // В точке `raw_s` уже звучит голос — ищем тихую паузу перед атакой звука
+            find_quiet_valley_before_onset(profile, raw_s, min_s_limit, max_s_limit, local_s_valley)
+        } else {
+            find_cleanest_quiet_point(profile, raw_s, min_s_limit, max_s_limit)
+        };
+
+        let local_e_valley = compute_local_valley_db(profile, raw_e);
+        let raw_e_idx = profile.time_to_idx(raw_e);
+        let e_rms = profile.smoothed_rms_at(raw_e_idx);
+
+        let new_e = if e_rms > local_e_valley + 1.6 && e_rms > profile.quiet_valley_db + 1.0 {
+            // В точке `raw_e` речь еще продолжается — удерживаем до затухания звука
+            resolve_active_end_boundary(profile, raw_e, min_e_limit, max_e_limit, local_e_valley)
+        } else {
+            find_cleanest_quiet_point(profile, raw_e, min_e_limit, max_e_limit)
+        };
+
+        let final_s = (new_s * 100.0).round() / 100.0;
+        let final_e = (new_e * 100.0).round() / 100.0;
+
+        if final_e > final_s + 0.20 {
+            intervals[idx].0 = final_s;
+            intervals[idx].1 = final_e;
+        }
+    }
+}
+
 /// Находит самые громкие и динамичные экшн-сцены в серии (взрывы, сражения, магия, боевой саундтрек),
 /// которые могли не попасть в текстовый отбор из-за отсутствия субтитров или малого числа слов.
 /// Строго комбинирует пики звуковой интенсивности + плотность смены кадров (`scene_cuts`) и автоматически отсекает OP/ED!

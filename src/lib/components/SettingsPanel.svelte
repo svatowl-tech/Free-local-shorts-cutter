@@ -520,23 +520,23 @@
           class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
         />
         <div>
-          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Сборка хайлайтов (16:9 YouTube)</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Сборник лучших моментов в единый ролик с мягкими переходами (Crossfade 0.4с) в папку <span class="font-mono text-[#e2e2e4]">Хайлайты/</span></div>
+          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Сборка хайлайтов (с субтитрами и переходами)</div>
+          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Сборник лучших моментов с вшитыми субтитрами в единый ролик (Crossfade 0.4с) в папку <span class="font-mono text-[#e2e2e4]">Хайлайты/</span></div>
         </div>
       </label>
 
       <!-- Checkbox 3: Talk Video Assembly -->
       <label class="flex items-center gap-3.5 p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] cursor-pointer hover:border-[rgba(226,226,224,0.2)] bg-[#0c0c0e]/60 transition-colors select-none">
         <input 
-          type="checkbox" 
-          checked={$pipelineStore.config.render_talk_video ?? false}
-          on:change={handleTalkVideoChange}
-          disabled={$pipelineStore.status === 'running'}
-          class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
+            type="checkbox" 
+            checked={$pipelineStore.config.render_talk_video ?? false}
+            on:change={handleTalkVideoChange}
+            disabled={$pipelineStore.status === 'running'}
+            class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
         />
         <div>
           <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Монтаж разговорного видео / Демки</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Чистовой монтаж без пауз и дублей со сменой плана (1.0x / 1.15x) в папку <span class="font-mono text-[#e2e2e4]">Ток-видео/</span></div>
+          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Чистовой монтаж без пауз и дублей с вшитыми субтитрами и сменой плана (1.0x / 1.15x) в папку <span class="font-mono text-[#e2e2e4]">Ток-видео/</span></div>
         </div>
       </label>
 

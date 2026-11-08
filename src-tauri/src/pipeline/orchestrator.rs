@@ -1057,11 +1057,11 @@ pub async fn run_pipeline(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("Запуск сборки видео хайлайтов в '16:9' с наплывами (Crossfade 0.4с): '{}'", highlights_path.display()),
+            &format!("Запуск сборки видео хайлайтов (формат: {}, субтитры: {}, наплывы: Crossfade 0.4с): '{}'", if config.vertical_format { "9:16 Shorts" } else { "16:9" }, srt_path.is_some(), highlights_path.display()),
         );
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
             percent: 98.0,
-            stage: "Сборка видео хайлайтов (16:9 YouTube + Crossfade 0.4с)...".to_string(),
+            stage: format!("Сборка видео хайлайтов ({} + Crossfade 0.4с + субтитры)...", if config.vertical_format { "9:16 Shorts" } else { "16:9" }),
         });
 
         let highlight_intervals: Vec<(f64, f64)> = selected_intervals.iter().map(|&(s, e, _, _, _)| (s, e)).collect();
@@ -1070,6 +1070,8 @@ pub async fn run_pipeline(
             &highlight_intervals,
             highlights_path.clone(),
             srt_path.clone(),
+            config.vertical_format,
+            config.subtitle_style.clone(),
             app_handle.clone(),
             cancel_rx.resubscribe(),
         ).await {
@@ -1083,7 +1085,7 @@ pub async fn run_pipeline(
             let _ = crate::render::attach_bumpers_if_enabled(
                 &highlights_path,
                 config.bumper_config.as_ref(),
-                false,
+                config.vertical_format,
                 &video_path,
                 &app_handle,
             ).await;
@@ -1103,17 +1105,19 @@ pub async fn run_pipeline(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("Запуск монтажа разговорного видео (Ток-видео / Демка) со сменой зума 1.0x/1.15x: '{}'", talk_path.display()),
+            &format!("Запуск монтажа разговорного видео ({}, формат: {}, субтитры: да) со сменой зума 1.0x/1.15x: '{}'", talk_label, if config.vertical_format { "9:16 Shorts" } else { "16:9" }, talk_path.display()),
         );
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
             percent: 99.0,
-            stage: "Монтаж чистового разговорного видео (Ток-видео без пауз)...".to_string(),
+            stage: format!("Монтаж чистового разговорного видео ({}, {} без пауз + субтитры)...", talk_label, if config.vertical_format { "9:16" } else { "16:9" }),
         });
 
         if let Err(e) = crate::render::render_talk_video_assembly(
             video_path.clone(),
             srt_path.clone(),
             config.selected_characters.as_deref(),
+            config.vertical_format,
+            config.subtitle_style.clone(),
             talk_path.clone(),
             app_handle.clone(),
             cancel_rx.resubscribe(),
@@ -1128,7 +1132,7 @@ pub async fn run_pipeline(
             let _ = crate::render::attach_bumpers_if_enabled(
                 &talk_path,
                 config.bumper_config.as_ref(),
-                false,
+                config.vertical_format,
                 &video_path,
                 &app_handle,
             ).await;
