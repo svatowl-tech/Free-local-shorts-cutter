@@ -145,24 +145,41 @@ jobs:
         run: |
           sudo mdutil -a -i off || true
 
+      - name: Сборка фронтенда (SvelteKit)
+        run: npm run build
+
       - name: Сборка дистрибутивов через Tauri
         shell: bash
         run: |
-          BUILD_CMD="npx @tauri-apps/cli build --target ${{ matrix.target }} ${{ runner.os == 'macOS' && '--bundles app' || '' }}"
-          echo "Выполнение команды: $BUILD_CMD"
-          
-          n=0
-          until [ $n -ge 3 ]
-          do
-            $BUILD_CMD && break
-            n=$((n+1))
-            echo "⚠️ Сборка Tauri прервана сетевым сбоем/таймаутом NSIS/MSI. Повторная попытка $n из 3..."
-            sleep 10
-          done
+          NO_BEFORE_BUILD='{"build":{"beforeBuildCommand":""}}'
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            echo "=== 1. Сборка Windows бинарника и NSIS установщика (.exe) ==="
+            n=0
+            until [ $n -ge 3 ]
+            do
+              npx @tauri-apps/cli build --target ${{ matrix.target }} --bundles nsis --config "$NO_BEFORE_BUILD" && break
+              n=$((n+1))
+              echo "⚠️ Повторная попытка сборки NSIS ($n из 3)..."
+              sleep 5
+            done
 
-          if [ $n -eq 3 ]; then
-            echo "⚠️ Сетевой таймаут скачивания бандлера NSIS/MSI (504 Gateway Timeout). Сборка бинарника через --no-bundle для создания Portable ZIP..."
-            npx @tauri-apps/cli build --target ${{ matrix.target }} --no-bundle || true
+            echo "=== 2. Сборка Windows MSI установщика (.msi) ==="
+            npx @tauri-apps/cli build --target ${{ matrix.target }} --bundles msi --config "$NO_BEFORE_BUILD" || echo "⚠️ Предупреждение: MSI пакет пропущен, основной NSIS .exe и Portable готовы."
+
+            if [ ! -f "src-tauri/target/${{ matrix.target }}/release/video-cutter.exe" ]; then
+              npx @tauri-apps/cli build --target ${{ matrix.target }} --no-bundle --config "$NO_BEFORE_BUILD"
+            fi
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            npx @tauri-apps/cli build --target ${{ matrix.target }} --bundles app --config "$NO_BEFORE_BUILD"
+          else
+            n=0
+            until [ $n -ge 3 ]
+            do
+              npx @tauri-apps/cli build --target ${{ matrix.target }} --config "$NO_BEFORE_BUILD" && break
+              n=$((n+1))
+              echo "⚠️ Повторная попытка сборки Linux пакетов ($n из 3)..."
+              sleep 5
+            done
           fi
         env:
           TARGET: ${{ matrix.target }}

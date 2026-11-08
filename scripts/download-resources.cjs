@@ -147,31 +147,47 @@ function findFilePartial(dir, mask) {
     return null;
 }
 
-// Загрузка файла с поддержкой редиректов и заголовков
+// Загрузка файла с поддержкой редиректов, повторных попыток (curl --retry) и заголовков
 function downloadFile(url, destPath) {
+    try {
+        console.log(`Загрузка (curl с авто-повтором при 502/504): ${url} -> ${destPath}`);
+        execSync(
+            `curl -fL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 -A "Mozilla/5.0 VideoCutterPro/2.1" -o "${destPath}" "${url}"`,
+            { stdio: 'inherit' }
+        );
+        if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1024) {
+            console.log(`✓ Сохранено: ${destPath} (${(fs.statSync(destPath).size / (1024 * 1024)).toFixed(1)} MB)`);
+            return Promise.resolve();
+        }
+    } catch (curlErr) {
+        console.warn(`Предупреждение curl (${curlErr.message}), переключаемся на встроенный HTTPS-загрузчик Node.js...`);
+    }
+
     return new Promise((resolve, reject) => {
-        console.log(`Загрузка: ${url} -> ${destPath}`);
+        console.log(`Загрузка (Node HTTPS): ${url} -> ${destPath}`);
         const protocol = url.startsWith('https') ? https : http;
         
         const options = {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VideoCutterPro/2.0',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VideoCutterPro/2.1',
                 'Accept': '*/*'
             }
         };
 
         const req = protocol.get(url, options, (response) => {
             if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-                // Следование редиректу
                 let redirectUrl = response.headers.location;
                 if (!redirectUrl.startsWith('http')) {
                     const parsed = new URL(url);
                     redirectUrl = `${parsed.protocol}//${parsed.host}${redirectUrl}`;
                 }
+                response.resume();
+                req.setTimeout(0);
                 return downloadFile(redirectUrl, destPath).then(resolve).catch(reject);
             }
 
             if (response.statusCode !== 200) {
+                response.resume();
                 return reject(new Error(`Не удалось скачать файл, статус-код: ${response.statusCode}`));
             }
 
@@ -195,10 +211,10 @@ function downloadFile(url, destPath) {
             reject(err);
         });
 
-        req.setTimeout(60000, () => {
+        req.setTimeout(300000, () => {
             req.destroy();
             fs.unlink(destPath, () => {});
-            reject(new Error('Превышен таймаут загрузки (60 секунд)'));
+            reject(new Error('Превышен таймаут загрузки (300 секунд)'));
         });
     });
 }
@@ -228,17 +244,33 @@ function extractArchive(archivePath, destDir) {
     }
 }
 
-// Подготовка директории моделей (модели скачиваются пользователем по требованию в приложении)
-function prepareModelsDirectory() {
-    console.log('\n--- 1. Подготовка директории src-tauri/models (модели загружаются пользователем из приложения) ---');
+// Подготовка директории моделей (базовая модель ggml-base.bin для оффлайн-работы из коробки)
+async function prepareModelsDirectory() {
+    console.log('\n--- 1. Подготовка директории src-tauri/models ---');
     if (!fs.existsSync(modelsDir)) {
         fs.mkdirSync(modelsDir, { recursive: true });
     }
     const placeholderModel = path.join(modelsDir, '.gitkeep');
     if (!fs.existsSync(placeholderModel)) {
-        fs.writeFileSync(placeholderModel, '# Models are downloaded on demand in-app\n');
+        fs.writeFileSync(placeholderModel, '# Models directory\n');
     }
-    console.log('✓ Директория src-tauri/models готова (без тяжелых моделей в дистрибутиве).');
+
+    const isMobile = target.includes('android') || target.includes('ios');
+    if (isMobile) {
+        console.log('✓ Мобильная цель сборки: пропуск предзагрузки ggml-base.bin.');
+        return;
+    }
+
+    const baseModelPath = path.join(modelsDir, 'ggml-base.bin');
+    const baseModelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin';
+
+    if (fs.existsSync(baseModelPath) && fs.statSync(baseModelPath).size > 100 * 1024 * 1024) {
+        console.log(`✓ Базовая модель Whisper (ggml-base.bin) уже загружена (${(fs.statSync(baseModelPath).size / (1024 * 1024)).toFixed(1)} MB).`);
+        return;
+    }
+
+    console.log('Загрузка базовой модели Whisper (ggml-base.bin, ~141 MB) для работы из коробки...');
+    await downloadFile(baseModelUrl, baseModelPath);
 }
 
 // Загрузка и подготовка бинарников Sidecar
@@ -258,41 +290,22 @@ async function downloadSidecars() {
             continue;
         }
 
-        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1024) {
-            console.log(`✓ Бинарник ${outName} уже существует. Пропуск.`);
+        if (fs.existsSync(outPath) && fs.statSync(outPath).size > 100 * 1024) {
+            console.log(`✓ Бинарник ${outName} уже существует (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(1)} MB). Пропуск.`);
             continue;
         }
 
         console.log(`\nПодготовка sidecar: ${sc.name} (${outName})`);
         const archivePath = path.join(tempDir, sc.archiveName);
 
-        if (!fs.existsSync(archivePath) || fs.statSync(archivePath).size < 1024) {
-            try {
-                await downloadFile(sc.url, archivePath);
-            } catch (err) {
-                console.warn(`[ПРЕДУПРЕЖДЕНИЕ] Ошибка загрузки архива для ${sc.name}:`, err.message);
-                console.log(`Создаем stub-бинарник для ${outName}`);
-                fs.writeFileSync(outPath, '# Placeholder binary for ' + sc.name);
-                if (process.platform !== 'win32') {
-                    fs.chmodSync(outPath, '755');
-                }
-                continue;
-            }
+        if (!fs.existsSync(archivePath) || fs.statSync(archivePath).size < 100 * 1024) {
+            await downloadFile(sc.url, archivePath);
         }
 
         const extractPath = path.join(tempDir, `extract_${sc.name}`);
         fs.rmSync(extractPath, { recursive: true, force: true });
 
-        try {
-            extractArchive(archivePath, extractPath);
-        } catch (err) {
-            console.warn(`Не удалось распаковать ${archivePath}:`, err.message);
-            fs.writeFileSync(outPath, '# Placeholder binary for ' + sc.name);
-            if (process.platform !== 'win32') {
-                fs.chmodSync(outPath, '755');
-            }
-            continue;
-        }
+        extractArchive(archivePath, extractPath);
 
         let srcBin = findFileRecursive(extractPath, sc.binName);
         if (!srcBin) {
@@ -320,15 +333,143 @@ async function downloadSidecars() {
                 fs.chmodSync(outPath, '755');
             }
         } else {
-            console.warn(`Файл ${sc.binName} не найден в архиве, создаем заглушку.`);
-            fs.writeFileSync(outPath, '# Static executable stub for ' + sc.name);
-            if (process.platform !== 'win32') {
-                fs.chmodSync(outPath, '755');
-            }
+            throw new Error(`Критическая ошибка: исполняемый файл ${sc.binName} для ${sc.name} не найден в распакованном архиве ${sc.archiveName}`);
         }
 
         fs.rmSync(extractPath, { recursive: true, force: true });
     }
+}
+
+// Предварительное кэширование NSIS и WiX (WixTools314) для Tauri на Windows (защита от HTTP 504 при сборке инсталляторов .exe и .msi)
+async function prewarmWindowsBundlerTools() {
+    if (!isWindows || process.platform !== 'win32') return;
+    const localAppData = process.env.LOCALAPPDATA;
+    if (!localAppData) return;
+
+    console.log('\n--- 3. Предварительное кэширование инструментов сборки Tauri (NSIS & WiX 3.14) ---');
+    const tauriCacheDir = path.join(localAppData, 'tauri');
+    const nsisDir = path.join(tauriCacheDir, 'NSIS');
+    const makensisPath = path.join(nsisDir, 'makensis.exe');
+    const nsisZipPath = path.join(tempDir, 'nsis-3.zip');
+    const nsisUrl = 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-3/nsis-3.zip';
+
+    const utilsDllDir = path.join(nsisDir, 'Plugins', 'x86-unicode');
+    const utilsDllPath = path.join(utilsDllDir, 'nsis_tauri_utils.dll');
+    const utilsDllUrl = 'https://github.com/tauri-apps/nsis-tauri-utils/releases/download/nsis_tauri_utils-v0.4.1/nsis_tauri_utils.dll';
+
+    const appIdDllPath = path.join(utilsDllDir, 'ApplicationID.dll');
+    const appIdZipPath = path.join(tempDir, 'NSIS-ApplicationID.zip');
+    const appIdUrl = 'https://github.com/tauri-apps/binary-releases/releases/download/nsis-plugins-v0/NSIS-ApplicationID.zip';
+
+    try {
+        if (!fs.existsSync(makensisPath)) {
+            fs.mkdirSync(nsisDir, { recursive: true });
+            await downloadFile(nsisUrl, nsisZipPath);
+            extractArchive(nsisZipPath, nsisDir);
+            const foundMakensis = findFileRecursive(nsisDir, 'makensis.exe');
+            if (foundMakensis && path.dirname(foundMakensis) !== nsisDir) {
+                const subDir = path.dirname(foundMakensis);
+                for (const item of fs.readdirSync(subDir)) {
+                    const srcItem = path.join(subDir, item);
+                    const dstItem = path.join(nsisDir, item);
+                    if (!fs.existsSync(dstItem)) {
+                        fs.renameSync(srcItem, dstItem);
+                    }
+                }
+            }
+            console.log('✓ Кэш NSIS для Tauri успешно подготовлен.');
+        } else {
+            console.log('✓ Кэш NSIS уже присутствует.');
+        }
+
+        fs.mkdirSync(utilsDllDir, { recursive: true });
+
+        if (!fs.existsSync(appIdDllPath)) {
+            await downloadFile(appIdUrl, appIdZipPath);
+            const appIdExtractDir = path.join(tempDir, 'extract_appid');
+            fs.rmSync(appIdExtractDir, { recursive: true, force: true });
+            extractArchive(appIdZipPath, appIdExtractDir);
+            const foundAppId = findFileRecursive(appIdExtractDir, 'ApplicationID.dll');
+            if (foundAppId) {
+                fs.copyFileSync(foundAppId, appIdDllPath);
+                console.log('✓ Плагин ApplicationID.dll успешно закэширован.');
+            }
+            fs.rmSync(appIdExtractDir, { recursive: true, force: true });
+        }
+
+        if (!fs.existsSync(utilsDllPath)) {
+            await downloadFile(utilsDllUrl, utilsDllPath);
+            console.log('✓ Плагин nsis_tauri_utils.dll успешно закэширован.');
+        }
+    } catch (err) {
+        console.warn('Предупреждение при прогреве кэша NSIS:', err.message);
+    }
+
+    // Прогрев WiX Toolset 3.14 (для сборки .msi без HTTP 504 от GitHub Releases)
+    const wixDir = path.join(tauriCacheDir, 'WixTools314');
+    const candlePath = path.join(wixDir, 'candle.exe');
+    const lightPath = path.join(wixDir, 'light.exe');
+    const wixZipPath = path.join(tempDir, 'wix314-binaries.zip');
+    const wixUrl = 'https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip';
+
+    try {
+        if (!fs.existsSync(candlePath) || !fs.existsSync(lightPath)) {
+            fs.mkdirSync(wixDir, { recursive: true });
+            await downloadFile(wixUrl, wixZipPath);
+            extractArchive(wixZipPath, wixDir);
+            const foundCandle = findFileRecursive(wixDir, 'candle.exe');
+            if (foundCandle && path.dirname(foundCandle) !== wixDir) {
+                const subDir = path.dirname(foundCandle);
+                for (const item of fs.readdirSync(subDir)) {
+                    const srcItem = path.join(subDir, item);
+                    const dstItem = path.join(wixDir, item);
+                    if (!fs.existsSync(dstItem)) {
+                        fs.renameSync(srcItem, dstItem);
+                    }
+                }
+            }
+            console.log('✓ Кэш WiX Toolset 3.14 (WixTools314) успешно подготовлен.');
+        } else {
+            console.log('✓ Кэш WiX Toolset 3.14 уже присутствует.');
+        }
+    } catch (err) {
+        console.warn('Предупреждение при прогреве кэша WiX 3.14:', err.message);
+    }
+}
+
+// Верификация целостности всех бинарников и библиотек перед сборкой десктопного бандла
+function verifyDesktopResources() {
+    const isMobile = target.includes('android') || target.includes('ios');
+    if (isMobile) return;
+
+    console.log('\n--- 4. Верификация целостности десктопных ресурсов ---');
+    for (const sc of sidecars) {
+        const outName = `${sc.name}-${target}${ext}`;
+        const outPath = path.join(resourcesDir, outName);
+        if (!fs.existsSync(outPath)) {
+            throw new Error(`Отсутствует обязательный sidecar-бинарник: ${outPath}`);
+        }
+        const size = fs.statSync(outPath).size;
+        if (size < 100 * 1024) {
+            throw new Error(`Поврежден или является заглушкой sidecar-бинарник ${outName} (${size} байт)`);
+        }
+        if (isWindows) {
+            const fd = fs.openSync(outPath, 'r');
+            const header = Buffer.alloc(2);
+            fs.readSync(fd, header, 0, 2, 0);
+            fs.closeSync(fd);
+            if (header.toString('ascii') !== 'MZ') {
+                throw new Error(`Бинарник ${outName} не имеет корректного PE-заголовка MZ`);
+            }
+        }
+        console.log(`✓ Проверен sidecar: ${outName} (${(size / (1024 * 1024)).toFixed(1)} MB)`);
+    }
+
+    const baseModelPath = path.join(modelsDir, 'ggml-base.bin');
+    if (!fs.existsSync(baseModelPath) || fs.statSync(baseModelPath).size < 100 * 1024 * 1024) {
+        throw new Error('Отсутствует или повреждена базовая модель src-tauri/models/ggml-base.bin');
+    }
+    console.log(`✓ Проверена базовая модель: ggml-base.bin (${(fs.statSync(baseModelPath).size / (1024 * 1024)).toFixed(1)} MB)`);
 }
 
 // Рекурсивное копирование всех DLL библиотек из архива
@@ -348,8 +489,10 @@ function copyAllDlls(fromDir, toDir) {
 }
 
 async function run() {
-    prepareModelsDirectory();
+    await prepareModelsDirectory();
     await downloadSidecars();
+    await prewarmWindowsBundlerTools();
+    verifyDesktopResources();
 
     try {
         fs.rmSync(tempDir, { recursive: true, force: true });
@@ -358,7 +501,7 @@ async function run() {
     }
 
     console.log('\n======================================================');
-    console.log('✅ ВСЕ БИНАРНИКИ УСПЕШНО ПОДГОТОВЛЕНЫ К СБОРКЕ!');
+    console.log('✅ ВСЕ БИНАРНИКИ И МОДЕЛИ УСПЕШНО ПОДГОТОВЛЕНЫ И ПРОВЕРЕНЫ!');
     console.log('======================================================\n');
 }
 

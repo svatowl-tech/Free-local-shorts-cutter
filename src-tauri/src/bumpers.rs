@@ -952,7 +952,7 @@ fn unpack_item_media_from_zip(
     files: &HashMap<String, Vec<u8>>,
     extract_dir: &Path,
 ) {
-    let mut unpack_field = |field: &mut Option<String>| {
+    let unpack_field = |field: &mut Option<String>| {
         let Some(val) = field.clone() else { return; };
         if let Some(rel) = val.strip_prefix("zip://") {
             if let Some(bytes) = files.get(rel) {

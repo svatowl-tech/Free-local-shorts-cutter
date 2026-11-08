@@ -4,7 +4,7 @@
   import { pipelineStore } from '../stores/pipeline';
   import { fragmentsStore, type Fragment } from '../stores/fragments';
   import { modelsStore } from '../stores/models';
-  import { getOpenAiProfiles, saveOpenAiProfiles, fetchOpenAiModels, type OpenAiProfile } from '../ipc';
+  import { getOpenAiProfiles, saveOpenAiProfiles, fetchOpenAiModels, parseCustomSubtitles, type OpenAiProfile, type SubtitleCharacterInfo } from '../ipc';
   import { isTauriRuntime, joinRelativePath, formatErrorMessage } from '../utils/path';
   import { ChevronDown, ChevronUp, Settings } from '@lucide/svelte';
   import BumperModal from './BumperModal.svelte';
@@ -301,18 +301,16 @@
     });
   }
 
-  let loadedCharacters: import('../ipc').SubtitleCharacterInfo[] = [];
+  let loadedCharacters: SubtitleCharacterInfo[] = [];
 
   $: if ($pipelineStore.customSubtitles && $pipelineStore.customSubtitles.characters.length > 0) {
     loadedCharacters = $pipelineStore.customSubtitles.characters;
   } else if ($pipelineStore.config.custom_subtitles_path) {
     const path = $pipelineStore.config.custom_subtitles_path;
-    import('../ipc').then(({ parseCustomSubtitles }) => {
-      parseCustomSubtitles(path).then(res => {
-        loadedCharacters = res.characters;
-      }).catch(() => {
-        loadedCharacters = [];
-      });
+    parseCustomSubtitles(path).then(res => {
+      loadedCharacters = res.characters;
+    }).catch(() => {
+      loadedCharacters = [];
     });
   } else {
     loadedCharacters = [];
