@@ -654,7 +654,7 @@ async fn build_dynamic_face_crop_expr(
         && (segments[0].start_ratio - segments[0].end_ratio).abs() < 0.025;
 
     if is_single_static {
-        let r = segments[0].start_ratio.clamp(0.16, 0.84);
+        let r = segments[0].start_ratio.clamp(0.18, 0.82);
         let expr = format!(
             "min(max(0, iw*{:.4} - (ih*(9/16))/2), iw-(ih*(9/16)))",
             r
@@ -859,13 +859,18 @@ fn analyze_bmp_frame_2d(
             let local_contrast = luma_max - luma_min;
             let avg_edge = edge_sum / cell_area;
 
+            // Защита от угловых водяных знаков / логотипов каналов / аватарок (вверху слева и вверху справа)
+            let x_norm = (px0 as f64) / (w as f64);
+            let is_corner_logo_cell = (x_norm > 0.74 || x_norm < 0.26) && y_norm < 0.28;
+            let corner_cell_damp = if is_corner_logo_cell { 0.40 } else { 1.00 };
+
             let head_y_prior = if (0.10..=0.56).contains(&y_norm) {
                 1.35
             } else if (0.06..=0.68).contains(&y_norm) {
                 0.85
             } else {
                 0.25
-            };
+            } * corner_cell_damp;
 
             grid_skin[cell_idx] = skin_frac * head_y_prior;
 
@@ -974,14 +979,82 @@ fn analyze_bmp_frame_2d(
                 };
 
                 let center_gx = (gx as f64 + (bw as f64) * 0.5) / (gw as f64);
-                let edge_guard = if (0.08..=0.92).contains(&center_gx) {
-                    1.0
+                let top_gy_norm = (gy as f64) / (gh as f64);
+                let is_corner_watermark_zone = (center_gx > 0.73 || center_gx < 0.27) && top_gy_norm < 0.32;
+
+                // 1. Проверяем анатомическую поддержку тела/шеи под рамкой лица:
+                // У настоящего персонажа под подбородком обязательно есть шея, плечи или одежда.
+                // У парящего логотипа/аватарки в верхнем углу снизу воздух/пустой фон.
+                let mut under_feature = 0.0_f64;
+                let under_y_start = gy + bh;
+                let under_y_end = (gy + bh + 3).min(gh);
+                if under_y_end > under_y_start {
+                    let mut under_count = 0.0_f64;
+                    for uy in under_y_start..under_y_end {
+                        for ux in gx..(gx + bw) {
+                            let u_idx = uy * gw + ux;
+                            under_feature += grid_skin[u_idx] * 1.6 + grid_edge[u_idx];
+                            under_count += 1.0;
+                        }
+                    }
+                    if under_count > 0.0 {
+                        under_feature /= under_count;
+                    }
+                }
+                let watermark_penalty = if is_corner_watermark_zone && under_feature < 0.12 {
+                    0.06 // жесткое подавление парящего в углу логотипа/водяного знака в 16 раз!
+                } else if is_corner_watermark_zone {
+                    0.50
                 } else {
-                    0.65
+                    1.00
                 };
 
-                let score = face_score * edge_guard;
-                if score > 0.30 {
+                // 2. Проверяем вертикальную протяженность (фильтр архитектурных каннелированных колонн и стен):
+                // У колонны вертикальные края идут непрерывно через всю высоту кадра вверх и вниз за пределы рамки.
+                let mut col_ext_sum = 0.0_f64;
+                let mut col_ext_count = 0.0_f64;
+                let above_start = gy.saturating_sub(3);
+                for ay in above_start..gy {
+                    for ax in gx..(gx + bw) {
+                        col_ext_sum += grid_edge[ay * gw + ax];
+                        col_ext_count += 1.0;
+                    }
+                }
+                let below_end = (gy + bh + 4).min(gh);
+                for by in (gy + bh)..below_end {
+                    for bx in gx..(gx + bw) {
+                        col_ext_sum += grid_edge[by * gw + bx];
+                        col_ext_count += 1.0;
+                    }
+                }
+                let avg_col_ext = if col_ext_count > 0.0 { col_ext_sum / col_ext_count } else { 0.0 };
+                let column_penalty = if avg_col_ext > 0.36 && skin_density < 0.22 {
+                    0.15 // подавление вертикальных архитектурных столбов/колонн
+                } else {
+                    1.00
+                };
+
+                // 3. Операторский композиционный центрирующий Prior:
+                // В кадре 16:9 персонажи компонуются в центре (0.50) или по правилу третей (0.33..0.66).
+                // Край кадра (x > 0.78 или x < 0.22) требует гораздо более высокой обоснованности.
+                let center_dist = (center_gx - 0.50).abs();
+                let composition_prior = (1.0 - (center_dist / 0.46).powi(2) * 0.44).clamp(0.55, 1.00);
+
+                // 4. Баланс черт лица: настоящее лицо обязательно имеет глаза и брови.
+                let feature_balance = if eye_density < 0.035 && skin_density > 0.12 {
+                    0.35 // однородная текстура без черт лица (плечо, спина, стена)
+                } else if eye_density >= 0.07 && upper_eye_density >= 0.05 {
+                    1.28 // выразительные глаза и черты лица
+                } else {
+                    1.00
+                };
+
+                let score = face_score
+                    * composition_prior
+                    * watermark_penalty
+                    * column_penalty
+                    * feature_balance;
+                if score > 0.28 {
                     raw_boxes.push((gx, gy, bw, bh, center_gx, score, scale_weight));
                 }
             }
@@ -1031,9 +1104,9 @@ fn analyze_bmp_frame_2d(
         }
 
         let refined_cx = if den > 0.1 {
-            (raw_cx * 0.60 + (num / den) * 0.40).clamp(0.16, 0.84)
+            (raw_cx * 0.60 + (num / den) * 0.40).clamp(0.18, 0.82)
         } else {
-            raw_cx.clamp(0.16, 0.84)
+            raw_cx.clamp(0.18, 0.82)
         };
 
         // Оцениваем активность мимики/рта (`speaker_activity`) внутри рамки лица (с акцентом на нижние 65% лица — губы/челюсть)
@@ -1054,8 +1127,8 @@ fn analyze_bmp_frame_2d(
         } else {
             0.0
         };
-        // В аниме и живой речи открывание/закрывание рта дает локальный перепад яркости ~3..18 единиц в ячейке
-        let speaker_activity = ((avg_mouth_motion - 1.2).max(0.0) / 10.5).clamp(0.0, 1.0);
+        // В аниме и живой речи открывание/закрывание рта дает локальный перепад яркости ~2.5..15 единиц в ячейке
+        let speaker_activity = ((avg_mouth_motion - 0.7).max(0.0) / 9.0).clamp(0.0, 1.0);
 
         candidates.push(FaceCandidate {
             center_ratio: refined_cx,
@@ -1080,7 +1153,7 @@ fn analyze_bmp_frame_2d(
             let w1 = c1.base_score * (1.0 + c1.speaker_activity * 0.4);
             let w2 = c2.base_score * (1.0 + c2.speaker_activity * 0.4);
             let mid = ((c1.center_ratio * w1 + c2.center_ratio * w2) / (w1 + w2).max(0.01))
-                .clamp(0.16, 0.84);
+                .clamp(0.18, 0.82);
             dual_group_ratio = Some(mid);
         }
     }
@@ -1127,7 +1200,7 @@ fn resolve_multiface_shot_segments(
     if dual_samples.len() * 2 >= slice.len() && !dual_samples.is_empty() {
         let num: f64 = dual_samples.iter().map(|(r, w)| r * w).sum();
         let den: f64 = dual_samples.iter().map(|(_, w)| *w).sum();
-        let group_ratio = (num / den.max(0.01)).clamp(0.16, 0.84);
+        let group_ratio = (num / den.max(0.01)).clamp(0.18, 0.82);
         return vec![CameraSegment {
             start_t,
             end_t,
@@ -1146,7 +1219,7 @@ fn resolve_multiface_shot_segments(
             let power = cand.base_score
                 * rank_factor
                 * cand.scale_weight
-                * (1.0 + cand.speaker_activity * 1.65);
+                * (1.0 + cand.speaker_activity * 2.80);
 
             if let Some(cl) = clusters
                 .iter_mut()
@@ -1174,6 +1247,27 @@ fn resolve_multiface_shot_segments(
     }
 
     clusters.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Защита от краевых ложных кластеров (водяные знаки, колонны, края стен):
+    // Если первый кластер оказался на крайнем краю (x > 0.77 или x < 0.23),
+    // а среди остальных кластеров есть кандидат в комфортной центральной зоне (x от 0.28 до 0.72),
+    // проверяем: если центральный кластер достаточно выражен (>= 35% веса крайнего ИЛИ замечен в 3+ кадрах),
+    // то предпочтение отдается центральному персонажу!
+    let mut best_cluster_idx = 0_usize;
+    if clusters.len() >= 2 && (clusters[0].0 > 0.77 || clusters[0].0 < 0.23) {
+        for (idx, cl) in clusters.iter().enumerate().skip(1) {
+            let is_central = cl.0 >= 0.28 && cl.0 <= 0.72;
+            if is_central && (cl.1 >= clusters[0].1 * 0.35 || cl.2 >= 3) {
+                best_cluster_idx = idx;
+                break;
+            }
+        }
+    }
+    if best_cluster_idx != 0 {
+        let chosen = clusters.remove(best_cluster_idx);
+        clusters.insert(0, chosen);
+    }
+
     let primary_cluster_x = clusters[0].0;
 
     // 3. Если в ракурсе есть 2 конкурирующих разнесенных лица (например левый собеседник ~28% и правый ~72%)
@@ -1192,7 +1286,7 @@ fn resolve_multiface_shot_segments(
                 let mut score_1 = 0.0_f64;
 
                 for cand in &s.candidates {
-                    let s_val = cand.base_score * (1.0 + cand.speaker_activity * 1.95);
+                    let s_val = cand.base_score * (1.0 + cand.speaker_activity * 2.20);
                     if (cand.center_ratio - primary_cluster_x).abs() < 0.15 {
                         score_0 = score_0.max(s_val);
                     }
@@ -1245,14 +1339,14 @@ fn resolve_multiface_shot_segments(
                     CameraSegment {
                         start_t,
                         end_t: split_t,
-                        start_ratio: target_a.clamp(0.16, 0.84),
-                        end_ratio: target_a.clamp(0.16, 0.84),
+                        start_ratio: target_a.clamp(0.19, 0.81),
+                        end_ratio: target_a.clamp(0.19, 0.81),
                     },
                     CameraSegment {
                         start_t: split_t,
                         end_t,
-                        start_ratio: target_b.clamp(0.16, 0.84),
-                        end_ratio: target_b.clamp(0.16, 0.84),
+                        start_ratio: target_b.clamp(0.19, 0.81),
+                        end_ratio: target_b.clamp(0.19, 0.81),
                     },
                 ];
             }
@@ -1275,14 +1369,14 @@ fn resolve_multiface_shot_segments(
                 da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
             })
         {
-            let w = (matched.base_score * (1.0 + matched.speaker_activity * 1.2)).max(0.10);
+            let w = (matched.base_score * (1.0 + matched.speaker_activity * 1.5)).max(0.10);
             running_x = running_x * 0.65 + matched.center_ratio * 0.35;
             track_points.push((s.rel_time, matched.center_ratio, w));
         }
     }
 
     if track_points.is_empty() {
-        let r = primary_cluster_x.clamp(0.16, 0.84);
+        let r = primary_cluster_x.clamp(0.19, 0.81);
         return vec![CameraSegment {
             start_t,
             end_t,
@@ -1293,7 +1387,7 @@ fn resolve_multiface_shot_segments(
 
     let weighted_num: f64 = track_points.iter().map(|(_, r, w)| r * w).sum();
     let weighted_den: f64 = track_points.iter().map(|(_, _, w)| *w).sum();
-    let mean_ratio = (weighted_num / weighted_den.max(0.01)).clamp(0.16, 0.84);
+    let mean_ratio = (weighted_num / weighted_den.max(0.01)).clamp(0.19, 0.81);
 
     // Если персонаж действительно плавно идет/смещается в кадре (4+ точки одного и того же трека) — строим плавное ведение камеры
     if track_points.len() >= 4 {
@@ -1310,8 +1404,8 @@ fn resolve_multiface_shot_segments(
             return vec![CameraSegment {
                 start_t,
                 end_t,
-                start_ratio: avg_first.clamp(0.16, 0.84),
-                end_ratio: avg_second.clamp(0.16, 0.84),
+                start_ratio: avg_first.clamp(0.19, 0.81),
+                end_ratio: avg_second.clamp(0.19, 0.81),
             }];
         }
     }
@@ -1399,7 +1493,7 @@ fn segment_and_smooth_camera_track(
                         let w_prev = (prev.end_t - prev.start_t).max(0.1);
                         let w_curr = seg_dur;
                         let blended = (prev.end_ratio * w_prev + seg.end_ratio * w_curr) / (w_prev + w_curr);
-                        prev.end_ratio = blended.clamp(0.16, 0.84);
+                        prev.end_ratio = blended.clamp(0.18, 0.82);
                     }
                     prev.end_t = seg.end_t;
                     continue;
