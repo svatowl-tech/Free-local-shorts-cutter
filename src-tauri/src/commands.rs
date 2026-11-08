@@ -295,99 +295,15 @@ pub async fn render_clips_from_fragments(
             cancel_rx.resubscribe()
         ).await?;
 
-        let _ = crate::render::attach_bumpers_if_enabled(
-            &clip_path,
-            config.bumper_config.as_ref(),
-            config.vertical_format,
-            &video_buf,
-            &app,
-        ).await;
-
         generated_clips.push(clip_path.to_string_lossy().to_string());
-    }
-
-    // Рендеринг Хайлайтов (16:9 YouTube) при ручном экспорте
-    if config.render_highlights.unwrap_or(false) && !fragments.is_empty() {
-        let project_dir = video_parent.join(format!("{}_Проект", file_stem));
-        let highlights_dir = project_dir.join("Хайлайты");
-        let _ = tokio::fs::create_dir_all(&highlights_dir).await;
-        let highlights_path = highlights_dir.join(format!("Хайлайты_{}.mp4", file_stem));
-
-        let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
-            percent: 98.0, 
-            stage: "Экспорт сборника хайлайтов (16:9)...".to_string() 
-        });
-
-        let intervals: Vec<(f64, f64)> = fragments.iter().map(|f| (f.start, f.end)).collect();
-        if let Ok(()) = crate::render::render_highlights_assembly(
-            video_buf.clone(),
-            &intervals,
-            highlights_path.clone(),
-            srt_path.clone(),
-            app.clone(),
-            cancel_rx.resubscribe(),
-        ).await {
-            let _ = crate::render::attach_bumpers_if_enabled(
-                &highlights_path,
-                config.bumper_config.as_ref(),
-                false,
-                &video_buf,
-                &app,
-            ).await;
-            generated_clips.push(highlights_path.to_string_lossy().to_string());
-        }
-    }
-
-    // Рендеринг Разговорного видео при ручном экспорте
-    if config.render_talk_video.unwrap_or(false) && srt_path.is_some() {
-        let project_dir = video_parent.join(format!("{}_Проект", file_stem));
-        let talk_dir = project_dir.join("Разговорное_видео");
-        let _ = tokio::fs::create_dir_all(&talk_dir).await;
-        let talk_path = talk_dir.join(format!("Разговорное_{}.mp4", file_stem));
-
-        let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
-            percent: 99.0, 
-            stage: "Экспорт разговорного видео без пауз...".to_string() 
-        });
-
-        if let Ok(()) = crate::render::render_talk_video_assembly(
-            video_buf.clone(),
-            srt_path.clone(),
-            talk_path.clone(),
-            app.clone(),
-            cancel_rx.resubscribe(),
-        ).await {
-            let _ = crate::render::attach_bumpers_if_enabled(
-                &talk_path,
-                config.bumper_config.as_ref(),
-                false,
-                &video_buf,
-                &app,
-            ).await;
-            generated_clips.push(talk_path.to_string_lossy().to_string());
-        }
     }
 
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
         percent: 100.0, 
-        stage: "Экспорт всех роликов успешно завершен!".to_string() 
+        stage: "Экспорт всех Reels успешно завершен!".to_string() 
     });
 
     Ok(generated_clips)
-}
-
-/// Асинхронная команда: Парсинг загруженных готовых субтитров (ASS, SSA, SRT, VTT) с вычленением персонажей
-#[tauri::command]
-pub async fn parse_custom_subtitles(
-    file_path: String,
-) -> AppResult<crate::subtitles_parser::CustomSubtitlesParseResult> {
-    log::info!("IPC: parse_custom_subtitles: {}", file_path);
-    let p = PathBuf::from(&file_path);
-    if !p.exists() {
-        return Err(AppError::Anyhow(anyhow::anyhow!("Файл субтитров не найден: {}", file_path)));
-    }
-    crate::subtitles_parser::parse_custom_subtitles_file(&p)
-        .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e)))
 }
 
 /// Асинхронная команда: Генерация только файлов субтитров
@@ -779,38 +695,6 @@ pub async fn fetch_openai_models(
 
     Err(AppError::Anyhow(anyhow::anyhow!(last_error)))
 }
-
-/// Асинхронная команда: Предрендеринг или генерация предпросмотра заставки (преролла/постролла)
-#[tauri::command]
-pub async fn render_bumper_preview(
-    app: AppHandle,
-    item: crate::bumpers::BumperItemConfig,
-    is_vertical: bool,
-    source_video_path: String,
-    preset_id: String,
-    bumper_type: String,
-) -> AppResult<String> {
-    log::info!("IPC: render_bumper_preview (type={}, vertical={}): preset_id={}", bumper_type, is_vertical, preset_id);
-    let video_buf = PathBuf::from(&source_video_path);
-    
-    use tauri::Manager;
-    let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let fmt_tag = if is_vertical { "916" } else { "169" };
-    let cache_dir = app_data.join("bumpers_cache").join(&preset_id);
-    let _ = tokio::fs::create_dir_all(&cache_dir).await;
-    let out_path = cache_dir.join(format!("{}_{}.mp4", bumper_type, fmt_tag));
-
-    crate::bumpers::render_single_bumper_video(
-        &item,
-        is_vertical,
-        &video_buf,
-        &out_path,
-        &app
-    ).await?;
-
-    Ok(out_path.to_string_lossy().to_string())
-}
-
 
 
 

@@ -48,56 +48,6 @@ export interface OpenAiProfile {
   available_models?: string[];
 }
 
-export interface SubtitleCharacterInfo {
-  name: string;
-  line_count: number;
-}
-
-export interface CustomSubtitlesParseResult {
-  file_path: string;
-  total_lines: number;
-  characters: SubtitleCharacterInfo[];
-}
-
-export interface BumperItemConfig {
-  enabled: boolean;
-  mode: 'custom_video' | 'generate';
-  custom_video_path?: string | null;
-  custom_audio_path?: string | null;
-  title: string;
-  subtitle?: string | null;
-  duration_sec: number;
-  bg_image_path?: string | null;
-  logo_image_path?: string | null;
-  logo_scale: number;
-  logo_x_percent: number;
-  logo_y_percent: number;
-  title_color: string;
-  title_size: number;
-  title_x_percent: number;
-  title_y_percent: number;
-  transition: 'crossfade' | 'fade_black' | 'cut';
-}
-
-export interface BumperCategoryConfig {
-  preroll: BumperItemConfig;
-  postroll: BumperItemConfig;
-}
-
-export interface BumperPreset {
-  id: string;
-  name: string;
-  v916: BumperCategoryConfig;
-  v169: BumperCategoryConfig;
-  created_at: number;
-}
-
-export interface BumperGlobalConfig {
-  enabled: boolean;
-  active_preset_id: string;
-  presets: BumperPreset[];
-}
-
 export interface PipelineConfig {
   asr_model_path?: string;
   vision_model_path?: string;
@@ -113,12 +63,7 @@ export interface PipelineConfig {
   max_clip_duration_sec: number;
   max_clips_count?: number;
   vertical_format: boolean;
-  render_highlights?: boolean;
-  render_talk_video?: boolean;
-  custom_subtitles_path?: string | null;
-  selected_characters?: string[];
   subtitle_style?: SubtitleStyle;
-  bumper_config?: BumperGlobalConfig;
   mode: 'auto' | 'manual' | 'confirm';
 }
 
@@ -132,14 +77,6 @@ export async function extractAudio(videoPath: string, outputAudioPath?: string):
     return await invoke<string>('extract_audio', { videoPath, outputAudioPath });
   } catch (err: unknown) {
     throw new Error(`Ошибка извлечения аудио: ${formatErrorMessage(err)}`);
-  }
-}
-
-export async function parseCustomSubtitles(filePath: string): Promise<CustomSubtitlesParseResult> {
-  try {
-    return await invoke<CustomSubtitlesParseResult>('parse_custom_subtitles', { filePath });
-  } catch (err: unknown) {
-    throw new Error(`Ошибка парсинга субтитров: ${formatErrorMessage(err)}`);
   }
 }
 
@@ -352,29 +289,5 @@ export async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promis
     throw new Error(formatErrorMessage(err));
   }
 }
-
-export async function renderBumperPreview(
-  item: BumperItemConfig,
-  isVertical: boolean,
-  sourceVideoPath: string,
-  presetId: String,
-  bumperType: 'preroll' | 'postroll'
-): Promise<string> {
-  if (!isTauriRuntime()) {
-    return 'demo_bumper_preview.mp4';
-  }
-  try {
-    return await invoke<string>('render_bumper_preview', {
-      item,
-      isVertical,
-      sourceVideoPath,
-      presetId,
-      bumperType,
-    });
-  } catch (err: unknown) {
-    throw new Error(`Ошибка генерации заставки: ${formatErrorMessage(err)}`);
-  }
-}
-
 
 

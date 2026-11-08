@@ -2,7 +2,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { pipelineStore } from '../stores/pipeline';
-  import { getVideoMetadata, parseCustomSubtitles, type CustomSubtitlesParseResult } from '../ipc';
+  import { getVideoMetadata } from '../ipc';
   import { isTauriRuntime, getFileName, formatErrorMessage } from '../utils/path';
   import { HardDrive, Trash2 } from '@lucide/svelte';
 
@@ -17,9 +17,6 @@
 
   let dragOver = false;
   let fileInput: HTMLInputElement;
-  let subtitlesInput: HTMLInputElement;
-  let customSubtitlesParseResult: CustomSubtitlesParseResult | null = null;
-  let isParsingSubtitles = false;
   let unlistenDragDrop: (() => void) | null = null;
 
   function formatBytes(bytes: number, decimals = 2) {
@@ -198,67 +195,6 @@
   function clearSelected(e: MouseEvent) {
     e.stopPropagation();
     pipelineStore.setVideo(null);
-    clearSubtitles();
-  }
-
-  async function chooseSubtitlesTauri() {
-    try {
-      if (isTauriRuntime()) {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const selected = await open({
-          multiple: false,
-          filters: [{
-            name: 'Subtitles',
-            extensions: ['ass', 'ssa', 'srt', 'vtt']
-          }]
-        });
-
-        if (selected && typeof selected === 'string') {
-          await processSubtitlePath(selected);
-        }
-      } else {
-        subtitlesInput?.click();
-      }
-    } catch (err: unknown) {
-      console.error('Ошибка выбора субтитров:', formatErrorMessage(err));
-      subtitlesInput?.click();
-    }
-  }
-
-  async function handleSubtitleFileSelected(event: Event) {
-    const target = event.target as HTMLInputElement;
-    const files = target.files;
-    if (files && files.length > 0) {
-      const file = files[0] as FileWithNativePath;
-      const nativePath = file.path || file.name;
-      await processSubtitlePath(nativePath);
-    }
-  }
-
-  async function processSubtitlePath(path: string) {
-    isParsingSubtitles = true;
-    try {
-      const res = await parseCustomSubtitles(path);
-      customSubtitlesParseResult = res;
-      const charNames = res.characters.map(c => c.name);
-      pipelineStore.updateConfig({
-        custom_subtitles_path: path,
-        selected_characters: charNames
-      });
-      pipelineStore.addLog(`✓ Подгружены готовые субтитры: '${getFileName(path, 'subtitles.ass')}'. Найдено реплик: ${res.total_lines}, Персонажей: ${res.characters.length}`);
-    } catch (err: unknown) {
-      pipelineStore.updateError(`Ошибка подгрузки субтитров: ${formatErrorMessage(err)}`);
-    } finally {
-      isParsingSubtitles = false;
-    }
-  }
-
-  function clearSubtitles() {
-    customSubtitlesParseResult = null;
-    pipelineStore.updateConfig({
-      custom_subtitles_path: null,
-      selected_characters: []
-    });
   }
 </script>
 
@@ -278,15 +214,6 @@
     style="display: none;"
     bind:this={fileInput} 
     on:change={handleFileSelected}
-  />
-
-  <input 
-    type="file" 
-    accept=".ass,.ssa,.srt,.vtt" 
-    class="hidden" 
-    style="display: none;"
-    bind:this={subtitlesInput} 
-    on:change={handleSubtitleFileSelected}
   />
 
   {#if !$pipelineStore.video}
@@ -358,62 +285,6 @@
         <Trash2 class="h-4 w-4" />
         <span class="text-[10px] sm:hidden">УДАЛИТЬ</span>
       </button>
-    </div>
-
-    <!-- Subtitle Upload Section under video -->
-    <div class="mt-4 border border-[rgba(226,226,224,0.1)] bg-[#0c0c0e]/80 p-4 rounded-[4px] flex flex-col gap-3">
-      <div class="flex items-center justify-between gap-3">
-        <div class="flex items-center gap-2">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-[#5865f2]">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-            <path d="M8 10h8"/>
-            <path d="M8 14h6"/>
-          </svg>
-          <span class="label-mono text-xs text-[#e2e2e4] font-medium normal-case">Субтитры серии / эпизода (ASS / SSA / SRT / VTT)</span>
-        </div>
-
-        {#if $pipelineStore.config.custom_subtitles_path}
-          <button 
-            type="button"
-            on:click={clearSubtitles}
-            class="text-[10px] text-red-400 hover:underline font-mono cursor-pointer"
-          >
-            Сбросить субтитры
-          </button>
-        {/if}
-      </div>
-
-      {#if $pipelineStore.config.custom_subtitles_path}
-        <div class="flex items-center justify-between bg-[#16161a] p-2.5 rounded-[3px] border border-[rgba(226,226,224,0.1)]">
-          <div class="flex items-center gap-2 min-w-0">
-            <span class="text-green-400 font-mono text-xs">✓</span>
-            <div class="truncate text-xs font-mono text-[#e2e2e4]">
-              {getFileName($pipelineStore.config.custom_subtitles_path, 'subtitles.ass')}
-            </div>
-          </div>
-          {#if customSubtitlesParseResult}
-            <div class="text-[11px] text-[rgba(226,226,224,0.5)] font-mono shrink-0 ml-2">
-              {customSubtitlesParseResult.total_lines} реплик | {customSubtitlesParseResult.characters.length} перс.
-            </div>
-          {/if}
-        </div>
-        <p class="text-[11px] text-green-400/80 font-mono">
-          ⚡ Готовые субтитры подключены! Сканирование речи Whisper ASR пропущено.
-        </p>
-      {:else}
-        <button 
-          type="button"
-          on:click={chooseSubtitlesTauri}
-          disabled={isParsingSubtitles}
-          class="btn border border-[rgba(226,226,224,0.2)] bg-[#16161a] hover:bg-[#202028] text-[#e2e2e4] py-2.5 px-4 rounded-[4px] text-xs font-mono font-medium flex items-center justify-center gap-2 cursor-pointer transition-colors"
-        >
-          <span>💬</span>
-          <span>{isParsingSubtitles ? 'Парсинг субтитров...' : 'Загрузить готовые субтитры (ASS / SRT / VTT)'}</span>
-        </button>
-        <p class="text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-          Если готовые субтитры не загружены, распознавание выполняется автоматически через встроенный Whisper.
-        </p>
-      {/if}
     </div>
   {/if}
 </div>

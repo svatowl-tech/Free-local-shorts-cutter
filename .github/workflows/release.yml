@@ -146,24 +146,7 @@ jobs:
           sudo mdutil -a -i off || true
 
       - name: Сборка дистрибутивов через Tauri
-        shell: bash
-        run: |
-          BUILD_CMD="npx @tauri-apps/cli build --target ${{ matrix.target }} ${{ runner.os == 'macOS' && '--bundles app' || '' }}"
-          echo "Выполнение команды: $BUILD_CMD"
-          
-          n=0
-          until [ $n -ge 3 ]
-          do
-            $BUILD_CMD && break
-            n=$((n+1))
-            echo "⚠️ Сборка Tauri прервана сетевым сбоем/таймаутом NSIS/MSI. Повторная попытка $n из 3..."
-            sleep 10
-          done
-
-          if [ $n -eq 3 ]; then
-            echo "⚠️ Сетевой таймаут скачивания бандлера NSIS/MSI (504 Gateway Timeout). Сборка бинарника через --no-bundle для создания Portable ZIP..."
-            npx @tauri-apps/cli build --target ${{ matrix.target }} --no-bundle || true
-          fi
+        run: npx @tauri-apps/cli build --target ${{ matrix.target }} ${{ runner.os == 'macOS' && '--bundles app' || '' }}
         env:
           TARGET: ${{ matrix.target }}
 

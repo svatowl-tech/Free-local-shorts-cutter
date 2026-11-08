@@ -6,13 +6,11 @@
   import { modelsStore } from '../stores/models';
   import { getOpenAiProfiles, saveOpenAiProfiles, fetchOpenAiModels, type OpenAiProfile } from '../ipc';
   import { isTauriRuntime, joinRelativePath, formatErrorMessage } from '../utils/path';
-  import { ChevronDown, ChevronUp, Settings } from '@lucide/svelte';
-  import BumperModal from './BumperModal.svelte';
+  import { ChevronDown, ChevronUp } from '@lucide/svelte';
 
   export let onOpenModelManager: () => void = () => {};
 
   let showAdvanced = false;
-  let showBumperModal = false;
 
   let savedOpenAiProfiles: OpenAiProfile[] = [];
   let selectedProfileId = '';
@@ -276,65 +274,6 @@
     pipelineStore.updateConfig({ vertical_format: value });
   }
 
-  function handleHighlightsChange(e: Event) {
-    const value = (e.target as HTMLInputElement).checked;
-    pipelineStore.updateConfig({ render_highlights: value });
-  }
-
-  function handleTalkVideoChange(e: Event) {
-    const value = (e.target as HTMLInputElement).checked;
-    pipelineStore.updateConfig({ render_talk_video: value });
-  }
-
-  function handleBumperToggle(e: Event) {
-    const checked = (e.target as HTMLInputElement).checked;
-    const currentCfg = $pipelineStore.config.bumper_config || {
-      enabled: checked,
-      active_preset_id: 'default',
-      presets: []
-    };
-    pipelineStore.updateConfig({
-      bumper_config: {
-        ...currentCfg,
-        enabled: checked
-      }
-    });
-  }
-
-  let loadedCharacters: import('../ipc').SubtitleCharacterInfo[] = [];
-
-  $: if ($pipelineStore.config.custom_subtitles_path) {
-    const path = $pipelineStore.config.custom_subtitles_path;
-    import('../ipc').then(({ parseCustomSubtitles }) => {
-      parseCustomSubtitles(path).then(res => {
-        loadedCharacters = res.characters;
-      }).catch(() => {
-        loadedCharacters = [];
-      });
-    });
-  } else {
-    loadedCharacters = [];
-  }
-
-  function toggleCharacter(name: string) {
-    let current = $pipelineStore.config.selected_characters || [];
-    if (current.includes(name)) {
-      current = current.filter(c => c !== name);
-    } else {
-      current = [...current, name];
-    }
-    pipelineStore.updateConfig({ selected_characters: current });
-  }
-
-  function selectAllCharacters() {
-    const all = loadedCharacters.map(c => c.name);
-    pipelineStore.updateConfig({ selected_characters: all });
-  }
-
-  function clearAllCharacters() {
-    pipelineStore.updateConfig({ selected_characters: [] });
-  }
-
   function handleAsrModelChange(e: Event) {
     const value = (e.target as HTMLSelectElement | HTMLInputElement).value;
     pipelineStore.updateConfig({ asr_model_path: value });
@@ -506,106 +445,9 @@
         />
         <div>
           <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Вертикальный формат (9:16)</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">AI-фокусировка по лицам (при снятой галочке — горизонтальные шортсы 16:9)</div>
+          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">AI-фокусировка по лицам</div>
         </div>
       </label>
-
-      <!-- Checkbox: Highlights Assembly (16:9) -->
-      <label class="flex items-center gap-3.5 p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] cursor-pointer hover:border-[rgba(226,226,224,0.2)] bg-[#0c0c0e]/60 transition-colors select-none">
-        <input 
-          type="checkbox" 
-          checked={$pipelineStore.config.render_highlights ?? false}
-          on:change={handleHighlightsChange}
-          disabled={$pipelineStore.status === 'running'}
-          class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
-        />
-        <div>
-          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Сборка хайлайтов (16:9 YouTube)</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Сборник лучших моментов в единый ролик с мягкими переходами (Crossfade 0.5с)</div>
-        </div>
-      </label>
-
-      <!-- Checkbox: Talk Video Assembly -->
-      <label class="flex items-center gap-3.5 p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] cursor-pointer hover:border-[rgba(226,226,224,0.2)] bg-[#0c0c0e]/60 transition-colors select-none">
-        <input 
-          type="checkbox" 
-          checked={$pipelineStore.config.render_talk_video ?? false}
-          on:change={handleTalkVideoChange}
-          disabled={$pipelineStore.status === 'running'}
-          class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
-        />
-        <div>
-          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Монтаж разговорного видео / Демки</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Чистовой подкаст/демка актера без пауз и оговорок с динамическим зумом на склейках</div>
-        </div>
-      </label>
-
-      <!-- Checkbox 4: Preroll & Postroll (Bumpers) -->
-      <div class="flex items-center justify-between p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] bg-[#0c0c0e]/60 transition-colors select-none">
-        <label class="flex items-center gap-3.5 cursor-pointer flex-1">
-          <input 
-            type="checkbox" 
-            checked={$pipelineStore.config.bumper_config?.enabled ?? false}
-            on:change={handleBumperToggle}
-            disabled={$pipelineStore.status === 'running'}
-            class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
-          />
-          <div>
-            <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Преролл и постролл (Заставки)</div>
-            <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Авто-прикрепление заставок перед и после каждого ролика (9:16 и 16:9)</div>
-          </div>
-        </label>
-        <button
-          type="button"
-          on:click={() => (showBumperModal = true)}
-          disabled={$pipelineStore.status === 'running'}
-          class="px-3 py-1.5 bg-[#5865f2]/20 hover:bg-[#5865f2]/40 border border-[#5865f2]/50 text-[#e2e2e4] font-mono text-xs rounded transition-colors flex items-center gap-1.5 cursor-pointer"
-        >
-          <Settings class="w-3.5 h-3.5 text-[#5865f2]" />
-          <span>Настроить</span>
-        </button>
-      </div>
-
-      <!-- Character Filter Section (if custom subtitles are loaded) -->
-      {#if $pipelineStore.config.custom_subtitles_path && loadedCharacters.length > 0}
-        <div class="border border-[rgba(226,226,224,0.15)] bg-[#0c0c0e] p-4 rounded-[4px] flex flex-col gap-3">
-          <div class="flex items-center justify-between">
-            <div class="label-mono text-xs text-[#e2e2e4] normal-case font-medium flex items-center gap-2">
-              <span>🎭</span>
-              <span>Фильтр по персонажам / актерам</span>
-            </div>
-            <div class="flex items-center gap-2 text-[10px] font-mono">
-              <button type="button" on:click={selectAllCharacters} class="text-[#5865f2] hover:underline cursor-pointer">Выбрать всех</button>
-              <span class="text-[rgba(226,226,224,0.3)]">|</span>
-              <button type="button" on:click={clearAllCharacters} class="text-[rgba(226,226,224,0.5)] hover:underline cursor-pointer">Сбросить</button>
-            </div>
-          </div>
-
-          <p class="text-[11px] text-[rgba(226,226,224,0.5)] font-mono leading-relaxed">
-            Отметьте персонажей для нарезки персонажных шортсов, хайлайтов или демок озвучки:
-          </p>
-
-          <div class="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1">
-            {#each loadedCharacters as char}
-              {@const isSelected = ($pipelineStore.config.selected_characters || []).includes(char.name)}
-              <button 
-                type="button"
-                on:click={() => toggleCharacter(char.name)}
-                disabled={$pipelineStore.status === 'running'}
-                class="px-3 py-1.5 rounded-[3px] text-xs font-mono font-medium border transition-colors cursor-pointer flex items-center gap-1.5 {
-                  isSelected 
-                    ? 'bg-[#5865f2] border-[#5865f2] text-white shadow-sm' 
-                    : 'bg-[#16161a] border-[rgba(226,226,224,0.15)] text-[rgba(226,226,224,0.7)] hover:border-[rgba(226,226,224,0.3)] hover:text-[#e2e2e4]'
-                }"
-              >
-                <span>{isSelected ? '✓' : '+'}</span>
-                <span>{char.name}</span>
-                <span class="text-[10px] opacity-75">({char.line_count})</span>
-              </button>
-            {/each}
-          </div>
-        </div>
-      {/if}
 
       <!-- Mode Selector -->
       <div class="flex flex-col gap-2">
@@ -1057,6 +899,3 @@
     </button>
   </div>
 </div>
-
-<BumperModal show={showBumperModal} on:close={() => (showBumperModal = false)} />
-
