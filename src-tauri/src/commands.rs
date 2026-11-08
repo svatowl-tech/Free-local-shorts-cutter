@@ -176,14 +176,31 @@ pub async fn render_clips_from_fragments(
 
     let cancel_rx = state.cancel_tx.subscribe();
 
-    // 1. Получаем готовые субтитры из папки проекта (или создаем их, если пользователь сразу нажал экспорт в ручном режиме без предварительного запуска пайплайна)
-    let asr_model = config.asr_model_path.clone().map(PathBuf::from);
-    let srt_path = crate::whisper::get_or_create_subtitles(
-        video_buf.clone(),
-        asr_model,
-        app.clone(),
-        cancel_rx.resubscribe(),
-    ).await?;
+    // 1. Получаем готовые субтитры из папки проекта (или создаем их, если пользователь сразу нажал экспорт в ручном режиме)
+    let project_srt = crate::whisper::get_project_srt_path(&video_buf);
+    let srt_path = if let Some(ref custom_path_str) = config.custom_subtitles_path {
+        let custom_p = PathBuf::from(custom_path_str);
+        if custom_p.exists() {
+            let _ = crate::whisper::process_custom_subtitles_into_project(&custom_p, &project_srt);
+            Some(project_srt)
+        } else {
+            let asr_model = config.asr_model_path.clone().map(PathBuf::from);
+            crate::whisper::get_or_create_subtitles(
+                video_buf.clone(),
+                asr_model,
+                app.clone(),
+                cancel_rx.resubscribe(),
+            ).await?
+        }
+    } else {
+        let asr_model = config.asr_model_path.clone().map(PathBuf::from);
+        crate::whisper::get_or_create_subtitles(
+            video_buf.clone(),
+            asr_model,
+            app.clone(),
+            cancel_rx.resubscribe(),
+        ).await?
+    };
 
     // 2. Рендеринг клипов с учетом выбранного формата (9:16 или 16:9) и наложением синхронизированных субтитров
     let format_label = if config.vertical_format { "9:16" } else { "16:9" };
@@ -198,11 +215,11 @@ pub async fn render_clips_from_fragments(
         hw_accel: true,
     };
 
-    // Определяем директорию сохранения: пользовательская папка (если задана явно) или структурированная папка проекта
+    // Определяем базовую директорию сохранения и создаем отдельные подпапки: Шортсы, Хайлайты, Ток-видео
     let file_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
     let video_parent = video_buf.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let default_clips_dir = video_parent.join(format!("{}_Проект", file_stem)).join("Готовые клипы");
-    let clips_dir = match config.output_dir.as_deref().map(str::trim) {
+    let default_clips_root = video_parent.join(format!("{}_Проект", file_stem)).join("Готовые клипы");
+    let clips_root = match config.output_dir.as_deref().map(str::trim) {
         Some(custom) if !custom.is_empty() && custom != "output_cuts/" && custom != "output_cuts" => {
             let custom_path = PathBuf::from(custom);
             if custom_path.is_absolute() {
@@ -211,15 +228,16 @@ pub async fn render_clips_from_fragments(
                 video_parent.join(custom_path)
             }
         }
-        _ => default_clips_dir,
+        _ => default_clips_root,
     };
+    let clips_dir = clips_root.join("Шортсы");
     let _ = tokio::fs::create_dir_all(&clips_dir).await;
 
     crate::logger::emit_log(
         &app,
         "Render",
         "info",
-        &format!("Директория сохранения готовых клипов: '{}'", clips_dir.display()),
+        &format!("Директория сохранения готовых шортсов: '{}'", clips_dir.display()),
     );
 
     let srt_fragments = if let Some(ref srt) = srt_path {
@@ -295,15 +313,129 @@ pub async fn render_clips_from_fragments(
             cancel_rx.resubscribe()
         ).await?;
 
+        let _ = crate::render::attach_bumpers_if_enabled(
+            &clip_path,
+            config.bumper_config.as_ref(),
+            config.vertical_format,
+            &video_buf,
+            &app,
+        ).await;
+
         generated_clips.push(clip_path.to_string_lossy().to_string());
+    }
+
+    let selected_chars = config.selected_characters.as_deref().unwrap_or(&[]);
+    let has_char_filter = !selected_chars.is_empty()
+        && !selected_chars.iter().any(|c| c.to_lowercase() == "all" || c == "Все персонажи");
+    let char_prefix = if has_char_filter {
+        format!("{}_", selected_chars.first().cloned().unwrap_or_default())
+    } else {
+        String::new()
+    };
+
+    // Рендеринг Хайлайтов (16:9 YouTube) при ручном экспорте
+    if config.render_highlights.unwrap_or(false) && !fragments.is_empty() {
+        let highlights_dir = clips_root.join("Хайлайты");
+        let _ = tokio::fs::create_dir_all(&highlights_dir).await;
+        let highlights_path = highlights_dir.join(format!("Хайлайты_{}{}.mp4", char_prefix, file_stem));
+
+        let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
+            percent: 98.0, 
+            stage: "Экспорт сборника хайлайтов (16:9 + Crossfade 0.4с)...".to_string() 
+        });
+
+        let intervals: Vec<(f64, f64)> = fragments.iter().map(|f| (f.start, f.end)).collect();
+        if let Ok(()) = crate::render::render_highlights_assembly(
+            video_buf.clone(),
+            &intervals,
+            highlights_path.clone(),
+            srt_path.clone(),
+            app.clone(),
+            cancel_rx.resubscribe(),
+        ).await {
+            let _ = crate::render::attach_bumpers_if_enabled(
+                &highlights_path,
+                config.bumper_config.as_ref(),
+                false,
+                &video_buf,
+                &app,
+            ).await;
+            generated_clips.push(highlights_path.to_string_lossy().to_string());
+        }
+    }
+
+    // Рендеринг Разговорного видео (Ток-видео / Демки) при ручном экспорте
+    if config.render_talk_video.unwrap_or(false) && srt_path.is_some() {
+        let talk_dir = clips_root.join("Ток-видео");
+        let _ = tokio::fs::create_dir_all(&talk_dir).await;
+        let talk_label = if has_char_filter { "Демка" } else { "Ток_видео" };
+        let talk_path = talk_dir.join(format!("{}_{}{}.mp4", talk_label, char_prefix, file_stem));
+
+        let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
+            percent: 99.0, 
+            stage: "Экспорт разговорного видео (Ток-видео без пауз)...".to_string() 
+        });
+
+        if let Ok(()) = crate::render::render_talk_video_assembly(
+            video_buf.clone(),
+            srt_path.clone(),
+            config.selected_characters.as_deref(),
+            talk_path.clone(),
+            app.clone(),
+            cancel_rx.resubscribe(),
+        ).await {
+            let _ = crate::render::attach_bumpers_if_enabled(
+                &talk_path,
+                config.bumper_config.as_ref(),
+                false,
+                &video_buf,
+                &app,
+            ).await;
+            generated_clips.push(talk_path.to_string_lossy().to_string());
+        }
     }
 
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
         percent: 100.0, 
-        stage: "Экспорт всех Reels успешно завершен!".to_string() 
+        stage: "Экспорт всех роликов успешно завершен!".to_string() 
     });
 
     Ok(generated_clips)
+}
+
+/// Асинхронная команда: Парсинг загруженных готовых субтитров (ASS, SSA, SRT, VTT, SUB) по пути к файлу
+#[tauri::command]
+pub async fn parse_custom_subtitles(
+    file_path: String,
+) -> AppResult<crate::subtitles_parser::CustomSubtitlesParseResult> {
+    log::info!("IPC: parse_custom_subtitles: {}", file_path);
+    let p = PathBuf::from(&file_path);
+    if !p.exists() {
+        return Err(AppError::Anyhow(anyhow::anyhow!("Файл субтитров не найден: {}", file_path)));
+    }
+    crate::subtitles_parser::parse_custom_subtitles_file(&p)
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e)))
+}
+
+/// Асинхронная команда: Парсинг загруженных субтитров напрямую из содержимого файла (сохраняет копию во временную папку приложения)
+#[tauri::command]
+pub async fn parse_custom_subtitles_content(
+    app: AppHandle,
+    file_name: String,
+    content: String,
+) -> AppResult<crate::subtitles_parser::CustomSubtitlesParseResult> {
+    use tauri::Manager;
+    let app_data = app.path().app_data_dir().unwrap_or_else(|_| std::env::temp_dir());
+    let subs_dir = app_data.join("uploaded_subtitles");
+    let _ = std::fs::create_dir_all(&subs_dir);
+    let safe_name: String = file_name
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '.' | '_' | '-') { c } else { '_' })
+        .collect();
+    let dest_path = subs_dir.join(if safe_name.is_empty() { "custom_subtitles.ass".to_string() } else { safe_name });
+    std::fs::write(&dest_path, content.as_bytes()).map_err(AppError::Io)?;
+    crate::subtitles_parser::parse_custom_subtitles_file(&dest_path)
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e)))
 }
 
 /// Асинхронная команда: Генерация только файлов субтитров
@@ -696,5 +828,71 @@ pub async fn fetch_openai_models(
     Err(AppError::Anyhow(anyhow::anyhow!(last_error)))
 }
 
+/// Асинхронная команда: Предрендеринг или генерация предпросмотра заставки (преролла/постролла)
+#[tauri::command]
+pub async fn render_bumper_preview(
+    app: AppHandle,
+    item: crate::bumpers::BumperItemConfig,
+    is_vertical: bool,
+    source_video_path: String,
+    preset_id: String,
+    bumper_type: String,
+) -> AppResult<String> {
+    log::info!("IPC: render_bumper_preview (type={}, vertical={}): preset_id={}", bumper_type, is_vertical, preset_id);
+    let video_buf = PathBuf::from(&source_video_path);
+    
+    use tauri::Manager;
+    let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let fmt_tag = if is_vertical { "916" } else { "169" };
+    let cache_dir = app_data.join("bumpers_cache").join(&preset_id);
+    let _ = tokio::fs::create_dir_all(&cache_dir).await;
+    let out_path = cache_dir.join(format!("{}_{}.mp4", bumper_type, fmt_tag));
 
+    crate::bumpers::render_single_bumper_video(
+        &item,
+        is_vertical,
+        &video_buf,
+        &out_path,
+        &app
+    ).await?;
 
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+/// Асинхронная команда: Определение точной длительности загруженного аудиофайла через FFmpeg
+#[tauri::command]
+pub async fn probe_audio_file_duration(
+    app: AppHandle,
+    audio_path: String,
+) -> AppResult<f64> {
+    let p = PathBuf::from(&audio_path);
+    if !p.exists() {
+        return Ok(2.5);
+    }
+    Ok(crate::bumpers::probe_audio_duration(&p, &app).await)
+}
+
+/// Асинхронная команда: Экспорт пресета преролла и постролла со всеми медиафайлами в единый архив .vcpb (.zip)
+#[tauri::command]
+pub async fn export_bumper_preset_bundle(
+    preset: crate::bumpers::BumperPreset,
+    dest_path: String,
+) -> AppResult<String> {
+    let dest = PathBuf::from(&dest_path);
+    crate::bumpers::export_preset_to_vcpb_file(&preset, &dest)
+}
+
+/// Асинхронная команда: Импорт пресета преролла и постролла из архива .vcpb (.zip) со всеми медиафайлами
+#[tauri::command]
+pub async fn import_bumper_preset_bundle(
+    app: AppHandle,
+    archive_path: String,
+) -> AppResult<crate::bumpers::BumperPreset> {
+    use tauri::Manager;
+    let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let src = PathBuf::from(&archive_path);
+    if !src.exists() {
+        return Err(AppError::Anyhow(anyhow::anyhow!("Файл архива пресета не найден: {}", archive_path)));
+    }
+    crate::bumpers::import_preset_from_vcpb_file(&src, &app_data)
+}

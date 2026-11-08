@@ -7,6 +7,8 @@ mod whisper;
 mod analyzer;
 pub mod audio_analyzer;
 mod text_analyzer;
+pub mod subtitles_parser;
+pub mod bumpers;
 mod render;
 pub mod pipeline;
 pub mod logger;
@@ -42,6 +44,12 @@ async fn main() -> anyhow::Result<()> {
             commands::start_pipeline,
             commands::render_clips_from_fragments,
             commands::generate_subtitles_only,
+            commands::parse_custom_subtitles,
+            commands::parse_custom_subtitles_content,
+            commands::render_bumper_preview,
+            commands::probe_audio_file_duration,
+            commands::export_bumper_preset_bundle,
+            commands::import_bumper_preset_bundle,
             commands::get_video_metadata,
             commands::cancel_pipeline,
             commands::open_folder,

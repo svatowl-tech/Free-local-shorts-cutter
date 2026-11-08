@@ -29,6 +29,109 @@ pub struct RenderProgressPayload {
     pub stage: String,
 }
 
+pub async fn attach_bumpers_if_enabled(
+    clip_path: &Path,
+    bumper_config: Option<&crate::bumpers::BumperGlobalConfig>,
+    is_vertical: bool,
+    source_video_path: &Path,
+    app_handle: &AppHandle,
+) -> AppResult<()> {
+    let Some(global_cfg) = bumper_config else { return Ok(()); };
+    if !global_cfg.enabled { return Ok(()); }
+
+    let active_preset = global_cfg.presets.iter().find(|p| p.id == global_cfg.active_preset_id);
+    let Some(preset) = active_preset else { return Ok(()); };
+
+    let cat_cfg = if is_vertical { &preset.v916 } else { &preset.v169 };
+    if !cat_cfg.preroll.enabled && !cat_cfg.postroll.enabled {
+        return Ok(());
+    }
+
+    use tauri::Manager;
+    let app_data = app_handle.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let cache_dir = app_data.join("bumpers_cache").join(&preset.id);
+    let _ = tokio::fs::create_dir_all(&cache_dir).await;
+
+    let fmt_tag = if is_vertical { "916" } else { "169" };
+
+    let mut parts_to_concat: Vec<PathBuf> = Vec::new();
+
+    // 1. Преролл
+    if cat_cfg.preroll.enabled {
+        let pre_path = cache_dir.join(format!("preroll_{}.mp4", fmt_tag));
+        if !pre_path.exists() {
+            let _ = crate::bumpers::render_single_bumper_video(&cat_cfg.preroll, is_vertical, source_video_path, &pre_path, app_handle).await;
+        }
+        if pre_path.exists() {
+            parts_to_concat.push(pre_path);
+        }
+    }
+
+    // 2. Основной клип
+    parts_to_concat.push(clip_path.to_path_buf());
+
+    // 3. Постролл
+    if cat_cfg.postroll.enabled {
+        let post_path = cache_dir.join(format!("postroll_{}.mp4", fmt_tag));
+        if !post_path.exists() {
+            let _ = crate::bumpers::render_single_bumper_video(&cat_cfg.postroll, is_vertical, source_video_path, &post_path, app_handle).await;
+        }
+        if post_path.exists() {
+            parts_to_concat.push(post_path);
+        }
+    }
+
+    if parts_to_concat.len() <= 1 {
+        return Ok(());
+    }
+
+    let temp_output = clip_path.with_extension("with_bumpers.tmp.mp4");
+
+    let concat_txt = cache_dir.join(format!("concat_{}_{}.txt", fmt_tag, std::process::id()));
+    let mut txt_body = String::new();
+    for p in &parts_to_concat {
+        let p_str = p.to_string_lossy().replace('\\', "/");
+        txt_body.push_str(&format!("file '{}'\n", p_str));
+    }
+    let _ = tokio::fs::write(&concat_txt, txt_body).await;
+
+    let args = vec![
+        "-y".to_string(),
+        "-f".to_string(),
+        "concat".to_string(),
+        "-safe".to_string(),
+        "0".to_string(),
+        "-i".to_string(),
+        concat_txt.to_string_lossy().to_string(),
+        "-c".to_string(),
+        "copy".to_string(),
+        temp_output.to_string_lossy().to_string(),
+    ];
+
+    let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+        .args(args);
+
+    let (mut rx, child) = sidecar_cmd.spawn()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка старта FFmpeg: {}", e)))?;
+
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Terminated(_) = event {
+            break;
+        }
+    }
+    let _ = child.kill();
+    let _ = tokio::fs::remove_file(&concat_txt).await;
+
+    if temp_output.exists() {
+        let _ = tokio::fs::remove_file(clip_path).await;
+        let _ = tokio::fs::rename(&temp_output, clip_path).await;
+    }
+
+    Ok(())
+}
+
+
 /// Конвертирует HTML цвет `#RRGGBB` в формат ASS/libass `&H00BBGGRR`
 fn to_ass_color(color: &str) -> String {
     let trimmed = color.trim();
@@ -97,10 +200,11 @@ async fn create_clip_srt(
         }
 
         if rel_end - rel_start >= 0.22 {
+            let (_, clean_cue_text) = crate::subtitles_parser::extract_srt_character_prefix(&frag.text);
             selected.push(crate::text_analyzer::SubtitleFragment {
                 start: rel_start,
                 end: rel_end,
-                text: frag.text.trim().to_string(),
+                text: clean_cue_text.trim().to_string(),
             });
         }
     }
@@ -1327,10 +1431,467 @@ fn build_ffmpeg_piecewise_ratio_expr(segments: &[CameraSegment]) -> String {
         return seg_expr(&segments[0]);
     }
 
-    let mut expr = seg_expr(segments.last().unwrap());
-    for seg in segments[..segments.len() - 1].iter().rev() {
-        expr = format!("if(lt(t,{:.2}),{},{})", seg.end_t, seg_expr(seg), expr);
+    let mut expr = seg_expr(&segments[segments.len() - 1]);
+    for s in segments.iter().rev().skip(1) {
+        expr = format!("if(lt(t,{:.2}),{},{})", s.end_t, seg_expr(s), expr);
     }
     expr
+}
+
+/// Рендерит видео хайлайтов в формате 16:9 YouTube, объединяя все отобранные клипы-интервалы
+/// с применением мягкого перекрёстного наплыва (Crossfade 0.5с) и синхронизацией аудио.
+pub async fn render_highlights_assembly(
+    video_path: PathBuf,
+    intervals: &[(f64, f64)],
+    output_path: PathBuf,
+    _srt_path: Option<PathBuf>,
+    app_handle: AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<()> {
+    if intervals.is_empty() {
+        return Ok(());
+    }
+
+    if let Some(parent) = output_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    let temp_dir = output_path.parent().unwrap_or_else(|| Path::new(".")).join("temp_highlights_render");
+    let _ = tokio::fs::create_dir_all(&temp_dir).await;
+
+    let mut temp_clips: Vec<PathBuf> = Vec::new();
+    let mut clip_durations: Vec<f64> = Vec::new();
+    let total = intervals.len();
+
+    for (i, &(start_sec, end_sec)) in intervals.iter().enumerate() {
+        if cancel_rx.try_recv().is_ok() {
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+            return Err(AppError::Anyhow(anyhow::anyhow!("Операция сборки хайлайтов отменена пользователем")));
+        }
+
+        let dur = (end_sec - start_sec).max(0.5);
+        let temp_clip = temp_dir.join(format!("seg_{:03}.mp4", i));
+
+        let _ = app_handle.emit("render-progress", RenderProgressPayload {
+            percent: (i as f64 / total as f64) * 80.0,
+            stage: format!("Подготовка фрагмента хайлайтов {}/{}...", i + 1, total),
+        });
+
+        // Нарезка 16:9 фрагмента с принудительной подгонкой под Full HD (1920x1080)
+        let vf_arg = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30";
+
+        let args = vec![
+            "-y".to_string(),
+            "-ss".to_string(),
+            format!("{:.3}", start_sec),
+            "-i".to_string(),
+            video_path.to_string_lossy().to_string(),
+            "-t".to_string(),
+            format!("{:.3}", dur),
+            "-vf".to_string(),
+            vf_arg.to_string(),
+            "-af".to_string(),
+            "aresample=48000".to_string(),
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-preset".to_string(),
+            "ultrafast".to_string(),
+            "-crf".to_string(),
+            "20".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "192k".to_string(),
+            temp_clip.to_string_lossy().to_string(),
+        ];
+
+        let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить бинарник FFmpeg: {}", e)))?
+            .args(args);
+
+        let (mut rx, child) = sidecar_cmd.spawn()
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка старта FFmpeg: {}", e)))?;
+
+        let mut success = false;
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    let _ = child.kill();
+                    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                    return Err(AppError::Anyhow(anyhow::anyhow!("Отмена сборки хайлайтов")));
+                }
+                event = rx.recv() => {
+                    match event {
+                        Some(CommandEvent::Terminated(status)) => {
+                            success = status.code.unwrap_or(-1) == 0;
+                            break;
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        if !success || !temp_clip.exists() {
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+            return Err(AppError::Anyhow(anyhow::anyhow!("Не удалось отрендерить фрагмент хайлайтов #{}", i + 1)));
+        }
+
+        temp_clips.push(temp_clip);
+        clip_durations.push(dur);
+    }
+
+    let _ = app_handle.emit("render-progress", RenderProgressPayload {
+        percent: 85.0,
+        stage: "Склеивание видео хайлайтов с наплывом (Crossfade 0.4с)...".to_string(),
+    });
+
+    if temp_clips.len() == 1 {
+        let _ = tokio::fs::copy(&temp_clips[0], &output_path).await;
+    } else {
+        // Формирование комплексного графа фильтров xfade (видео, 0.4с) и acrossfade (аудио, 0.4с)
+        let mut ffmpeg_args = vec!["-y".to_string()];
+        for clip in &temp_clips {
+            ffmpeg_args.push("-i".to_string());
+            ffmpeg_args.push(clip.to_string_lossy().to_string());
+        }
+
+        let mut filter_str = String::new();
+        let mut prev_v = "0:v".to_string();
+        let mut prev_a = "0:a".to_string();
+        let mut cum_dur = clip_durations[0];
+
+        for i in 0..(temp_clips.len() - 1) {
+            let offset = (cum_dur - 0.4).max(0.0);
+            let next_v = format!("{}:v", i + 1);
+            let next_a = format!("{}:a", i + 1);
+            let out_v = if i + 1 == temp_clips.len() - 1 { "outv".to_string() } else { format!("v{}", i + 1) };
+            let out_a = if i + 1 == temp_clips.len() - 1 { "outa".to_string() } else { format!("a{}", i + 1) };
+
+            filter_str.push_str(&format!("[{}][{}]xfade=transition=fade:duration=0.4:offset={:.3}[{}];", prev_v, next_v, offset, out_v));
+            filter_str.push_str(&format!("[{}][{}]acrossfade=d=0.4[{}];", prev_a, next_a, out_a));
+
+            prev_v = out_v;
+            prev_a = out_a;
+            cum_dur = offset + clip_durations[i + 1];
+        }
+
+        ffmpeg_args.push("-filter_complex".to_string());
+        ffmpeg_args.push(filter_str);
+        ffmpeg_args.push("-map".to_string());
+        ffmpeg_args.push("[outv]".to_string());
+        ffmpeg_args.push("-map".to_string());
+        ffmpeg_args.push("[outa]".to_string());
+        ffmpeg_args.push("-c:v".to_string());
+        ffmpeg_args.push("libx264".to_string());
+        ffmpeg_args.push("-preset".to_string());
+        ffmpeg_args.push("fast".to_string());
+        ffmpeg_args.push("-crf".to_string());
+        ffmpeg_args.push("20".to_string());
+        ffmpeg_args.push("-c:a".to_string());
+        ffmpeg_args.push("aac".to_string());
+        ffmpeg_args.push("-b:a".to_string());
+        ffmpeg_args.push("192k".to_string());
+        ffmpeg_args.push(output_path.to_string_lossy().to_string());
+
+        let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+            .args(ffmpeg_args);
+
+        let (mut rx, child) = sidecar_cmd.spawn()
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка фильтрации xfade: {}", e)))?;
+
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    let _ = child.kill();
+                    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                    return Err(AppError::Anyhow(anyhow::anyhow!("Отмена создания хайлайтов")));
+                }
+                event = rx.recv() => {
+                    match event {
+                        Some(CommandEvent::Terminated(_)) => break,
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    let _ = app_handle.emit("render-progress", RenderProgressPayload {
+        percent: 100.0,
+        stage: "Видео хайлайтов успешно сформировано!".to_string(),
+    });
+    Ok(())
+}
+
+/// Рендерит разговорное видео (ток-шоу, подкаст, стрим, либо персонажную демку озвучки актера) за счет полного конвейера очистки:
+/// извлекает всю речевую активность (или реплики выбранных персонажей с короткими подводками собеседников),
+/// удаляет паузы > 0.45с, галлюцинации Whisper, оговорки и дубли диктора.
+/// На стыках фрагментов чередуется крупность плана (1.0x / 1.15x) и аудио-микрофейды (30мс) для динамичного jump-cut монтажа.
+pub async fn render_talk_video_assembly(
+    video_path: PathBuf,
+    srt_path: Option<PathBuf>,
+    selected_characters: Option<&[String]>,
+    output_path: PathBuf,
+    app_handle: AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<()> {
+    let srt = match srt_path {
+        Some(ref p) => p,
+        None => return Ok(()),
+    };
+
+    let content = match tokio::fs::read_to_string(srt).await {
+        Ok(c) => c,
+        Err(_) => return Ok(()),
+    };
+
+    let all_fragments = crate::text_analyzer::parse_srt(&content);
+    if all_fragments.is_empty() {
+        return Ok(());
+    }
+
+    let sel_chars = selected_characters.unwrap_or(&[]);
+    let has_char_filter = !sel_chars.is_empty()
+        && !sel_chars.iter().any(|c| c.to_lowercase() == "all" || c == "Все персонажи");
+
+    let matches_selected_char = |text: &str| -> bool {
+        let (extracted_char, _) = crate::subtitles_parser::extract_srt_character_prefix(text);
+        let lower_ext = extracted_char.to_lowercase();
+        let lower_f = text.to_lowercase();
+        sel_chars.iter().any(|char_name| {
+            let lower_c = char_name.to_lowercase();
+            lower_ext == lower_c
+                || lower_f.starts_with(&format!("{}:", lower_c))
+                || lower_f.starts_with(&format!("[{}]", lower_c))
+                || lower_f.starts_with(&format!("({})", lower_c))
+        })
+    };
+
+    let fragments: Vec<crate::text_analyzer::SubtitleFragment> = if has_char_filter {
+        let mut filtered = Vec::new();
+        for idx in 0..all_fragments.len() {
+            let is_target = matches_selected_char(&all_fragments[idx].text);
+            let is_context_question = if !is_target && idx + 1 < all_fragments.len() {
+                let next_is_target = matches_selected_char(&all_fragments[idx + 1].text);
+                let gap = all_fragments[idx + 1].start - all_fragments[idx].end;
+                let dur = all_fragments[idx].end - all_fragments[idx].start;
+                next_is_target && gap <= 2.5 && dur <= 5.5
+            } else {
+                false
+            };
+            if is_target || is_context_question {
+                filtered.push(all_fragments[idx].clone());
+            }
+        }
+        filtered
+    } else {
+        all_fragments
+    };
+
+    if fragments.is_empty() {
+        return Ok(());
+    }
+
+    // 1. Извлечение только очищенной разговорной речи (без галлюцинаций, оговорок, бракованных дублей)
+    let mut valid_speech: Vec<(f64, f64)> = Vec::new();
+    for (idx, frag) in fragments.iter().enumerate() {
+        if crate::whisper::is_whisper_hallucination(&frag.text) {
+            continue;
+        }
+        if crate::text_analyzer::is_weak_clip_ending(&fragments, idx) {
+            let lower = frag.text.to_lowercase().replace('ё', "е");
+            if lower.contains("не понравилось")
+                || lower.contains("в тайминг не")
+                || lower.contains("все хуйня")
+                || lower.contains("перепишем")
+                || lower.contains("переписать")
+                || lower.contains("давай еще раз")
+                || lower.contains("плохо получилось")
+            {
+                continue;
+            }
+        }
+        valid_speech.push((frag.start, frag.end));
+    }
+
+    if valid_speech.is_empty() {
+        return Ok(());
+    }
+
+    // 2. Объединение речевых блоков с паузами < 0.45с в сплошные речевые интервалы
+    let mut merged_blocks: Vec<(f64, f64)> = Vec::new();
+    let mut curr_start = valid_speech[0].0;
+    let mut curr_end = valid_speech[0].1;
+
+    for &(st, en) in valid_speech.iter().skip(1) {
+        if st - curr_end <= 0.45 {
+            curr_end = curr_end.max(en);
+        } else {
+            merged_blocks.push((curr_start, curr_end));
+            curr_start = st;
+            curr_end = en;
+        }
+    }
+    merged_blocks.push((curr_start, curr_end));
+
+    if let Some(parent) = output_path.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+
+    let temp_dir = output_path.parent().unwrap_or_else(|| Path::new(".")).join("temp_talk_render");
+    let _ = tokio::fs::create_dir_all(&temp_dir).await;
+
+    let mut temp_files: Vec<PathBuf> = Vec::new();
+    let total_blocks = merged_blocks.len();
+
+    // 3. Генерация каждого речевого блока с чередованием крупности плана (1.0x / 1.15x) на склейках (jump-cut)
+    for (k, &(st, en)) in merged_blocks.iter().enumerate() {
+        if cancel_rx.try_recv().is_ok() {
+            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+            return Err(AppError::Anyhow(anyhow::anyhow!("Операция монтажа разговорного видео отменена")));
+        }
+
+        let dur = (en - st).max(0.25);
+        let temp_file = temp_dir.join(format!("talk_blk_{:04}.mp4", k));
+
+        let _ = app_handle.emit("render-progress", RenderProgressPayload {
+            percent: (k as f64 / total_blocks as f64) * 85.0,
+            stage: format!("Обработка разговорного блока {}/{} (зум {})...", k + 1, total_blocks, if k % 2 == 1 { "1.15x" } else { "1.0x" }),
+        });
+
+        // Чередование плана 1.0x и 1.15x на каждой склейке (jump-cut)
+        let vf_arg = if k % 2 == 1 {
+            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,scale=2208:1242,crop=1920:1080:(iw-1920)/2:(ih-1080)/2,fps=30".to_string()
+        } else {
+            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30".to_string()
+        };
+        let af_arg = format!("afade=t=in:st=0:d=0.03,afade=t=out:st={:.3}:d=0.03,aresample=48000", (dur - 0.03).max(0.01));
+
+        let args = vec![
+            "-y".to_string(),
+            "-ss".to_string(),
+            format!("{:.3}", st),
+            "-i".to_string(),
+            video_path.to_string_lossy().to_string(),
+            "-t".to_string(),
+            format!("{:.3}", dur),
+            "-vf".to_string(),
+            vf_arg,
+            "-af".to_string(),
+            af_arg,
+            "-c:v".to_string(),
+            "libx264".to_string(),
+            "-preset".to_string(),
+            "ultrafast".to_string(),
+            "-crf".to_string(),
+            "20".to_string(),
+            "-c:a".to_string(),
+            "aac".to_string(),
+            "-b:a".to_string(),
+            "192k".to_string(),
+            temp_file.to_string_lossy().to_string(),
+        ];
+
+        let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+            .args(args);
+
+        let (mut rx, child) = sidecar_cmd.spawn()
+            .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка старта FFmpeg: {}", e)))?;
+
+        let mut success = false;
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    let _ = child.kill();
+                    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                    return Err(AppError::Anyhow(anyhow::anyhow!("Отмена монтажа разговорного видео")));
+                }
+                event = rx.recv() => {
+                    match event {
+                        Some(CommandEvent::Terminated(status)) => {
+                            success = status.code.unwrap_or(-1) == 0;
+                            break;
+                        }
+                        Some(_) => {}
+                        None => break,
+                    }
+                }
+            }
+        }
+
+        if success && temp_file.exists() {
+            temp_files.push(temp_file);
+        }
+    }
+
+    if temp_files.is_empty() {
+        let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+        return Ok(());
+    }
+
+    // 4. Бесшовное склеивание всех речевых фрагментов через FFmpeg concat demuxer
+    let concat_txt = temp_dir.join("concat_list.txt");
+    let mut concat_content = String::new();
+    for tf in &temp_files {
+        concat_content.push_str(&format!("file '{}'\n", tf.file_name().unwrap_or_default().to_string_lossy()));
+    }
+    tokio::fs::write(&concat_txt, concat_content).await
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка записи файла списков склейки: {}", e)))?;
+
+    let _ = app_handle.emit("render-progress", RenderProgressPayload {
+        percent: 92.0,
+        stage: "Сборка разговорного видео в итоговый файл...".to_string(),
+    });
+
+    let args = vec![
+        "-y".to_string(),
+        "-f".to_string(),
+        "concat".to_string(),
+        "-safe".to_string(),
+        "0".to_string(),
+        "-i".to_string(),
+        concat_txt.to_string_lossy().to_string(),
+        "-c".to_string(),
+        "copy".to_string(),
+        output_path.to_string_lossy().to_string(),
+    ];
+
+    let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+        .args(args);
+
+    let (mut rx, child) = sidecar_cmd.spawn()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка склейки разговорного видео: {}", e)))?;
+
+    loop {
+        tokio::select! {
+            _ = cancel_rx.recv() => {
+                let _ = child.kill();
+                let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+                return Err(AppError::Anyhow(anyhow::anyhow!("Отмена склейки разговорного видео")));
+            }
+            event = rx.recv() => {
+                match event {
+                    Some(CommandEvent::Terminated(_)) => break,
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+        }
+    }
+
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    let _ = app_handle.emit("render-progress", RenderProgressPayload {
+        percent: 100.0,
+        stage: "Разговорное видео успешно смонтировано!".to_string(),
+    });
+
+    Ok(())
 }
 

@@ -14,7 +14,8 @@ import {
   openFolder as ipcOpenFolder,
   getOpenAiProfiles,
   type PipelineLogPayload,
-  type PipelineConfig
+  type PipelineConfig,
+  type CustomSubtitlesParseResult
 } from '../ipc';
 import { fragmentsStore, type Fragment } from './fragments';
 import {
@@ -49,6 +50,7 @@ export interface LogEntry {
 
 export interface PipelineState {
   video: SelectedVideo | null;
+  customSubtitles: CustomSubtitlesParseResult | null;
   config: PipelineConfig;
   status: 'idle' | 'running' | 'completed' | 'failed';
   currentStage: string;
@@ -67,6 +69,10 @@ const DEFAULT_CONFIG: PipelineConfig = {
   max_clip_duration_sec: 15,
   max_clips_count: 10,
   vertical_format: true,
+  render_highlights: false,
+  render_talk_video: false,
+  custom_subtitles_path: null,
+  selected_characters: [],
   asr_model_path: 'models/ggml-base.bin',
   vision_model_path: 'models/moondream2-q4_k.gguf',
   text_engine: 'llama',
@@ -134,6 +140,7 @@ async function safeListen<T>(
 const createPipelineStore = () => {
   const store = writable<PipelineState>({
     video: null,
+    customSubtitles: null,
     config: loadInitialConfig(),
     status: 'idle',
     currentStage: '',
@@ -326,11 +333,18 @@ const createPipelineStore = () => {
 
     // Завершено
     await new Promise(resolve => setTimeout(resolve, 800));
+    const baseDir = (state.config.output_dir || 'Готовые клипы').replace(/\/+$/, '');
     const generatedClips = [
-      `${state.config.output_dir || 'output_cuts/'}clip_001_highlights.mp4`,
-      `${state.config.output_dir || 'output_cuts/'}clip_002_dynamic_action.mp4`,
-      `${state.config.output_dir || 'output_cuts/'}clip_003_narrative_peak.mp4`
+      `${baseDir}/Шортсы/Клип 01 [00m08s - 00m22s].mp4`,
+      `${baseDir}/Шортсы/Клип 02 [00m30s - 00m45s].mp4`,
+      `${baseDir}/Шортсы/Клип 03 [00m55s - 01m10s].mp4`
     ];
+    if (state.config.render_highlights) {
+      generatedClips.push(`${baseDir}/Хайлайты/Хайлайты_${videoName}`);
+    }
+    if (state.config.render_talk_video) {
+      generatedClips.push(`${baseDir}/Ток-видео/Ток_видео_${videoName}`);
+    }
 
     update(s => ({
       ...s,
@@ -339,11 +353,15 @@ const createPipelineStore = () => {
       percentage: 100,
       clips: generatedClips
     }));
-    addLog(`Пайплайн успешно отработал! Сгенерировано клипов: ${generatedClips.length}`);
+    addLog(`Пайплайн успешно отработал! Сгенерировано роликов: ${generatedClips.length}`);
   };
 
   return {
     subscribe,
+    addLog,
+    setCustomSubtitles: (customSubtitles: CustomSubtitlesParseResult | null) => {
+      update(s => ({ ...s, customSubtitles }));
+    },
     setVideo: (video: SelectedVideo | null) => {
       update(s => {
         const newState = { ...s, video, clips: [], error: null, percentage: 0, status: 'idle' as const, currentStage: '' };
@@ -433,6 +451,7 @@ const createPipelineStore = () => {
     reset: () => {
       set({
         video: null,
+        customSubtitles: null,
         config: { ...DEFAULT_CONFIG },
         status: 'idle',
         currentStage: '',
@@ -494,19 +513,25 @@ const createPipelineStore = () => {
           await new Promise(resolve => setTimeout(resolve, 700));
         }
 
-        const baseDir = config.output_dir || 'output_reels/';
+        const baseDir = (config.output_dir || 'Готовые клипы').replace(/\/+$/, '');
         const generatedClips = fragments.map((f, i) => 
-          `${baseDir}reels_clip_${i + 1}_from_${Math.round(f.start)}s_to_${Math.round(f.end)}s_9x16.mp4`
+          `${baseDir}/Шортсы/Клип ${String(i + 1).padStart(2, '0')} [${Math.round(f.start)}s - ${Math.round(f.end)}s].mp4`
         );
+        if (config.render_highlights) {
+          generatedClips.push(`${baseDir}/Хайлайты/Хайлайты_YouTube_16x9.mp4`);
+        }
+        if (config.render_talk_video) {
+          generatedClips.push(`${baseDir}/Ток-видео/Ток_видео_Без_пауз.mp4`);
+        }
 
         update(s => ({
           ...s,
           status: 'completed',
-          currentStage: 'Экспорт всех Reels успешно завершен!',
+          currentStage: 'Экспорт всех роликов успешно завершен!',
           percentage: 100,
           clips: generatedClips
         }));
-        addLog(`Экспорт завершен! Готово ${generatedClips.length} клипов в формате 9:16 с субтитрами Whisper.`);
+        addLog(`Экспорт завершен! Готово роликов: ${generatedClips.length}.`);
         return generatedClips;
       }
 

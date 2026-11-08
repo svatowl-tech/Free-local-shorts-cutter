@@ -61,6 +61,26 @@
     }
   }
 
+  function getClipCategoryInfo(clipPath: string): { label: string; badgeClass: string } {
+    const normalized = clipPath.replace(/\\/g, '/');
+    if (normalized.includes('/Хайлайты/') || normalized.includes('Хайлайты_')) {
+      return {
+        label: 'Хайлайты 16:9',
+        badgeClass: 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+      };
+    }
+    if (normalized.includes('/Ток-видео/') || normalized.includes('Разговорное_видео') || normalized.includes('Демка_')) {
+      return {
+        label: normalized.includes('Демка_') ? 'Демка 16:9' : 'Ток-видео 16:9',
+        badgeClass: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+      };
+    }
+    return {
+      label: $pipelineStore.config.vertical_format ? 'Шортс 9:16' : 'Шортс 16:9',
+      badgeClass: 'bg-[#5865f2]/20 text-[#9aa4ff] border border-[#5865f2]/40'
+    };
+  }
+
   function handleReset() {
     activePreviewClip = null;
     activePreviewSrc = '';
@@ -74,7 +94,7 @@
   <div class="p-4 bg-[#23c55e]/10 border-l-[3px] border-[#23c55e] rounded-[2px] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
     <div>
       <div class="label-mono text-[#23c55e] mb-1 font-bold">ОПЕРАЦИЯ УСПЕШНО ЗАВЕРШЕНА</div>
-      <p class="text-xs text-[#e2e2e4]">Все фрагменты нарезаны и сохранены в портретном формате 9:16. Нажмите на любой ролик ниже для предпросмотра.</p>
+      <p class="text-xs text-[#e2e2e4]">Все выбранные форматы смонтированы и разложены по подпапкам (<span class="font-mono">Шортсы</span>, <span class="font-mono">Хайлайты</span>, <span class="font-mono">Ток-видео</span>). Нажмите на любой ролик ниже для предпросмотра.</p>
     </div>
     <div class="flex items-center gap-2 shrink-0">
       <button
@@ -134,11 +154,12 @@
   <!-- Встроенный плеер предпросмотра выбранного готового ролика -->
   {#if activePreviewClip && activePreviewSrc}
     {@const activeName = getFileName(activePreviewClip, 'clip.mp4')}
+    {@const activeCategory = getClipCategoryInfo(activePreviewClip)}
     <div class="p-4 bg-[#0c0c0e] border border-[#5865f2]/60 rounded-[4px] flex flex-col gap-3 shadow-xl">
       <div class="flex items-center justify-between border-b border-[rgba(226,226,224,0.1)] pb-2.5">
         <div class="flex items-center gap-2 min-w-0">
-          <span class="px-2 py-0.5 rounded bg-[#23c55e]/20 text-[#23c55e] font-mono text-[10px] font-bold uppercase">
-            Превью 9:16
+          <span class="px-2 py-0.5 rounded font-mono text-[10px] font-bold uppercase {activeCategory.badgeClass}">
+            Превью • {activeCategory.label}
           </span>
           <span class="font-mono text-xs font-bold text-[#e2e2e4] truncate" title={activeName}>
             {activeName}
@@ -174,13 +195,14 @@
   <!-- Clips List -->
   <div class="space-y-3">
     <div class="label-mono text-[#e2e2e4]">
-      Экспортированные клипы ({$pipelineStore.clips.length})
+      Экспортированные ролики ({$pipelineStore.clips.length})
     </div>
 
     <div class="space-y-2">
       {#each $pipelineStore.clips as clip, index}
         {@const clipName = getFileName(clip, `clip_${index + 1}.mp4`)}
         {@const isPreviewing = activePreviewClip === clip}
+        {@const clipCat = getClipCategoryInfo(clip)}
         <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
         <div
           on:click={() => toggleClipPreview(clip)}
@@ -197,10 +219,13 @@
             </div>
             
             <div class="min-w-0">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <h4 class="text-xs font-bold text-[#e2e2e4] truncate font-mono" title={clipName}>
                   {clipName}
                 </h4>
+                <span class="text-[10px] font-mono px-1.5 py-0.5 rounded {clipCat.badgeClass}">
+                  {clipCat.label}
+                </span>
                 <span class="text-[10px] font-mono px-1.5 py-0.5 rounded {isPreviewing ? 'bg-[#23c55e]/20 text-[#23c55e]' : 'bg-[#5865f2]/15 text-[#5865f2]'}">
                   {isPreviewing ? 'Воспроизводится' : 'Предпросмотр'}
                 </span>

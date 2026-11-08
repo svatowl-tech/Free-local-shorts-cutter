@@ -22,7 +22,12 @@ pub struct PipelineConfig {
     pub max_clip_duration_sec: f64,
     pub max_clips_count: Option<usize>,
     pub vertical_format: bool,
+    pub render_highlights: Option<bool>,
+    pub render_talk_video: Option<bool>,
+    pub custom_subtitles_path: Option<String>,
+    pub selected_characters: Option<Vec<String>>,
     pub subtitle_style: Option<SubtitleStyle>,
+    pub bumper_config: Option<crate::bumpers::BumperGlobalConfig>,
     pub mode: Option<String>,
 }
 
@@ -115,13 +120,37 @@ pub async fn run_pipeline(
         stage: "Подготовка субтитров (Whisper ASR)...".to_string() 
     });
 
-    let asr_model = config.asr_model_path.clone().map(PathBuf::from);
-    let srt_path = crate::whisper::get_or_create_subtitles(
-        video_path.clone(),
-        asr_model,
-        app_handle.clone(),
-        cancel_rx.resubscribe(),
-    ).await?;
+    let project_srt = crate::whisper::get_project_srt_path(&video_path);
+
+    let srt_path = if let Some(ref custom_path_str) = config.custom_subtitles_path {
+        let custom_path = PathBuf::from(custom_path_str);
+        if custom_path.exists() {
+            crate::logger::emit_log(
+                &app_handle,
+                "Pipeline",
+                "info",
+                &format!("✓ Подключены готовые пользовательские субтитры (ASS/SRT/VTT): '{}'. Сканирование речи Whisper ASR пропущено!", custom_path.display()),
+            );
+            let _ = crate::whisper::process_custom_subtitles_into_project(&custom_path, &project_srt);
+            Some(project_srt)
+        } else {
+            let asr_model = config.asr_model_path.clone().map(PathBuf::from);
+            crate::whisper::get_or_create_subtitles(
+                video_path.clone(),
+                asr_model,
+                app_handle.clone(),
+                cancel_rx.resubscribe(),
+            ).await?
+        }
+    } else {
+        let asr_model = config.asr_model_path.clone().map(PathBuf::from);
+        crate::whisper::get_or_create_subtitles(
+            video_path.clone(),
+            asr_model,
+            app_handle.clone(),
+            cancel_rx.resubscribe(),
+        ).await?
+    };
 
     if mode == "manual" {
         crate::logger::emit_log(&app_handle, "Pipeline", "info", "Ручной режим: субтитры подготовлены и сохранены в папке проекта, готово к редактированию.");
@@ -146,13 +175,58 @@ pub async fn run_pipeline(
 
     let (fragments, text_scores) = if let Some(ref srt) = srt_path {
         if let Ok(srt_content) = tokio::fs::read_to_string(srt).await {
-            let frags = crate::text_analyzer::parse_srt(&srt_content);
+            let mut frags = crate::text_analyzer::parse_srt(&srt_content);
+
+            // Фильтрация реплик по выбранным персонажам/актерам (с захватом коротких реплик-вопросов собеседников <= 2.5с перед репликой персонажа для связности диалога)
+            let selected_chars = config.selected_characters.as_deref().unwrap_or(&[]);
+            let has_char_filter = !selected_chars.is_empty()
+                && !selected_chars.iter().any(|c| c.to_lowercase() == "all" || c == "Все персонажи");
+
+            if has_char_filter {
+                let initial_cnt = frags.len();
+                let matches_selected = |text: &str| -> bool {
+                    let (extracted_char, _) = crate::subtitles_parser::extract_srt_character_prefix(text);
+                    let lower_ext = extracted_char.to_lowercase();
+                    let lower_f = text.to_lowercase();
+                    selected_chars.iter().any(|char_name| {
+                        let lower_c = char_name.to_lowercase();
+                        lower_ext == lower_c
+                            || lower_f.starts_with(&format!("{}:", lower_c))
+                            || lower_f.starts_with(&format!("[{}]", lower_c))
+                            || lower_f.starts_with(&format!("({})", lower_c))
+                    })
+                };
+
+                let mut filtered_frags = Vec::with_capacity(frags.len());
+                for idx in 0..frags.len() {
+                    let is_target = matches_selected(&frags[idx].text);
+                    let is_context_question = if !is_target && idx + 1 < frags.len() {
+                        let next_is_target = matches_selected(&frags[idx + 1].text);
+                        let gap = frags[idx + 1].start - frags[idx].end;
+                        let dur = frags[idx].end - frags[idx].start;
+                        next_is_target && gap <= 2.5 && dur <= 5.5
+                    } else {
+                        false
+                    };
+                    if is_target || is_context_question {
+                        filtered_frags.push(frags[idx].clone());
+                    }
+                }
+                frags = filtered_frags;
+                crate::logger::emit_log(
+                    &app_handle,
+                    "Pipeline",
+                    "info",
+                    &format!("🎭 Фильтрация по персонажам {:?} (+контекст собеседников): отобрано {} из {} реплик", selected_chars, frags.len(), initial_cnt),
+                );
+            }
+
             if frags.is_empty() {
                 crate::logger::emit_log(
                     &app_handle,
                     "LLM",
                     "info",
-                    "Субтитры пусты: в аудиодорожке не обнаружено реплик. Анализ LLM пропущен.",
+                    "Субтитры пусты после фильтрации по персонажам. Анализ LLM пропущен.",
                 );
                 (Vec::new(), Vec::new())
             } else {
@@ -887,14 +961,26 @@ pub async fn run_pipeline(
 
     let video_parent = video_path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let project_dir = video_parent.join(format!("{}_Проект", file_stem));
-    let clips_dir = project_dir.join("Готовые клипы");
-    let _ = tokio::fs::create_dir_all(&clips_dir).await;
+    let default_clips_root = project_dir.join("Готовые клипы");
+    let clips_root = match config.output_dir.as_deref().map(str::trim) {
+        Some(custom) if !custom.is_empty() && custom != "output_cuts/" && custom != "output_cuts" => {
+            let custom_path = PathBuf::from(custom);
+            if custom_path.is_absolute() {
+                custom_path
+            } else {
+                video_parent.join(custom_path)
+            }
+        }
+        _ => default_clips_root,
+    };
+    let shorts_dir = clips_root.join("Шортсы");
+    let _ = tokio::fs::create_dir_all(&shorts_dir).await;
 
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
         "info",
-        &format!("Директория сохранения клипов проекта: '{}'", clips_dir.display()),
+        &format!("Директория сохранения шортсов проекта: '{}'", shorts_dir.display()),
     );
 
     let total_clips = selected_intervals.len();
@@ -914,9 +1000,9 @@ pub async fn run_pipeline(
             end_min,
             end_s
         );
-        let clip_path = clips_dir.join(clip_filename);
+        let clip_path = shorts_dir.join(clip_filename);
 
-        let clip_percent = 88.0 + ((i as f64 + 1.0) / total_clips as f64) * 10.0;
+        let clip_percent = 88.0 + ((i as f64 + 1.0) / total_clips.max(1) as f64) * 10.0;
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
             percent: clip_percent,
             stage: format!("Рендеринг клипа {} из {}...", i + 1, total_clips),
@@ -940,14 +1026,121 @@ pub async fn run_pipeline(
             cancel_rx.resubscribe()
         ).await?;
 
+        let _ = crate::render::attach_bumpers_if_enabled(
+            &clip_path,
+            config.bumper_config.as_ref(),
+            config.vertical_format,
+            &video_path,
+            &app_handle,
+        ).await;
+
         generated_clips.push(clip_path);
+    }
+
+    let selected_chars = config.selected_characters.as_deref().unwrap_or(&[]);
+    let has_char_filter = !selected_chars.is_empty()
+        && !selected_chars.iter().any(|c| c.to_lowercase() == "all" || c == "Все персонажи");
+    let char_prefix = if has_char_filter {
+        format!("{}_", selected_chars.first().cloned().unwrap_or_default())
+    } else {
+        String::new()
+    };
+
+    // 6a. Сборка видео хайлайтов (16:9 YouTube compilation с мягким перекрёстным наплывом 0.4с)
+    if config.render_highlights.unwrap_or(false) && !selected_intervals.is_empty() {
+        let highlights_dir = clips_root.join("Хайлайты");
+        let _ = tokio::fs::create_dir_all(&highlights_dir).await;
+        let highlights_filename = format!("Хайлайты_{}{}.mp4", char_prefix, file_stem);
+        let highlights_path = highlights_dir.join(highlights_filename);
+
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            &format!("Запуск сборки видео хайлайтов в '16:9' с наплывами (Crossfade 0.4с): '{}'", highlights_path.display()),
+        );
+        let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
+            percent: 98.0,
+            stage: "Сборка видео хайлайтов (16:9 YouTube + Crossfade 0.4с)...".to_string(),
+        });
+
+        let highlight_intervals: Vec<(f64, f64)> = selected_intervals.iter().map(|&(s, e, _, _, _)| (s, e)).collect();
+        if let Err(e) = crate::render::render_highlights_assembly(
+            video_path.clone(),
+            &highlight_intervals,
+            highlights_path.clone(),
+            srt_path.clone(),
+            app_handle.clone(),
+            cancel_rx.resubscribe(),
+        ).await {
+            crate::logger::emit_log(
+                &app_handle,
+                "Pipeline",
+                "warn",
+                &format!("Предупреждение при сборке хайлайтов: {}", e),
+            );
+        } else {
+            let _ = crate::render::attach_bumpers_if_enabled(
+                &highlights_path,
+                config.bumper_config.as_ref(),
+                false,
+                &video_path,
+                &app_handle,
+            ).await;
+            generated_clips.push(highlights_path);
+        }
+    }
+
+    // 6b. Монтаж разговорного видео / Демки озвучки персонажа
+    if config.render_talk_video.unwrap_or(false) && srt_path.is_some() {
+        let talk_dir = clips_root.join("Ток-видео");
+        let _ = tokio::fs::create_dir_all(&talk_dir).await;
+        let talk_label = if has_char_filter { "Демка" } else { "Ток_видео" };
+        let talk_filename = format!("{}_{}{}.mp4", talk_label, char_prefix, file_stem);
+        let talk_path = talk_dir.join(talk_filename);
+
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            &format!("Запуск монтажа разговорного видео (Ток-видео / Демка) со сменой зума 1.0x/1.15x: '{}'", talk_path.display()),
+        );
+        let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
+            percent: 99.0,
+            stage: "Монтаж чистового разговорного видео (Ток-видео без пауз)...".to_string(),
+        });
+
+        if let Err(e) = crate::render::render_talk_video_assembly(
+            video_path.clone(),
+            srt_path.clone(),
+            config.selected_characters.as_deref(),
+            talk_path.clone(),
+            app_handle.clone(),
+            cancel_rx.resubscribe(),
+        ).await {
+            crate::logger::emit_log(
+                &app_handle,
+                "Pipeline",
+                "warn",
+                &format!("Предупреждение при монтаже разговорного видео: {}", e),
+            );
+        } else {
+            let _ = crate::render::attach_bumpers_if_enabled(
+                &talk_path,
+                config.bumper_config.as_ref(),
+                false,
+                &video_path,
+                &app_handle,
+            ).await;
+            generated_clips.push(talk_path);
+        }
     }
 
     crate::logger::emit_log(
         &app_handle,
         "Pipeline",
         "info",
-        &format!("=== ПАЙПЛАЙН УСПЕШНО ЗАВЕРШЕН! Создано клипов: {} ===", generated_clips.len()),
+        &format!("=== ПАЙПЛАЙН УСПЕШНО ЗАВЕРШЕН! Создано медиа-файлов: {} ===", generated_clips.len()),
     );
     let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload { 
         percent: 100.0, 
