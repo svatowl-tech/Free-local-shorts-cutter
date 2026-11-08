@@ -742,28 +742,39 @@ pub async fn run_pipeline(
         }
     }
 
-    let user_threshold = config.min_intensity_threshold.clamp(0.10, 0.98);
+    let user_threshold = config.min_intensity_threshold.clamp(0.05, 0.98);
     let max_scene_score = non_overlapping_scenes.first().map(|s| s.2).unwrap_or(0.0);
 
-    // Динамический потолок количества роликов в режиме «Авто» в зависимости от запрошенного уровня эмоций (`min_intensity_threshold`):
-    // - при 0.95+: максимум 2 самых взрывных клипа на серию
-    // - при 0.90: максимум 4 супер-интенсивных клипа
-    // - при 0.85: максимум 6 клипов
-    // - при 0.80: максимум 8 клипов
-    // - при 0.75: максимум 11 клипов
-    // - при 0.70: максимум 14 клипов
-    // - при <= 0.60: до 20 клипов
-    let auto_intensity_cap: usize = if user_threshold >= 0.94 {
+    // Если максимальный накал в серии ниже заданного пользователем порога (например, в спокойном или разговорном видео max = 0.45, а порог 0.60):
+    // не обнуляем отбор, а калибруем рабочий порог пропорционально динамическому диапазону этого видео
+    let effective_threshold = if max_scene_score > 0.05 && user_threshold > max_scene_score {
+        let calibrated = (max_scene_score * 0.85).max(0.12);
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            &format!(
+                "Калибровка порога под динамический диапазон видео: макс. накал в серии {:.2}, рабочий порог адаптирован с {:.2} до {:.2}.",
+                max_scene_score, user_threshold, calibrated
+            ),
+        );
+        calibrated
+    } else {
+        user_threshold
+    };
+
+    // Динамический потолок количества роликов в режиме «Авто» в зависимости от запрошенного уровня эмоций:
+    let auto_intensity_cap: usize = if effective_threshold >= 0.94 {
         2
-    } else if user_threshold >= 0.89 {
+    } else if effective_threshold >= 0.89 {
         4
-    } else if user_threshold >= 0.84 {
+    } else if effective_threshold >= 0.84 {
         6
-    } else if user_threshold >= 0.79 {
+    } else if effective_threshold >= 0.79 {
         8
-    } else if user_threshold >= 0.74 {
+    } else if effective_threshold >= 0.74 {
         11
-    } else if user_threshold >= 0.68 {
+    } else if effective_threshold >= 0.68 {
         14
     } else {
         20
@@ -775,18 +786,15 @@ pub async fn run_pipeline(
         max_clips_limit
     };
 
-    // 2. Строгий отбор клипов, реально преодолевших заданный пользователем порог интенсивности эмоций
+    // 2. Строгий отбор клипов, реально преодолевших рабочий порог интенсивности эмоций
     let mut selected_intervals: Vec<(f64, f64, f64, String, String)> = non_overlapping_scenes
         .iter()
-        .filter(|cand| cand.2 >= user_threshold)
+        .filter(|cand| cand.2 >= effective_threshold)
         .take(effective_limit)
         .cloned()
         .collect();
 
-    // 2б. Адаптивное пополнение для длинных видео / стримов:
-    // Если пользователь запросил подборку клипов (например 5–10), а строгий порог пропустил слишком мало (меньше половины от лимита или меньше 3),
-    // мягко расширяем порог с шагом 0.05..0.12 (не опускаясь ниже безопасного порога содержательности 0.62),
-    // чтобы пользователь не остался с 1 клипом на двухчасовом стриме.
+    // 2б. Адаптивное пополнение для длинных видео:
     let min_desired = if is_auto_clips {
         effective_limit.min(3)
     } else {
@@ -794,11 +802,11 @@ pub async fn run_pipeline(
     };
 
     if selected_intervals.len() < min_desired && !non_overlapping_scenes.is_empty() {
-        let relaxed_floor = (user_threshold - 0.12).max(0.62);
+        let relaxed_floor = (effective_threshold * 0.75).max(0.10);
         let needed = effective_limit.saturating_sub(selected_intervals.len());
         let additional: Vec<(f64, f64, f64, String, String)> = non_overlapping_scenes
             .iter()
-            .filter(|cand| cand.2 < user_threshold && cand.2 >= relaxed_floor)
+            .filter(|cand| cand.2 < effective_threshold && cand.2 >= relaxed_floor)
             .take(needed)
             .cloned()
             .collect();
@@ -809,10 +817,10 @@ pub async fn run_pipeline(
                 "Pipeline",
                 "info",
                 &format!(
-                    "Адаптивная довыборка клипов (найдено {} из {} при пороге {:.2}): порог мягко скорректирован до {:.2} для получения полноценной подборки лучших моментов длинного видео (+{} сцен).",
+                    "Адаптивная довыборка клипов (найдено {} из {} при пороге {:.2}): порог мягко скорректирован до {:.2} (+{} сцен).",
                     selected_intervals.len(),
                     effective_limit,
-                    user_threshold,
+                    effective_threshold,
                     relaxed_floor,
                     additional.len()
                 ),
@@ -821,25 +829,13 @@ pub async fn run_pipeline(
         }
     }
 
-    // 3. Если пользователь выставил экстремальный порог (например 0.90–0.95), а в данной серии пиковая сцена имеет 0.86–0.89:
-    // НИ В КОЕМ СЛУЧАЕ не сбрасываем фильтр до 20 проходных сцен по 0.66!
-    // Выбираем ТОЛЬКО узкую верхушку абсолютных пиков серии (не более 2–3 сцен в пределах 0.05 от максимума серии).
+    // 3. Гарантированный отбор лучших кульминаций: никогда не оставляем список пустым!
     if selected_intervals.is_empty() && !non_overlapping_scenes.is_empty() {
-        let strict_fallback_cap = if user_threshold >= 0.90 {
-            3usize.min(effective_limit)
-        } else if user_threshold >= 0.82 {
-            4usize.min(effective_limit)
-        } else if user_threshold >= 0.72 {
-            6usize.min(effective_limit)
-        } else {
-            8usize.min(effective_limit)
-        };
-        let min_peak_floor = (max_scene_score - 0.05).max(0.68);
-
+        let fallback_cap = 4usize.min(effective_limit);
         selected_intervals = non_overlapping_scenes
-            .into_iter()
-            .filter(|cand| cand.2 >= min_peak_floor)
-            .take(strict_fallback_cap)
+            .iter()
+            .take(fallback_cap)
+            .cloned()
             .collect();
 
         crate::logger::emit_log(
@@ -847,11 +843,9 @@ pub async fn run_pipeline(
             "Pipeline",
             "info",
             &format!(
-                "Строгий фильтр интенсивности (порог {:.2}, макс. накал в серии {:.2}): отобрано только {} самых пиковых кульминационных сцен (>= {:.2}).",
-                user_threshold,
-                max_scene_score,
+                "Отобрано {} ключевых кульминационных сцен видео (лучший накал серии: {:.2}).",
                 selected_intervals.len(),
-                min_peak_floor
+                max_scene_score
             ),
         );
     }
@@ -1057,11 +1051,11 @@ pub async fn run_pipeline(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("Запуск сборки видео хайлайтов (формат: {}, субтитры: {}, наплывы: Crossfade 0.4с): '{}'", if config.vertical_format { "9:16 Shorts" } else { "16:9" }, srt_path.is_some(), highlights_path.display()),
+            &format!("Запуск сборки видео хайлайтов в полноэкранном формате 16:9 (Full HD, субтитры: {}, наплывы: Crossfade 0.4с): '{}'", srt_path.is_some(), highlights_path.display()),
         );
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
             percent: 98.0,
-            stage: format!("Сборка видео хайлайтов ({} + Crossfade 0.4с + субтитры)...", if config.vertical_format { "9:16 Shorts" } else { "16:9" }),
+            stage: "Сборка видео хайлайтов (16:9 Full HD + Crossfade 0.4с + субтитры)...".to_string(),
         });
 
         let highlight_intervals: Vec<(f64, f64)> = selected_intervals.iter().map(|&(s, e, _, _, _)| (s, e)).collect();
@@ -1070,7 +1064,7 @@ pub async fn run_pipeline(
             &highlight_intervals,
             highlights_path.clone(),
             srt_path.clone(),
-            config.vertical_format,
+            false, // Хайлайты — ВСЕГДА полноэкранный 16:9 YouTube ролик напрямую из оригинального видео
             config.subtitle_style.clone(),
             app_handle.clone(),
             cancel_rx.resubscribe(),
@@ -1085,7 +1079,7 @@ pub async fn run_pipeline(
             let _ = crate::render::attach_bumpers_if_enabled(
                 &highlights_path,
                 config.bumper_config.as_ref(),
-                config.vertical_format,
+                false, // 16:9 альбомный пресет бамперов
                 &video_path,
                 &app_handle,
             ).await;
@@ -1105,18 +1099,18 @@ pub async fn run_pipeline(
             &app_handle,
             "Pipeline",
             "info",
-            &format!("Запуск монтажа разговорного видео ({}, формат: {}, субтитры: да) со сменой зума 1.0x/1.15x: '{}'", talk_label, if config.vertical_format { "9:16 Shorts" } else { "16:9" }, talk_path.display()),
+            &format!("Запуск монтажа разговорного видео ({}, полноэкранный 16:9 формат, субтитры: {}) со сменой зума 1.0x/1.15x: '{}'", talk_label, if has_char_filter { "да" } else { "нет" }, talk_path.display()),
         );
         let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
             percent: 99.0,
-            stage: format!("Монтаж чистового разговорного видео ({}, {} без пауз + субтитры)...", talk_label, if config.vertical_format { "9:16" } else { "16:9" }),
+            stage: format!("Монтаж чистового разговорного видео ({}, 16:9 без пауз)...", talk_label),
         });
 
         if let Err(e) = crate::render::render_talk_video_assembly(
             video_path.clone(),
             srt_path.clone(),
             config.selected_characters.as_deref(),
-            config.vertical_format,
+            false, // Демка и Ток-видео — ВСЕГДА полноэкранный 16:9 ролик из оригинального видео
             config.subtitle_style.clone(),
             talk_path.clone(),
             app_handle.clone(),
@@ -1132,7 +1126,7 @@ pub async fn run_pipeline(
             let _ = crate::render::attach_bumpers_if_enabled(
                 &talk_path,
                 config.bumper_config.as_ref(),
-                config.vertical_format,
+                false, // 16:9 альбомный пресет бамперов
                 &video_path,
                 &app_handle,
             ).await;

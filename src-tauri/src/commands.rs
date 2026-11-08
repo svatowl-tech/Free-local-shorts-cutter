@@ -341,7 +341,7 @@ pub async fn render_clips_from_fragments(
 
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
             percent: 98.0, 
-            stage: format!("Экспорт сборника хайлайтов ({} + Crossfade 0.4с + субтитры)...", if config.vertical_format { "9:16 Shorts" } else { "16:9" })
+            stage: "Экспорт сборника хайлайтов (16:9 Full HD + Crossfade 0.4с + субтитры)...".to_string() 
         });
 
         let intervals: Vec<(f64, f64)> = fragments.iter().map(|f| (f.start, f.end)).collect();
@@ -350,7 +350,7 @@ pub async fn render_clips_from_fragments(
             &intervals,
             highlights_path.clone(),
             srt_path.clone(),
-            config.vertical_format,
+            false, // Хайлайты — ВСЕГДА полноэкранный 16:9 альбомный ролик из оригинального видео
             config.subtitle_style.clone(),
             app.clone(),
             cancel_rx.resubscribe(),
@@ -358,7 +358,7 @@ pub async fn render_clips_from_fragments(
             let _ = crate::render::attach_bumpers_if_enabled(
                 &highlights_path,
                 config.bumper_config.as_ref(),
-                config.vertical_format,
+                false, // 16:9 альбомный пресет бамперов
                 &video_buf,
                 &app,
             ).await;
@@ -375,14 +375,14 @@ pub async fn render_clips_from_fragments(
 
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
             percent: 99.0, 
-            stage: format!("Экспорт разговорного видео ({}, {} без пауз + субтитры)...", talk_label, if config.vertical_format { "9:16" } else { "16:9" })
+            stage: format!("Экспорт разговорного видео ({}, 16:9 без пауз)...", talk_label) 
         });
 
         if let Ok(()) = crate::render::render_talk_video_assembly(
             video_buf.clone(),
             srt_path.clone(),
             config.selected_characters.as_deref(),
-            config.vertical_format,
+            false, // Демка и Ток-видео — ВСЕГДА полноэкранный 16:9 ролик из оригинального видео
             config.subtitle_style.clone(),
             talk_path.clone(),
             app.clone(),
@@ -391,7 +391,7 @@ pub async fn render_clips_from_fragments(
             let _ = crate::render::attach_bumpers_if_enabled(
                 &talk_path,
                 config.bumper_config.as_ref(),
-                config.vertical_format,
+                false, // 16:9 альбомный пресет бамперов
                 &video_buf,
                 &app,
             ).await;

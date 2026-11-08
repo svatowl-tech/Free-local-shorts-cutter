@@ -1043,18 +1043,19 @@ fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64
                 // если в реплике есть реальное восклицание (`!`) и детерминированный анализатор видит пик кульминации (`fallback[i] >= 0.80`),
                 // не позволяем заниженной оценке LLM на коротком выкрике («НАМ КОНЕЦ!») утянуть пик вниз
                 let has_exclam = chunk[i].text.contains('!');
-                let effective_llm = if has_exclam && fallback[i] >= 0.78 {
-                    val.clamp(0.08, 0.96).max(fallback[i] * 0.95)
+                let has_question = chunk[i].text.contains('?');
+                let effective_llm = if has_exclam && fallback[i] >= 0.75 {
+                    val.clamp(0.12, 0.98).max(fallback[i] * 0.95)
                 } else {
-                    val.clamp(0.08, 0.96)
+                    val.clamp(0.12, 0.98)
                 };
-                let raw_blend = effective_llm * 0.62 + fallback[i] * 0.38;
-                let contrasted = if !has_exclam && !chunk[i].text.contains('?') {
-                    (raw_blend * 0.88).clamp(0.12, 0.56)
-                } else if raw_blend < 0.70 {
-                    (raw_blend * 0.92).clamp(0.12, 0.68)
+                let raw_blend = effective_llm * 0.65 + fallback[i] * 0.35;
+                let contrasted = if has_exclam {
+                    (raw_blend * 1.10).clamp(0.35, 0.98)
+                } else if has_question {
+                    (raw_blend * 1.05).clamp(0.30, 0.92)
                 } else {
-                    raw_blend.clamp(0.70, 0.96)
+                    raw_blend.clamp(0.20, 0.88)
                 };
                 out.push(contrasted);
             }
