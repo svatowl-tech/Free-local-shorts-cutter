@@ -36,7 +36,39 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
 
     let lower = trimmed.to_lowercase().replace('ё', "е");
 
-    // 1. Технические теги звуков, музыки и субтитров вида [музыка], (музыка), *музыка*, ♪ и т.д.
+    // 0. Детектор повторов одной буквы и галлюцинаций с низкой алфавитной вариативностью (например «ппппп...», «ааааа...», «ммммм...»)
+    let alpha_chars: Vec<char> = lower.chars().filter(|c| c.is_alphabetic()).collect();
+    if alpha_chars.len() >= 8 {
+        let mut unique_set = std::collections::HashSet::new();
+        for &c in &alpha_chars {
+            unique_set.insert(c);
+        }
+        if unique_set.len() <= 2 {
+            return true;
+        }
+    }
+    // Проверка на 7+ одинаковых букв подряд внутри одного слова
+    for word in lower.split_whitespace() {
+        let mut max_run = 0usize;
+        let mut prev_c = None;
+        let mut current_run = 0usize;
+        for c in word.chars().filter(|c| c.is_alphabetic()) {
+            if Some(c) == prev_c {
+                current_run += 1;
+            } else {
+                prev_c = Some(c);
+                current_run = 1;
+            }
+            if current_run > max_run {
+                max_run = current_run;
+            }
+        }
+        if max_run >= 7 {
+            return true;
+        }
+    }
+
+    // 1. Технические теги звуков, действий, музыки и субтитров вида [музыка], (музыка), *музыка*, (Звук отрыва), *покатывается*, ♪ и т.д.
     let stripped_symbols = lower.trim_matches(['.', '!', '?', ',', '-', '—', '"', '\'', '«', '»', ' ']);
     if (stripped_symbols.starts_with('[') && stripped_symbols.ends_with(']'))
         || (stripped_symbols.starts_with('(') && stripped_symbols.ends_with(')'))
@@ -46,6 +78,29 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         || lower.contains('🎵')
     {
         return true;
+    }
+
+    // Акустические ремарки и действия в скобках / со звездочками в любой части строки
+    if (lower.contains('(') || lower.contains('[') || lower.contains('*'))
+        && (lower.contains(')') || lower.contains(']') || lower.contains('*'))
+    {
+        if lower.contains("звук")
+            || lower.contains("музык")
+            || lower.contains("шум")
+            || lower.contains("покатывает")
+            || lower.contains("вздох")
+            || lower.contains("смех")
+            || lower.contains("крик")
+            || lower.contains("оттенк")
+            || lower.contains("битв")
+            || lower.contains("гонко")
+            || lower.contains("гонк")
+            || lower.contains("весел")
+            || lower.contains("шип")
+            || lower.contains("рыч")
+        {
+            return true;
+        }
     }
 
     // Одиночные звуковые ремарки со знаками препинания или без
@@ -2316,4 +2371,49 @@ pub async fn transcribe_audio(
             Err(AppError::Pipeline("Распознавание отменено пользователем.".to_string()))
         }
     }
+}
+
+/// Конвертирует и сохраняет пользовательские готовые субтитры (ASS/SSA/SRT/VTT) в канонический SRT-файл проекта
+pub fn process_custom_subtitles_into_project(
+    custom_path: &Path,
+    project_srt_path: &Path,
+) -> AppResult<()> {
+    let parse_res = crate::subtitles_parser::parse_custom_subtitles_file(custom_path)
+        .map_err(AppError::Anyhow)?;
+
+    if let Some(parent) = project_srt_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let mut srt_content = String::new();
+    for (idx, line) in parse_res.lines.iter().enumerate() {
+        let start_h = (line.start / 3600.0) as u32;
+        let start_m = ((line.start % 3600.0) / 60.0) as u32;
+        let start_s = (line.start % 60.0) as u32;
+        let start_ms = ((line.start - line.start.floor()) * 1000.0) as u32;
+
+        let end_h = (line.end / 3600.0) as u32;
+        let end_m = ((line.end % 3600.0) / 60.0) as u32;
+        let end_s = (line.end % 60.0) as u32;
+        let end_ms = ((line.end - line.end.floor()) * 1000.0) as u32;
+
+        let text_with_char = if line.character != "Общий диктор" && !line.text.to_lowercase().starts_with(&line.character.to_lowercase()) {
+            format!("{}: {}", line.character, line.text)
+        } else {
+            line.text.clone()
+        };
+
+        srt_content.push_str(&format!(
+            "{}\n{:02}:{:02}:{:02},{:03} --> {:02}:{:02}:{:02},{:03}\n{}\n\n",
+            idx + 1,
+            start_h, start_m, start_s, start_ms,
+            end_h, end_m, end_s, end_ms,
+            text_with_char
+        ));
+    }
+
+    std::fs::write(project_srt_path, srt_content)
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось записать готовые субтитры проекта: {}", e)))?;
+
+    Ok(())
 }

@@ -659,6 +659,18 @@ pub fn is_weak_clip_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
         "стоять",
         "какого",
         "что это",
+        "вау",
+        "срочно",
+        "ой",
+        "ай",
+        "эй",
+        "блин",
+        "слышь",
+        "слушай",
+        "хм",
+        "э-э",
+        "о-о",
+        "ёлки-палки",
         "так точно. сразу этим займусь",
         "ох, прошу прощения, что сразу не признал",
     ];
@@ -681,7 +693,7 @@ pub fn is_weak_clip_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
 }
 
 /// Проверяет, является ли реплика `idx` слабым/оборванным финалом для клипа
-/// (незакрытые вопросы `?`, короткие поддакивания, переспросы, реплики-подводки перед ответом или нулевая пауза посреди монолога)
+/// (незакрытые вопросы `?`, короткие поддакивания, переспросы, реплики-подводки перед ответом или дубли/самоисправления актера озвучки)
 pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
     if idx >= fragments.len() {
         return false;
@@ -705,6 +717,30 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         .to_lowercase()
         .replace('ё', "е");
     let word_count = clean.split_whitespace().count();
+
+    // 0.5. Самоисправления и мета-комментарии актера дубляжа / диктора при запоротом дубле
+    // («не понравилось», «в тайминг не попал», «все хуйня», «перепишем», «давай еще раз», «плохо получилось»)
+    if clean.contains("не понравилось")
+        || clean.contains("в тайминг не")
+        || clean.contains("не попал")
+        || clean.contains("перепишем")
+        || clean.contains("переписать")
+        || clean.contains("перепишу")
+        || clean.contains("давай еще раз")
+        || clean.contains("давай еще")
+        || clean.contains("попробую еще раз")
+        || clean.contains("все хуйня")
+        || clean.contains("все херня")
+        || clean.contains("все фигня")
+        || clean.contains("плохой дубль")
+        || clean.contains("звучит натужно")
+        || clean.ends_with("не то")
+        || clean.ends_with("не тот вайп")
+        || clean.ends_with("давай заново")
+        || clean.ends_with("давай сначала")
+    {
+        return true;
+    }
 
     // 1. Многоточие в конце («Вам многом из-за...», «Проклятым монстром...») — мысль явно не договорена
     if raw_trimmed.ends_with("...") || raw_trimmed.ends_with('…') {
@@ -2400,6 +2436,7 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
     raw_scores
 }
 
+#[allow(dead_code)]
 pub fn compute_text_scores_fallback(fragments: &[SubtitleFragment]) -> Vec<f64> {
     compute_text_scores_advanced(fragments)
 }

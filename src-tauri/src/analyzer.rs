@@ -31,6 +31,7 @@ struct LlamaOutput {
     #[serde(default)]
     intensity: f64,
     #[serde(default)]
+    #[allow(dead_code)]
     actions: Vec<String>,
 }
 
