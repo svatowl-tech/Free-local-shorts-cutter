@@ -149,6 +149,44 @@ fn to_ass_color(color: &str) -> String {
     "&H00FFFFFF".to_string()
 }
 
+/// Формирует строку фильтра субтитров FFmpeg с экранированием путей и применением настроек стиля
+fn format_subtitles_filter(
+    srt_file: &Path,
+    custom_style: Option<&crate::models::SubtitleStyle>,
+) -> String {
+    let srt_escaped = srt_file
+        .to_string_lossy()
+        .replace('\\', "/")
+        .replace(':', "\\:")
+        .replace('\'', "\\'")
+        .replace('[', "\\[")
+        .replace(']', "\\]");
+
+    if let Some(style) = custom_style {
+        let font = if style.font_name.is_empty() || style.font_name.eq_ignore_ascii_case("Inter") {
+            "Arial".to_string()
+        } else {
+            style.font_name.clone()
+        };
+        let font_size = if style.font_size <= 0 { 20 } else { style.font_size.min(28) };
+        let primary_color = to_ass_color(&style.color);
+        let alignment = match style.placement.as_str() {
+            "top" => 8,
+            "middle" | "center" => 5,
+            _ => 2, // bottom center
+        };
+        format!(
+            "subtitles='{}':force_style='FontName={},FontSize={},PrimaryColour={},OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment={},MarginV=38'",
+            srt_escaped, font, font_size, primary_color, alignment
+        )
+    } else {
+        format!(
+            "subtitles='{}':force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=2,MarginV=38'",
+            srt_escaped
+        )
+    }
+}
+
 /// Вырезает и сдвигает по времени субтитры для конкретного клипа `[start_sec, start_sec + duration_sec]`.
 /// Дополнительно контролирует естественную длительность каждой фразы внутри клипа и исключает наслоение соседних реплик,
 /// чтобы субтитры появлялись строго в момент произнесения фразы и исчезали сразу после её завершения.
@@ -1439,13 +1477,15 @@ fn build_ffmpeg_piecewise_ratio_expr(segments: &[CameraSegment]) -> String {
     expr
 }
 
-/// Рендерит видео хайлайтов в формате 16:9 YouTube, объединяя все отобранные клипы-интервалы
-/// с применением мягкого перекрёстного наплыва (Crossfade 0.4с) и предварительным выравниванием по тишине.
+/// Рендерит видео хайлайтов в формате 16:9 YouTube (или 9:16 Shorts при вертикальном формате),
+/// объединяя все отобранные клипы-интервалы с применением мягкого перекрёстного наплыва (Crossfade 0.4с) и предварительным выравниванием по тишине.
 pub async fn render_highlights_assembly(
     video_path: PathBuf,
     intervals: &[(f64, f64)],
     output_path: PathBuf,
     srt_path: Option<PathBuf>,
+    vertical_format: bool,
+    subtitle_style: Option<crate::models::SubtitleStyle>,
     app_handle: AppHandle,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<()> {
@@ -1501,26 +1541,19 @@ pub async fn render_highlights_assembly(
             stage: format!("Подготовка фрагмента хайлайтов {}/{}...", i + 1, total),
         });
 
-        // Нарезка 16:9 фрагмента с принудительной подгонкой под Full HD (1920x1080)
-        let mut vf_filters: Vec<String> = vec![
-            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30".to_string(),
-        ];
+        // Нарезка 16:9 или 9:16 фрагмента с подгонкой под целевое разрешение
+        let scale_filter = if vertical_format {
+            "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+        } else {
+            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+        };
+        let mut vf_filters: Vec<String> = vec![scale_filter.to_string()];
 
         // В хайлайты ОБЯЗАТЕЛЬНО включаем субтитры, если файл субтитров доступен
         let mut temp_seg_srt: Option<PathBuf> = None;
         if let Some(ref sp) = srt_path {
             if let Some(seg_srt) = create_clip_srt(sp, start_sec, dur).await {
-                let srt_escaped = seg_srt
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .replace(':', "\\:")
-                    .replace('\'', "\\'")
-                    .replace('[', "\\[")
-                    .replace(']', "\\]");
-                let sub_filter = format!(
-                    "subtitles='{}':force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=2,MarginV=38'",
-                    srt_escaped
-                );
+                let sub_filter = format_subtitles_filter(&seg_srt, subtitle_style.as_ref());
                 vf_filters.push(sub_filter);
                 temp_seg_srt = Some(seg_srt);
             }
@@ -1689,6 +1722,8 @@ pub async fn render_talk_video_assembly(
     video_path: PathBuf,
     srt_path: Option<PathBuf>,
     selected_characters: Option<&[String]>,
+    vertical_format: bool,
+    subtitle_style: Option<crate::models::SubtitleStyle>,
     output_path: PathBuf,
     app_handle: AppHandle,
     mut cancel_rx: Receiver<()>,
@@ -1743,7 +1778,7 @@ pub async fn render_talk_video_assembly(
         }
         filtered
     } else {
-        all_fragments
+        all_fragments.clone()
     };
 
     if fragments.is_empty() {
@@ -1834,11 +1869,19 @@ pub async fn render_talk_video_assembly(
             stage: format!("Обработка разговорного блока {}/{} (зум {})...", k + 1, total_blocks, if k % 2 == 1 { "1.15x" } else { "1.0x" }),
         });
 
-        // Чередование плана 1.0x и 1.15x на каждой склейке (jump-cut)
-        let base_scale = if k % 2 == 1 {
-            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,scale=2208:1242,crop=1920:1080:(iw-1920)/2:(ih-1080)/2,fps=30"
+        // Чередование плана 1.0x и 1.15x на каждой склейке (jump-cut) с поддержкой 16:9 и 9:16
+        let base_scale = if vertical_format {
+            if k % 2 == 1 {
+                "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,scale=1242:2208,crop=1080:1920:(iw-1080)/2:(ih-1920)/2,fps=30"
+            } else {
+                "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+            }
         } else {
-            "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+            if k % 2 == 1 {
+                "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,scale=2208:1242,crop=1920:1080:(iw-1920)/2:(ih-1080)/2,fps=30"
+            } else {
+                "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black,fps=30"
+            }
         };
         let mut vf_filters: Vec<String> = vec![base_scale.to_string()];
 
@@ -1847,17 +1890,7 @@ pub async fn render_talk_video_assembly(
         let mut temp_blk_srt: Option<PathBuf> = None;
         if has_char_filter {
             if let Some(blk_srt) = create_clip_srt(srt, st, dur).await {
-                let srt_escaped = blk_srt
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .replace(':', "\\:")
-                    .replace('\'', "\\'")
-                    .replace('[', "\\[")
-                    .replace(']', "\\]");
-                let sub_filter = format!(
-                    "subtitles='{}':force_style='FontName=Arial,FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment=2,MarginV=38'",
-                    srt_escaped
-                );
+                let sub_filter = format_subtitles_filter(&blk_srt, subtitle_style.as_ref());
                 vf_filters.push(sub_filter);
                 temp_blk_srt = Some(blk_srt);
             }
