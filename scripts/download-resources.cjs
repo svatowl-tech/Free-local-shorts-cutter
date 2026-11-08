@@ -59,12 +59,14 @@ if (isWindows) {
     whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip';
     llamaUrl = 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip';
 } else if (isMac) {
-    ffmpegUrl = 'https://evermeet.cx/ffmpeg/getrelease/zip';
-    ffprobeUrl = 'https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip';
-    whisperUrl = target.includes('aarch64') 
+    const isArm64 = target.includes('aarch64') || target.includes('arm64');
+    const macArch = isArm64 ? 'arm64' : 'x64';
+    ffmpegUrl = `https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-osx-${macArch}.zip`;
+    ffprobeUrl = ffmpegUrl;
+    whisperUrl = isArm64 
         ? 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-arm64.zip'
         : 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-x64.zip';
-    llamaUrl = target.includes('aarch64')
+    llamaUrl = isArm64
         ? 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-arm64.zip'
         : 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-x64.zip';
 } else {
@@ -85,7 +87,7 @@ const sidecars = [
         name: 'ffprobe',
         binName: isWindows ? 'ffprobe.exe' : 'ffprobe',
         url: ffprobeUrl,
-        archiveName: isWindows ? 'ffmpeg.zip' : (isMac ? 'ffprobe.zip' : 'ffmpeg.tar.xz')
+        archiveName: isWindows || isMac ? 'ffmpeg.zip' : 'ffmpeg.tar.xz'
     },
     {
         name: 'whisper',
