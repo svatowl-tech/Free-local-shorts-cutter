@@ -9,6 +9,8 @@ use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 
+pub use crate::render::SubtitleStyle;
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ModelInfo {
     pub id: String,

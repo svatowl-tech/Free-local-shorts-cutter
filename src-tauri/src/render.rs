@@ -152,7 +152,7 @@ fn to_ass_color(color: &str) -> String {
 /// Формирует строку фильтра субтитров FFmpeg с экранированием путей и применением настроек стиля
 fn format_subtitles_filter(
     srt_file: &Path,
-    custom_style: Option<&crate::models::SubtitleStyle>,
+    custom_style: Option<&SubtitleStyle>,
 ) -> String {
     let srt_escaped = srt_file
         .to_string_lossy()
@@ -1485,7 +1485,7 @@ pub async fn render_highlights_assembly(
     output_path: PathBuf,
     srt_path: Option<PathBuf>,
     vertical_format: bool,
-    subtitle_style: Option<crate::models::SubtitleStyle>,
+    subtitle_style: Option<SubtitleStyle>,
     app_handle: AppHandle,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<()> {
@@ -1723,7 +1723,7 @@ pub async fn render_talk_video_assembly(
     srt_path: Option<PathBuf>,
     selected_characters: Option<&[String]>,
     vertical_format: bool,
-    subtitle_style: Option<crate::models::SubtitleStyle>,
+    subtitle_style: Option<SubtitleStyle>,
     output_path: PathBuf,
     app_handle: AppHandle,
     mut cancel_rx: Receiver<()>,
