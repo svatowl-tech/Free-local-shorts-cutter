@@ -1430,6 +1430,10 @@ fn build_ffmpeg_piecewise_ratio_expr(segments: &[CameraSegment]) -> String {
         return seg_expr(&segments[0]);
     }
 
+    let mut expr = seg_expr(&segments[segments.len() - 1]);
+    for s in segments.iter().rev().skip(1) {
+        expr = format!("if(lt(t,{:.2}),{},{})", s.end_t, seg_expr(s), expr);
+    }
     expr
 }
 

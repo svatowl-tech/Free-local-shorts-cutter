@@ -387,7 +387,7 @@ pub async fn parse_custom_subtitles(
         return Err(AppError::Anyhow(anyhow::anyhow!("Файл субтитров не найден: {}", file_path)));
     }
     crate::subtitles_parser::parse_custom_subtitles_file(&p)
-        .map_err(AppError::Anyhow)
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e)))
 }
 
 /// Асинхронная команда: Генерация только файлов субтитров

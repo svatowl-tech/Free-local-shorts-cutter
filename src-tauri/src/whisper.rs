@@ -2379,7 +2379,7 @@ pub fn process_custom_subtitles_into_project(
     project_srt_path: &Path,
 ) -> AppResult<()> {
     let parse_res = crate::subtitles_parser::parse_custom_subtitles_file(custom_path)
-        .map_err(AppError::Anyhow)?;
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!(e)))?;
 
     if let Some(parent) = project_srt_path.parent() {
         let _ = std::fs::create_dir_all(parent);
