@@ -135,6 +135,11 @@ jobs:
       - name: Установка Node.js зависимостей
         run: npm ci || npm install
 
+      - name: Установка системных зависимостей macOS (whisper-cpp)
+        if: runner.os == 'macOS'
+        run: |
+          brew install whisper-cpp || echo "brew install whisper-cpp skipped or already installed"
+
       - name: Подготовка бинарных зависимостей (sidecars), моделей и иконок
         run: npm run pretauri:build
         env:

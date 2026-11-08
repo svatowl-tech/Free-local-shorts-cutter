@@ -51,60 +51,90 @@ if (!fs.existsSync(placeholderModel)) {
 const isWindows = target.includes('windows');
 const isMac = target.includes('apple-darwin');
 
-let ffmpegUrl, whisperUrl, llamaUrl, ffprobeUrl;
+let ffmpegUrls = [], whisperUrls = [], llamaUrls = [], ffprobeUrls = [];
 
 if (isWindows) {
-    ffmpegUrl = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip';
-    ffprobeUrl = ffmpegUrl;
-    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip';
-    llamaUrl = 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip';
+    // Надежные источники FFmpeg: Gyan.dev (официальный рекомендованный релиз) + BtbN + Tyrrrz
+    ffmpegUrls = [
+        'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
+        'https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-windows-x64.zip',
+        'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+    ];
+    ffprobeUrls = ffmpegUrls;
+    whisperUrls = [
+        'https://github.com/ggml-org/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip',
+        'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-cublas-12.2.0-bin-x64.zip',
+        'https://github.com/ggml-org/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip'
+    ];
+    llamaUrls = [
+        'https://github.com/ggml-org/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip',
+        'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-win-cuda-cu12.2.0-x64.zip'
+    ];
 } else if (isMac) {
     const isArm64 = target.includes('aarch64') || target.includes('arm64');
     const macArch = isArm64 ? 'arm64' : 'x64';
-    ffmpegUrl = `https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-osx-${macArch}.zip`;
-    ffprobeUrl = ffmpegUrl;
-    whisperUrl = isArm64 
-        ? 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-arm64.zip'
-        : 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-macos-x64.zip';
-    llamaUrl = isArm64
-        ? 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-arm64.zip'
-        : 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-x64.zip';
+    ffmpegUrls = [
+        `https://github.com/Tyrrrz/FFmpegBin/releases/download/9.0.2/ffmpeg-osx-${macArch}.zip`
+    ];
+    ffprobeUrls = ffmpegUrls;
+    whisperUrls = isArm64 ? [
+        'https://github.com/bizenlabs/whisper-cpp-macos-bin/releases/download/v1.8.2/whisper-cpp-v1.8.2-macos-arm64-metal.zip',
+        'https://github.com/bizenlabs/whisper-cpp-macos-bin/releases/latest/download/whisper-cpp-macos-arm64-metal.zip'
+    ] : [
+        'https://github.com/bizenlabs/whisper-cpp-macos-bin/releases/download/v1.8.2/whisper-cpp-v1.8.2-macos-x86_64-accelerate.zip',
+        'https://github.com/bizenlabs/whisper-cpp-macos-bin/releases/latest/download/whisper-cpp-macos-x86_64-accelerate.zip'
+    ];
+    llamaUrls = isArm64 ? [
+        'https://github.com/ggml-org/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-arm64.zip',
+        'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-arm64.zip'
+    ] : [
+        'https://github.com/ggml-org/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-x64.zip',
+        'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-macos-x64.zip'
+    ];
 } else {
-    ffmpegUrl = 'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz';
-    ffprobeUrl = ffmpegUrl;
-    whisperUrl = 'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip';
-    llamaUrl = 'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-ubuntu-x64.zip';
+    ffmpegUrls = [
+        'https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz'
+    ];
+    ffprobeUrls = ffmpegUrls;
+    whisperUrls = [
+        'https://github.com/ggml-org/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip',
+        'https://github.com/ggerganov/whisper.cpp/releases/download/v1.5.4/whisper-bin-x64.zip'
+    ];
+    llamaUrls = [
+        'https://github.com/ggml-org/llama.cpp/releases/download/b3201/llama-b3201-bin-ubuntu-x64.zip',
+        'https://github.com/ggerganov/llama.cpp/releases/download/b3201/llama-b3201-bin-ubuntu-x64.zip'
+    ];
 }
 
 const sidecars = [
     {
         name: 'ffmpeg',
         binName: isWindows ? 'ffmpeg.exe' : 'ffmpeg',
-        url: ffmpegUrl,
+        urls: ffmpegUrls,
         archiveName: isWindows || isMac ? 'ffmpeg.zip' : 'ffmpeg.tar.xz'
     },
     {
         name: 'ffprobe',
         binName: isWindows ? 'ffprobe.exe' : 'ffprobe',
-        url: ffprobeUrl,
+        urls: ffprobeUrls,
         archiveName: isWindows || isMac ? 'ffmpeg.zip' : 'ffmpeg.tar.xz'
     },
     {
         name: 'whisper',
         binName: isWindows ? 'main.exe' : 'main',
-        url: whisperUrl,
+        urls: whisperUrls,
         archiveName: 'whisper.zip'
     },
     {
         name: 'llama-vision',
         binName: isWindows ? 'llama-minicopic.exe' : 'llama-minicopic',
-        url: llamaUrl,
+        urls: llamaUrls,
         archiveName: 'llama.zip'
     },
     {
         name: 'llama-cli',
         binName: isWindows ? 'llama-cli.exe' : 'llama-cli',
-        url: llamaUrl,
+        urls: llamaUrls,
         archiveName: 'llama.zip'
     }
 ];
@@ -298,10 +328,59 @@ async function downloadSidecars() {
         }
 
         console.log(`\nПодготовка sidecar: ${sc.name} (${outName})`);
+
+        // На macOS: если бинарник уже установлен локально или через Homebrew (whisper-cli, ffmpeg, ffprobe) — используем его напрямую
+        if (isMac && !fs.existsSync(outPath)) {
+            const systemBinNames = sc.name === 'whisper' ? ['whisper-cli', 'whisper-cpp', 'main'] : [sc.name];
+            let foundSystem = null;
+            for (const sName of systemBinNames) {
+                const candidates = [
+                    `/opt/homebrew/bin/${sName}`,
+                    `/usr/local/bin/${sName}`,
+                    `/usr/bin/${sName}`
+                ];
+                for (const c of candidates) {
+                    if (fs.existsSync(c)) {
+                        foundSystem = c;
+                        break;
+                    }
+                }
+                if (foundSystem) break;
+            }
+            if (foundSystem) {
+                console.log(`✓ Найден системный/Homebrew бинарник для ${sc.name}: ${foundSystem}`);
+                fs.copyFileSync(foundSystem, outPath);
+                fs.chmodSync(outPath, '755');
+                console.log(`✓ Успешно установлен из системы: ${outPath} (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(1)} MB)`);
+                continue;
+            }
+        }
+
         const archivePath = path.join(tempDir, sc.archiveName);
 
         if (!fs.existsSync(archivePath) || fs.statSync(archivePath).size < 100 * 1024) {
-            await downloadFile(sc.url, archivePath);
+            let downloaded = false;
+            let lastError = null;
+            const urlList = Array.isArray(sc.urls) ? sc.urls : [sc.url];
+            for (const currentUrl of urlList) {
+                try {
+                    console.log(`Попытка загрузки ${sc.name} из источника: ${currentUrl}`);
+                    await downloadFile(currentUrl, archivePath);
+                    if (fs.existsSync(archivePath) && fs.statSync(archivePath).size > 100 * 1024) {
+                        downloaded = true;
+                        break;
+                    }
+                } catch (err) {
+                    lastError = err;
+                    console.warn(`[ПРЕДУПРЕЖДЕНИЕ] Ошибка загрузки из ${currentUrl}: ${err.message}`);
+                    if (fs.existsSync(archivePath)) {
+                        fs.unlinkSync(archivePath);
+                    }
+                }
+            }
+            if (!downloaded) {
+                throw new Error(`Не удалось скачать архив для sidecar ${sc.name}: ${lastError ? lastError.message : 'все источники недоступны'}`);
+            }
         }
 
         const extractPath = path.join(tempDir, `extract_${sc.name}`);
