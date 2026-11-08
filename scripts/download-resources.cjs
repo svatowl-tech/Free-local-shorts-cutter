@@ -329,29 +329,22 @@ async function downloadSidecars() {
 
         console.log(`\nПодготовка sidecar: ${sc.name} (${outName})`);
 
-        // На macOS: если бинарник уже установлен локально или через Homebrew (whisper-cli, ffmpeg, ffprobe) — используем его напрямую
-        if (isMac && !fs.existsSync(outPath)) {
-            const systemBinNames = sc.name === 'whisper' ? ['whisper-cli', 'whisper-cpp', 'main'] : [sc.name];
-            let foundSystem = null;
-            for (const sName of systemBinNames) {
-                const candidates = [
-                    `/opt/homebrew/bin/${sName}`,
-                    `/usr/local/bin/${sName}`,
-                    `/usr/bin/${sName}`
-                ];
-                for (const c of candidates) {
-                    if (fs.existsSync(c)) {
-                        foundSystem = c;
-                        break;
-                    }
+        // На macOS: если whisper-cli уже установлен через Homebrew и имеет реальный размер (не шпионский wrapper-скрипт)
+        if (isMac && !fs.existsSync(outPath) && sc.name === 'whisper') {
+            const candidates = [
+                '/opt/homebrew/bin/whisper-cli',
+                '/usr/local/bin/whisper-cli'
+            ];
+            for (const c of candidates) {
+                if (fs.existsSync(c) && fs.statSync(c).size > 100 * 1024) {
+                    console.log(`✓ Найден системный Homebrew бинарник для ${sc.name}: ${c}`);
+                    fs.copyFileSync(c, outPath);
+                    fs.chmodSync(outPath, '755');
+                    console.log(`✓ Успешно установлен из системы: ${outPath} (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(1)} MB)`);
+                    break;
                 }
-                if (foundSystem) break;
             }
-            if (foundSystem) {
-                console.log(`✓ Найден системный/Homebrew бинарник для ${sc.name}: ${foundSystem}`);
-                fs.copyFileSync(foundSystem, outPath);
-                fs.chmodSync(outPath, '755');
-                console.log(`✓ Успешно установлен из системы: ${outPath} (${(fs.statSync(outPath).size / (1024 * 1024)).toFixed(1)} MB)`);
+            if (fs.existsSync(outPath)) {
                 continue;
             }
         }
