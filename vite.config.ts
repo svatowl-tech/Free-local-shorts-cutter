@@ -6,5 +6,14 @@ export default defineConfig({
 	server: {
 		port: 3000,
 		strictPort: true,
+		watch: {
+			ignored: [
+				'**/.svelte-kit/**',
+				'**/src-tauri/**',
+				'**/build/**',
+				'**/dist-releases/**'
+			]
+		}
 	}
 });
+

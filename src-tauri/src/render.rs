@@ -110,6 +110,7 @@ pub async fn attach_bumpers_if_enabled(
 
     let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
         .args(args);
 
     let (mut rx, child) = sidecar_cmd.spawn()
@@ -1507,6 +1508,7 @@ pub async fn render_highlights_assembly(
 
         let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
             .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить бинарник FFmpeg: {}", e)))?
+            .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
             .args(args);
 
         let (mut rx, child) = sidecar_cmd.spawn()
@@ -1597,6 +1599,7 @@ pub async fn render_highlights_assembly(
 
         let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
             .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+            .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
             .args(ffmpeg_args);
 
         let (mut rx, child) = sidecar_cmd.spawn()
@@ -1799,6 +1802,7 @@ pub async fn render_talk_video_assembly(
 
         let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
             .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+            .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
             .args(args);
 
         let (mut rx, child) = sidecar_cmd.spawn()
@@ -1864,6 +1868,7 @@ pub async fn render_talk_video_assembly(
 
     let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+        .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
         .args(args);
 
     let (mut rx, child) = sidecar_cmd.spawn()

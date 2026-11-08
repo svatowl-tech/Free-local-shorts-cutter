@@ -40,3 +40,24 @@ if (fs.existsSync(buildUtilsPath)) {
     console.log('Successfully patched SvelteKit build/utils.js for Tailwind v4 manifest compatibility!');
   }
 }
+
+const syncUtilsPath = path.resolve('node_modules', '@sveltejs', 'kit', 'src', 'core', 'sync', 'utils.js');
+
+if (fs.existsSync(syncUtilsPath)) {
+  let syncUtilsContent = fs.readFileSync(syncUtilsPath, 'utf8');
+
+  if (!syncUtilsContent.includes('fs.existsSync(file)')) {
+    syncUtilsContent = syncUtilsContent.replace(
+      'export function write_if_changed(file, code) {',
+      `export function write_if_changed(file, code) {
+	if (!previous_contents.has(file) && fs.existsSync(file)) {
+		try {
+			previous_contents.set(file, fs.readFileSync(file, 'utf8'));
+		} catch {}
+	}`
+    );
+    fs.writeFileSync(syncUtilsPath, syncUtilsContent);
+    console.log('Successfully patched SvelteKit sync/utils.js to prevent redundant file writes!');
+  }
+}
+

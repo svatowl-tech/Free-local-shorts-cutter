@@ -323,7 +323,11 @@ pub async fn probe_audio_duration(audio_path: &Path, app_handle: &AppHandle) -> 
         "-hide_banner".to_string(),
     ];
 
-    let (mut rx, child) = match sidecar_cmd.args(args).spawn() {
+    let (mut rx, child) = match sidecar_cmd
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args(args)
+        .spawn()
+    {
         Ok(res) => res,
         Err(_) => return 2.5,
     };
@@ -509,6 +513,7 @@ pub async fn render_single_bumper_video(
                     .shell()
                     .sidecar("ffmpeg")
                     .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка старта FFmpeg: {}", e)))?
+                    .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
                     .args(args);
 
                 let (mut rx, child) = sidecar_cmd
@@ -761,6 +766,7 @@ pub async fn render_single_bumper_video(
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
         .args(ffmpeg_args);
 
     let (mut rx, child) = sidecar_cmd
