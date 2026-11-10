@@ -389,9 +389,7 @@ pub async fn attach_bumpers_if_enabled(
             args.push(format!("{:.3}", post_dur.max(0.5)));
             args.push("-i".to_string());
             args.push("anullsrc=r=48000:cl=stereo".to_string());
-            let idx = input_idx;
-            input_idx += 1;
-            idx
+            input_idx
         };
 
         let trans_fade_in = if post_cfg.transition != "cut" && post_dur > 0.5 {

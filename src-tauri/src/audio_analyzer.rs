@@ -83,6 +83,24 @@ impl AudioEnergyProfile {
         }
         sum / (cnt.max(1) as f32)
     }
+
+    /// Возвращает нормализованную пиковую энергию [0.0..1.0] в заданном интервале времени
+    pub fn get_peak_energy_between(&self, start_sec: f64, end_sec: f64) -> f64 {
+        if self.rms_db.is_empty() || end_sec <= start_sec {
+            return 0.0;
+        }
+        let s_idx = self.time_to_idx(start_sec);
+        let e_idx = self.time_to_idx(end_sec).min(self.rms_db.len().saturating_sub(1));
+        if s_idx > e_idx {
+            return 0.0;
+        }
+        let peak_db = self.rms_db[s_idx..=e_idx]
+            .iter()
+            .copied()
+            .fold(-90.0f32, f32::max);
+        let speech_span = (self.loud_peak_db - self.speech_threshold_db).max(6.0);
+        (((peak_db - self.speech_threshold_db) / speech_span) as f64).clamp(0.0, 1.0)
+    }
 }
 
 /// Возвращает путь к кэшированному аудио-профилю в папке проекта `<Видео>_Проект/<Видео>.audio_profile.json`
