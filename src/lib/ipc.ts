@@ -392,6 +392,9 @@ export async function startPipeline(videoPath: string, config: PipelineConfig): 
 export interface FragmentDto {
   start: number;
   end: number;
+  title?: string;
+  repaired?: boolean;
+  repair_note?: string;
 }
 
 export async function renderClipsFromFragments(

@@ -1641,6 +1641,150 @@ pub async fn analyze_text_with_llm(
     Ok(compute_text_scores_advanced(fragments))
 }
 
+/// Определяет, является ли реплика «водой», словом-паразитом, хезитацией или технической фразой без сюжетной ценности
+pub fn is_filler_or_water_fragment(text: &str) -> bool {
+    let lower = text
+        .trim()
+        .to_lowercase()
+        .replace('ё', "е")
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_string();
+    if lower.is_empty() {
+        return true;
+    }
+
+    let words: Vec<&str> = lower.split_whitespace().collect();
+    if words.is_empty() {
+        return true;
+    }
+
+    const PURE_FILLERS: &[&str] = &[
+        "э", "ээ", "эээ", "м", "мм", "ммм", "а", "аа", "ну", "типа", "короче",
+        "ну короче", "как бы", "так сказать", "в общем", "в общем то", "собственно",
+        "значить", "значит так", "ладно", "окей", "ага", "угу", "понятно", "ясно",
+        "так", "ну вот", "вот так", "такие дела", "раз раз", "проверка звука",
+        "меня слышно", "слышно меня",
+    ];
+    if PURE_FILLERS.contains(&lower.as_str()) {
+        return true;
+    }
+
+    if words.len() <= 5 {
+        let filler_tokens = [
+            "ээ", "эээ", "мм", "ммм", "ну", "короче", "типа", "как", "бы", "вот", "это", "самое",
+        ];
+        let f_cnt = words.iter().filter(|w| filler_tokens.contains(w)).count();
+        if f_cnt * 2 >= words.len() && !text.contains('!') && !text.contains('?') {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Вычисляет текстовые метрики структуры шортса / хайлайта для окна `[start_idx..=end_idx]`:
+/// Возвращает `(hook_text_score, punchline_text_score, filler_ratio)` в диапазоне `0.0 .. 1.0`.
+pub fn compute_hook_and_punchline_text_metrics(
+    fragments: &[SubtitleFragment],
+    start_idx: usize,
+    end_idx: usize,
+    text_scores: &[f64],
+) -> (f64, f64, f64) {
+    if start_idx >= fragments.len() || end_idx >= fragments.len() || start_idx > end_idx {
+        return (0.4, 0.4, 0.0);
+    }
+
+    let win_start_t = fragments[start_idx].start;
+    let win_end_t = fragments[end_idx].end;
+    let win_dur = (win_end_t - win_start_t).max(1.0);
+
+    // 1. Оценка текстового Хука (первые 3.2 секунды от начала первой реплики)
+    let mut hook_score = 0.35_f64;
+    let hook_triggers = [
+        "подожди", "погоди", "смотри", "глянь", "слушай", "знаешь", "серьезно",
+        "не может быть", "ты чего", "вы чего", "какого", "в смысле", "представь",
+        "осторожно", "берегись", "стой", "не смей", "сейчас", "только не", "неужели",
+        "правда", "кто это", "что это", "зачем", "почему",
+    ];
+
+    for idx in start_idx..=end_idx {
+        let f = &fragments[idx];
+        if f.start > win_start_t + 3.2 && idx > start_idx {
+            break;
+        }
+        let sc = text_scores.get(idx).copied().unwrap_or(0.45);
+        let lower = f.text.to_lowercase().replace('ё', "е");
+        let mut cue_hook = sc * 0.75;
+        if f.text.contains('?') {
+            cue_hook += 0.16;
+        }
+        if f.text.contains('!') {
+            cue_hook += 0.14;
+        }
+        if hook_triggers.iter().any(|t| lower.contains(t)) {
+            cue_hook += 0.14;
+        }
+        if is_filler_or_water_fragment(&f.text) {
+            cue_hook *= 0.45;
+        }
+        if cue_hook > hook_score {
+            hook_score = cue_hook;
+        }
+    }
+
+    // 2. Оценка текстового Панчлайна / Кульминации (последние 32% длительности окна или последние 2 реплики)
+    let punch_cutoff_t = win_end_t - (win_dur * 0.32).clamp(2.5, 5.5);
+    let mut punch_score = 0.35_f64;
+    let punch_triggers = [
+        "ха-ха", "ахах", "вот именно", "получай", "конец", "ни за что", "никогда",
+        "гениально", "офигеть", "обалдеть", "жесть", "капец", "блин", "черт",
+        "победа", "прощай", "берегись", "сдохни", "вперед", "огонь", "ура",
+    ];
+
+    for idx in start_idx..=end_idx {
+        let f = &fragments[idx];
+        if f.end < punch_cutoff_t && idx + 1 < end_idx {
+            continue;
+        }
+        let sc = text_scores.get(idx).copied().unwrap_or(0.45);
+        let lower = f.text.to_lowercase().replace('ё', "е");
+        let mut cue_punch = sc * 0.80;
+        if f.text.contains('!') {
+            cue_punch += 0.16;
+        }
+        if f.text.contains("?!") || f.text.contains("!?") {
+            cue_punch += 0.18;
+        }
+        if punch_triggers.iter().any(|t| lower.contains(t)) {
+            cue_punch += 0.12;
+        }
+        if idx == end_idx && is_sentence_end(fragments, idx) && !is_weak_clip_ending(fragments, idx) {
+            cue_punch += 0.08;
+        }
+        if cue_punch > punch_score {
+            punch_score = cue_punch;
+        }
+    }
+
+    // 3. Доля «воды» и слов-паразитов внутри окна
+    let total_cues = (end_idx - start_idx + 1).max(1);
+    let filler_cues = (start_idx..=end_idx)
+        .filter(|&i| is_filler_or_water_fragment(&fragments[i].text))
+        .count();
+    let filler_ratio = (filler_cues as f64) / (total_cues as f64);
+
+    (
+        hook_score.clamp(0.0, 1.0),
+        punchline_score_clamp(punch_score),
+        filler_ratio.clamp(0.0, 1.0),
+    )
+}
+
+#[inline]
+fn punchline_score_clamp(val: f64) -> f64 {
+    val.clamp(0.0, 1.0)
+}
+
 fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
@@ -1651,12 +1795,12 @@ fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     }
     let input_list = lines.join("\n");
     format!(
-        "Ты строгий профессиональный режиссер монтажа вертикальных роликов (Shorts, Reels, TikTok).\n\
-Оцени эмоциональный накал каждой из {} реплик от 0.0 до 1.0 строго по шкале (НЕ завышай оценки спокойным фразам!):\n\
-1. 0.15-0.42: обрывки ([CONT]/[INCOMPLETE]), спокойные доклады, бытовые реплики, вежливые разговоры.\n\
-2. 0.45-0.66: обычные сюжетные диалоги, обсуждение планов, стандартные вопросы без крика.\n\
-3. 0.70-0.84: напряженные споры, угрозы, драматические повороты, жесткие боевые приказы.\n\
-4. 0.88-0.96: ИСКЛЮЧИТЕЛЬНЫЙ ЭМОЦИОНАЛЬНЫЙ ПИК / КУЛЬМИНАЦИЯ (яростный крик, шок, отчаяние, смертельная схватка — не более 1-2 реплик на пакет!).\n\
+        "Ты строгий профессиональный режиссер монтажа вирусных роликов (Shorts, Reels, TikTok, Хайлайты 16:9).\n\
+Оцени потенциал каждой из {} русских реплик от 0.0 до 1.0 по шкале (штрафуй «воду» и высоко цени хуки, юмор и кульминации!):\n\
+1. 0.12-0.38: «вода», слова-паразиты («эээ», «ну короче»), обрывки ([CONT]/[INCOMPLETE]), бытовые реплики, сухие доклады.\n\
+2. 0.42-0.65: обычные сюжетные диалоги, стандартные вопросы и спокойные пояснения.\n\
+3. 0.70-0.85: сильные интригующие хуки, острый разговорный юмор, сарказм, живой сленг, напряженные споры, угрозы и драматические повороты.\n\
+4. 0.88-0.97: ЯРКИЙ ПАНЧЛАЙН / ИСКЛЮЧИТЕЛЬНАЯ КУЛЬМИНАЦИЯ (взрывная шутка, развязка, яростный крик, шок, эпичная схватка — 1-2 реплики на пакет!).\n\
 Выведи ТОЛЬКО валидный JSON-массив ровно из {} чисел в диапазоне 0.0-1.0 без текста и комментариев.\n\
 Пример формата: [0.42, 0.89]\n\n\
 Реплики:\n{}\n\n\
@@ -2441,3 +2585,782 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
 pub fn compute_text_scores_fallback(fragments: &[SubtitleFragment]) -> Vec<f64> {
     compute_text_scores_advanced(fragments)
 }
+
+/// Тип дефекта, обнаруженного у собранного клипа при 2-й проверке
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ClipDefectType {
+    None,
+    IncompleteThought,    // Незавершенная мысль / обрыв начала или финала
+    BoringOrWeakDynamics, // Скукота / «вода» / вялый темп речи
+    NonsenseOrGarbage,    // Бессвязный мусор / галлюцинация ASR / склейка чужих сцен
+}
+
+/// Структура уже собранного кандидата в клипы для 2-й финальной проверки через русскоязычную LLM (Vikhr / Qwen)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssembledClipCandidate {
+    pub start: f64,
+    pub end: f64,
+    pub initial_score: f64,
+    pub first_phrase: String,
+    pub last_phrase: String,
+    pub full_dialogue: String,
+    pub first_cue_idx: Option<usize>,
+    pub last_cue_idx: Option<usize>,
+    pub cue_count: usize,
+    #[serde(default = "default_round_one")]
+    pub round: usize,
+    #[serde(default)]
+    pub repair_note: Option<String>,
+}
+
+fn default_round_one() -> usize {
+    1
+}
+
+/// Вердикт 2-й проверки готового фрагмента на связность, юмор, законченность мысли и отсев бреда/скукоты
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipVerificationVerdict {
+    pub final_score: f64,
+    pub coherence_score: f64,
+    pub keep: bool,
+    pub reason: String,
+    pub defect_type: ClipDefectType,
+}
+
+/// Строит промпт для 2-й (финальной) проверки УЖЕ СОБРАННЫХ фрагментов через русскоязычную LLM (Vikhr 1B/1.5B/2B, Qwen и др.)
+fn build_clip_verification_prompt(candidates: &[AssembledClipCandidate]) -> String {
+    let mut items = Vec::with_capacity(candidates.len());
+    for (i, cand) in candidates.iter().enumerate() {
+        let dur = (cand.end - cand.start).max(1.0);
+        let clean_dialogue: String = cand
+            .full_dialogue
+            .replace(['\n', '\r', '"'], " ")
+            .chars()
+            .take(340)
+            .collect();
+        items.push(format!(
+            "{}. [Длит: {:.1}с | Реплик: {}] \"{}\"",
+            i + 1,
+            dur,
+            cand.cue_count,
+            clean_dialogue.trim()
+        ));
+    }
+
+    let list_block = items.join("\n");
+    format!(
+        "Ты главный шеф-редактор вирусных шортсов и хайлайтов. Выполни СТРОГУЮ ВТОРУЮ ПРОВЕРКУ {} УЖЕ СОБРАННЫХ видеофрагментов (ниже приведен полный диалог каждого готового ролика целиком).\n\
+Оцени каждый готовый фрагмент от 0.0 до 1.0 по 4 жестким правилам:\n\
+1. СВЯЗНОСТЬ И ЗАКОНЧЕННОСТЬ МЫСЛИ: реплики внутри клипа должны образовывать единую понятную мысль с логичным началом и четкой финальной точкой/панчлайном. Если склеены куски разных тем или финал оборван на полуслове — ставь 0.10-0.28!\n\
+2. ОТСЕВ ПОЛНОГО БРЕДА: если текст бессвязный, похож на словесный мусор, галлюцинацию распознавания или набор несвязанных выкриков — ставь 0.05-0.20!\n\
+3. ОТСЕВ СКУКОТЫ И «ВОДЫ»: если в отрывке унылая бытовуха, сухие технические фразы, затянутая «вода» без интриги и эмоций — ставь 0.15-0.34!\n\
+4. ЮМОР, САРКАЗМ И КУЛЬМИНАЦИЯ: высоко оценивай (0.72-0.98) живой русский юмор, иронию, сленг, острую перепалку (вопрос -> хлесткий ответ) и яркую развязку в конце ролика.\n\
+Выведи ТОЛЬКО валидный JSON-массив ровно из {} чисел от 0.0 до 1.0 без текста и комментариев.\n\
+Пример: [0.86, 0.18]\n\n\
+Готовые фрагменты для 2-й проверки:\n{}\n\n\
+JSON:[",
+        candidates.len(),
+        candidates.len(),
+        list_block
+    )
+}
+
+/// Детерминированный аудит собранного диалога клипа на:
+/// 1) Полный бред / разорванные фразы / склейку разных сцен
+/// 2) Законченность мысли в начале и в конце
+/// 3) Скукоту / «воду» vs живой русский юмор, сарказм и драматический панчлайн
+fn audit_assembled_clip_dialogue(
+    cand: &AssembledClipCandidate,
+    fragments: &[SubtitleFragment],
+) -> (f64, bool, bool, bool, String) {
+    // Возвращает: (score, is_nonsense, is_boring, is_incomplete, reason)
+    let (Some(first_idx), Some(last_idx)) = (cand.first_cue_idx, cand.last_cue_idx) else {
+        let keep_action = cand.initial_score >= 0.62;
+        return (
+            cand.initial_score,
+            false,
+            !keep_action,
+            false,
+            if keep_action {
+                "чистая динамичная экшн-сцена по пику звука".to_string()
+            } else {
+                "низкая динамика сцены без диалогов".to_string()
+            },
+        );
+    };
+
+    if first_idx >= fragments.len() || last_idx >= fragments.len() || first_idx > last_idx {
+        return (0.20, true, false, false, "некорректные границы реплик".to_string());
+    }
+
+    let slice = &fragments[first_idx..=last_idx];
+    let total_cues = slice.len().max(1);
+
+    // 1. Проверка на галлюцинации, песни и «воду» внутри собранного клипа
+    let mut hallucination_or_song_cues = 0usize;
+    let mut filler_cues = 0usize;
+    let mut total_words = 0usize;
+    let mut broken_short_tokens = 0usize;
+    let mut exclam_cues = 0usize;
+    let mut question_cues = 0usize;
+
+    for (rel_i, f) in slice.iter().enumerate() {
+        let abs_idx = first_idx + rel_i;
+        if crate::whisper::is_whisper_hallucination(&f.text)
+            || is_opening_or_song_fragment(fragments, abs_idx)
+        {
+            hallucination_or_song_cues += 1;
+        }
+        if is_filler_or_water_fragment(&f.text) {
+            filler_cues += 1;
+        }
+        if f.text.contains('!') {
+            exclam_cues += 1;
+        }
+        if f.text.contains('?') {
+            question_cues += 1;
+        }
+        for w in f.text.split_whitespace() {
+            let clean_w: String = w.chars().filter(|c| c.is_alphabetic()).collect();
+            if !clean_w.is_empty() {
+                total_words += 1;
+                if clean_w.chars().count() == 1
+                    && !matches!(
+                        clean_w.to_lowercase().as_str(),
+                        "я" | "и" | "а" | "в" | "с" | "к" | "у" | "о"
+                    )
+                {
+                    broken_short_tokens += 1;
+                }
+            }
+        }
+    }
+
+    if hallucination_or_song_cues * 2 >= total_cues {
+        return (
+            0.12,
+            true,
+            false,
+            false,
+            "галлюцинация распознавания / музыкальная вставка".to_string(),
+        );
+    }
+
+    if total_words > 6 && broken_short_tokens * 3 >= total_words {
+        return (
+            0.15,
+            true,
+            false,
+            false,
+            "бессвязный набор обрывочных слогов (бред ASR)".to_string(),
+        );
+    }
+
+    // 2. Проверка на склейку двух несвязанных сцен внутри одного клипа
+    for abs_idx in (first_idx + 1)..=last_idx {
+        let gap = (fragments[abs_idx].start - fragments[abs_idx - 1].end).max(0.0);
+        if is_new_scene_opener(&fragments[abs_idx].text) && gap >= 1.2 {
+            return (
+                0.22,
+                true,
+                false,
+                false,
+                "склейка двух разных несвязанных сцен внутри одного клипа".to_string(),
+            );
+        }
+    }
+
+    // 3. Проверка начала и конца клипа на законченность мысли
+    let bad_start = !is_sentence_start(fragments, first_idx) || is_weak_clip_start(fragments, first_idx);
+    let bad_end = !is_sentence_end(fragments, last_idx) || is_weak_clip_ending(fragments, last_idx);
+    if bad_start && bad_end {
+        return (
+            0.20,
+            false,
+            false,
+            true,
+            "мысль оборвана и в начале, и в финале фрагмента".to_string(),
+        );
+    }
+    if bad_end {
+        return (
+            0.28,
+            false,
+            false,
+            true,
+            "незаконченная мысль / обрыв фразы в финале клипа".to_string(),
+        );
+    }
+    if bad_start {
+        return (
+            0.32,
+            false,
+            false,
+            true,
+            "мысль оборвана в начале (вход с полуслова)".to_string(),
+        );
+    }
+
+    // 4. Проверка на повтор одних и тех же фраз (зацикливание / бред)
+    if total_cues >= 3 {
+        let mut unique_lines = HashSet::new();
+        for f in slice {
+            let norm = f
+                .text
+                .trim()
+                .to_lowercase()
+                .replace('ё', "е")
+                .chars()
+                .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+                .collect::<String>();
+            if !norm.is_empty() {
+                unique_lines.insert(norm);
+            }
+        }
+        if unique_lines.len() * 2 <= total_cues {
+            return (
+                0.18,
+                true,
+                false,
+                false,
+                "повторяющиеся зацикленные реплики (бред)".to_string(),
+            );
+        }
+    }
+
+    // 5. Проверка на скукоту и «воду»
+    let filler_ratio = (filler_cues as f64) / (total_cues as f64);
+    let lower_full = cand.full_dialogue.to_lowercase().replace('ё', "е");
+
+    let humor_and_vivid_markers = [
+        "ха-ха", "ахах", "хе-хе", "шутк", "смеш", "прикол", "угар", "жесть", "капец",
+        "офигеть", "обалдеть", "нифига", "блин", "черт", "серьезно", "издеваешься",
+        "издеваетесь", "с ума", "псих", "безум", "гениально", "хитр", "ловушк",
+        "сюрприз", "получай", "не может быть", "шутки плохи", "дьявол", "монстр",
+        "проклятье", "крылышки", "наконец-то", "вот это", "ни за что", "никогда",
+        "взрыв", "атака", "огонь", "спасай", "бежим", "сдохни", "умри", "победа",
+    ];
+    let boring_markers = [
+        "проверка звука", "меня слышно", "перейдем к следующему", "в сегодняшнем видео",
+        "нажмите кнопку", "по расписанию", "обычное дело", "ничего особенного",
+        "доклад окончен", "такие дела", "ну как-то так", "в общем-то все",
+    ];
+
+    let humor_hits = humor_and_vivid_markers
+        .iter()
+        .filter(|&&m| lower_full.contains(m))
+        .count();
+    let boring_hits = boring_markers
+        .iter()
+        .filter(|&&m| lower_full.contains(m))
+        .count();
+
+    if filler_ratio >= 0.42 || (boring_hits > 0 && humor_hits == 0 && exclam_cues == 0) {
+        return (
+            0.26,
+            false,
+            true,
+            false,
+            "скукота и «вода» без развития мысли и эмоций".to_string(),
+        );
+    }
+
+    let clip_dur = (cand.end - cand.start).max(1.0);
+    let words_per_sec = (total_words as f64) / clip_dur;
+    if words_per_sec < 0.65 && exclam_cues == 0 && humor_hits == 0 && cand.initial_score < 0.64 {
+        return (
+            0.30,
+            false,
+            true,
+            false,
+            "вялый темп речи и отсутствие эмоциональной кульминации (скукота)".to_string(),
+        );
+    }
+
+    // 6. Расчет итогового детерминированного балла связности, юмора и законченности мысли
+    let mut score = 0.52_f64;
+
+    // Бонус за четкое начало и завершение мысли
+    if !bad_start {
+        score += 0.08;
+    }
+    if has_terminal_punctuation(&fragments[last_idx].text) && !has_incomplete_clause(&fragments[last_idx].text) {
+        score += 0.08;
+    }
+
+    // Бонус за диалоговую структуру «Сетап / Вопрос -> Панчлайн / Ответ с !»
+    let first_half_has_question = slice
+        .iter()
+        .take((total_cues / 2).max(1))
+        .any(|f| f.text.contains('?'));
+    let second_half_has_exclam = slice
+        .iter()
+        .skip(total_cues / 2)
+        .any(|f| f.text.contains('!'));
+    if first_half_has_question && second_half_has_exclam {
+        score += 0.12;
+    } else if exclam_cues > 0 {
+        score += (exclam_cues.min(3) as f64) * 0.05;
+    }
+
+    // Бонус за юмор, иронию, сленг и яркие обороты
+    if humor_hits > 0 {
+        score += (humor_hits.min(3) as f64) * 0.065;
+    }
+
+    // Штраф за частичную воду
+    score -= filler_ratio * 0.25;
+
+    let clamped = score.clamp(0.15, 0.96);
+    let is_boring = clamped < 0.38 && exclam_cues == 0 && humor_hits == 0 && question_cues == 0;
+    let reason = if humor_hits > 0 && first_half_has_question && second_half_has_exclam {
+        "связный диалог: интригующий зачин + юмор/панчлайн в финале".to_string()
+    } else if humor_hits > 0 {
+        "законченная мысль с живым юмором/эмоцией".to_string()
+    } else if second_half_has_exclam {
+        "цельная сцена с яркой эмоциональной кульминацией в конце".to_string()
+    } else {
+        "логически завершенный связный фрагмент".to_string()
+    };
+
+    (clamped, false, is_boring, false, reason)
+}
+
+/// Выполняет 2-ю финальную проверку уже собранных фрагментов через русскоязычную LLM (приоритет: модели Vikhr 2B/1.5B/1B)
+/// в связке с детерминированным аудитором связности, юмора, законченности мысли и отсевом полного бреда/скукоты.
+pub async fn verify_assembled_clips_coherence(
+    candidates: &[AssembledClipCandidate],
+    fragments: &[SubtitleFragment],
+    config: &TextAnalysisConfig,
+    app_handle: &AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<Vec<ClipVerificationVerdict>> {
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 1. Сначала выполняем детерминированный аудит каждого собранного клипа
+    let det_audits: Vec<(f64, bool, bool, bool, String)> = candidates
+        .iter()
+        .map(|c| audit_assembled_clip_dialogue(c, fragments))
+        .collect();
+
+    // 2. Запускаем 2-ю проверку через русскоязычную LLM (Vikhr GGUF через llama-cli, либо выбранный движок с авто-фоллбэком на Vikhr)
+    let mut llm_scores_opt: Option<Vec<f64>> = None;
+
+    // Проверяем наличие локальной русской модели Vikhr (или выбранной GGUF-модели) для 2-й проверки
+    let russian_gguf_opt = crate::models::resolve_russian_verifier_llm_model(
+        app_handle,
+        Some(&config.model_name),
+    );
+
+    if config.engine != TextEngine::Builtin {
+        let batch_size = 8usize;
+        let total_batches = (candidates.len() + batch_size - 1) / batch_size;
+        let mut collected_llm_scores: Vec<f64> = Vec::with_capacity(candidates.len());
+        let mut llm_available = true;
+
+        if let Some(ref gguf_path) = russian_gguf_opt {
+            if config.engine == TextEngine::LlamaCli || config.engine == TextEngine::Auto {
+                let model_file_label = gguf_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Vikhr-GGUF");
+                let is_round_two = candidates.iter().any(|c| c.round > 1);
+                let round_label = if is_round_two { "2-й круг ревизии" } else { "2-я проверка ИИ" };
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "info",
+                    &format!(
+                        "🇷🇺 [{}] Экспертиза {} фрагментов на связность, юмор и отсев бреда через русскую модель '{}'...",
+                        round_label,
+                        candidates.len(),
+                        model_file_label
+                    ),
+                );
+            }
+        }
+
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(25))
+            .build()
+            .unwrap_or_default();
+
+        for (b_idx, chunk) in candidates.chunks(batch_size).enumerate() {
+            if cancel_rx.try_recv().is_ok() {
+                return Err(AppError::Pipeline("Отменено пользователем".into()));
+            }
+            if !llm_available {
+                break;
+            }
+
+            let prompt = build_clip_verification_prompt(chunk);
+            let mut parsed_batch: Option<Vec<f64>> = None;
+
+            if config.engine == TextEngine::OpenAi {
+                if let Ok(resp) = run_openai(&http_client, config, &prompt, app_handle).await {
+                    parsed_batch = parse_json_array(&resp, chunk.len());
+                }
+            } else if config.engine == TextEngine::Ollama {
+                if let Ok(resp) = run_ollama(&http_client, config, &prompt, app_handle).await {
+                    parsed_batch = parse_json_array(&resp, chunk.len());
+                }
+            }
+
+            // Если выбран локальный GGUF (LlamaCli) ИЛИ внешний движок не ответил — используем русскую GGUF-модель Vikhr через llama-cli!
+            if parsed_batch.is_none() {
+                if let Some(ref gguf_path) = russian_gguf_opt {
+                    let gguf_str = gguf_path.to_string_lossy().to_string();
+                    if !is_model_marked_broken(&gguf_str) {
+                        crate::logger::emit_log(
+                            app_handle,
+                            "LLM",
+                            "info",
+                            &format!(
+                                "🇷🇺 [2-я проверка ИИ] Пакет клипов {}/{}: оценка связности, юмора и законченности мысли ({} шт.)...",
+                                b_idx + 1,
+                                total_batches,
+                                chunk.len()
+                            ),
+                        );
+                        match run_llama_cli(
+                            app_handle,
+                            &gguf_str,
+                            &prompt,
+                            chunk.len(),
+                            true,
+                            cancel_rx.resubscribe(),
+                        )
+                        .await
+                        {
+                            Ok(out) => {
+                                parsed_batch = parse_json_array(&out, chunk.len());
+                                if parsed_batch.is_none() {
+                                    // Повтор на чистом CPU при сбое FP16 на GPU
+                                    if let Ok(cpu_out) = run_llama_cli(
+                                        app_handle,
+                                        &gguf_str,
+                                        &prompt,
+                                        chunk.len(),
+                                        false,
+                                        cancel_rx.resubscribe(),
+                                    )
+                                    .await
+                                    {
+                                        parsed_batch = parse_json_array(&cpu_out, chunk.len());
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                llm_available = false;
+                            }
+                        }
+                    } else {
+                        llm_available = false;
+                    }
+                } else {
+                    llm_available = false;
+                }
+            }
+
+            if let Some(mut scores) = parsed_batch {
+                while scores.len() < chunk.len() {
+                    let idx_in_chunk = scores.len();
+                    let global_i = b_idx * batch_size + idx_in_chunk;
+                    scores.push(det_audits[global_i].0);
+                }
+                collected_llm_scores.extend(scores.into_iter().take(chunk.len()));
+            } else {
+                for idx_in_chunk in 0..chunk.len() {
+                    let global_i = b_idx * batch_size + idx_in_chunk;
+                    collected_llm_scores.push(det_audits[global_i].0);
+                }
+            }
+        }
+
+        if collected_llm_scores.len() == candidates.len() {
+            llm_scores_opt = Some(collected_llm_scores);
+        }
+    }
+
+    // 3. Формируем финальные вердикты (объединяем оценку русской LLM и структурный аудит связности/бреда/скукоты)
+    let mut verdicts = Vec::with_capacity(candidates.len());
+    for (i, cand) in candidates.iter().enumerate() {
+        let (det_score, is_nonsense, is_boring, is_incomplete, det_reason) = &det_audits[i];
+        let llm_score = llm_scores_opt
+            .as_ref()
+            .and_then(|v| v.get(i).copied())
+            .unwrap_or(*det_score);
+
+        // Комбинированная оценка связности, юмора и законченности мысли
+        let coherence_score = if llm_scores_opt.is_some() {
+            (llm_score * 0.62 + det_score * 0.38).clamp(0.05, 0.98)
+        } else {
+            *det_score
+        };
+
+        // Жесткая отбраковка полного бреда, оборванных мыслей и откровенной скукоты
+        let llm_flagged_garbage = llm_scores_opt.is_some() && llm_score < 0.34;
+        let keep = !*is_nonsense && !*is_incomplete && !(*is_boring && coherence_score < 0.48) && !llm_flagged_garbage && coherence_score >= 0.38;
+
+        let defect_type = if keep {
+            ClipDefectType::None
+        } else if *is_incomplete {
+            ClipDefectType::IncompleteThought
+        } else if *is_nonsense {
+            ClipDefectType::NonsenseOrGarbage
+        } else if *is_boring || llm_flagged_garbage {
+            ClipDefectType::BoringOrWeakDynamics
+        } else {
+            ClipDefectType::IncompleteThought
+        };
+
+        let reason = if !keep {
+            if *is_incomplete {
+                det_reason.clone()
+            } else if *is_nonsense {
+                det_reason.clone()
+            } else if llm_flagged_garbage {
+                format!(
+                    "отбракован ИИ-редактором как скучный/бессвязный фрагмент (оценка LLM: {:.2})",
+                    llm_score
+                )
+            } else {
+                det_reason.clone()
+            }
+        } else if llm_scores_opt.is_some() && llm_score >= 0.76 {
+            format!("высокая оценка ИИ-редактора ({:.2}): {}", llm_score, det_reason)
+        } else {
+            det_reason.clone()
+        };
+
+        let final_score = if keep {
+            (cand.initial_score * 0.48 + coherence_score * 0.52).clamp(0.15, 0.97)
+        } else {
+            (coherence_score * 0.5).clamp(0.05, 0.35)
+        };
+
+        verdicts.push(ClipVerificationVerdict {
+            final_score,
+            coherence_score,
+            keep,
+            reason,
+            defect_type,
+        });
+    }
+
+    Ok(verdicts)
+}
+
+/// Функция адресной доработки клипа, не прошедшего 1-й круг проверки (Self-Repair Review Loop)
+/// Согласно требованиям:
+/// 1) При незавершенной мысли / обрыве: расширяет границы до закрытия фразы и панчлайна
+/// 2) При скукоте или бреде: ищет яркий эмоциональный момент в том же тайм-диапазоне
+/// 3) Выполняется строго 1 раз (round == 2), защищая от бесконечных циклов
+pub fn repair_clip_candidate(
+    cand: &AssembledClipCandidate,
+    defect: &ClipDefectType,
+    fragments: &[SubtitleFragment],
+    text_scores: &[f64],
+    audio_profile: Option<&crate::audio_analyzer::AudioEnergyProfile>,
+    min_dur: f64,
+    max_dur: f64,
+    intro_skip: f64,
+    outro_limit: f64,
+    video_duration: f64,
+) -> Option<AssembledClipCandidate> {
+    if fragments.is_empty() {
+        return None;
+    }
+
+    match defect {
+        ClipDefectType::IncompleteThought => {
+            // ВЕТКА 1: Расширяем границы клипа до закрытия фразы и панчлайна
+            let first_idx = cand.first_cue_idx.unwrap_or(0);
+            let last_idx = cand.last_cue_idx.unwrap_or_else(|| fragments.len().saturating_sub(1));
+
+            // А. Проверяем начало: если фраза начинается на полуслове / со строчной / союзе продолжения, сдвигаем назад
+            let mut repaired_first_idx = first_idx;
+            if first_idx > 0 && (!is_sentence_start(fragments, first_idx) || is_weak_clip_start(fragments, first_idx)) {
+                let start_bound = first_idx.saturating_sub(5);
+                for back_i in (start_bound..first_idx).rev() {
+                    if is_sentence_start(fragments, back_i) && !is_weak_clip_start(fragments, back_i) {
+                        repaired_first_idx = back_i;
+                        break;
+                    }
+                }
+            }
+
+            // Б. Проверяем финал: если фраза оборвана, сканируем вперед до точки/восклицания/панчлайна
+            let mut repaired_last_idx = last_idx;
+            let current_start_t = fragments[repaired_first_idx].start;
+            let max_repaired_dur = (max_dur + 5.0).min(65.0); // эластичный запас для захвата полного панчлайна
+
+            let forward_bound = (last_idx + 8).min(fragments.len().saturating_sub(1));
+            for fwd_i in (last_idx + 1)..=forward_bound {
+                let dur = fragments[fwd_i].end - current_start_t;
+                if dur > max_repaired_dur {
+                    break;
+                }
+                if is_sentence_end(fragments, fwd_i) && !is_weak_clip_ending(fragments, fwd_i) {
+                    repaired_last_idx = fwd_i;
+                    // Если реплика содержит восклицательный знак или яркий панчлайн — идеальная точка финала!
+                    if fragments[fwd_i].text.contains('!') || fragments[fwd_i].text.contains("?!") {
+                        break;
+                    }
+                }
+            }
+
+            // Если не удалось расширить вперед, но длительность позволяет сдвинуть назад к полноценному сетапу
+            if repaired_last_idx == last_idx && repaired_first_idx == first_idx && first_idx > 0 {
+                let back_i = first_idx.saturating_sub(1);
+                if fragments[last_idx].end - fragments[back_i].start <= max_repaired_dur {
+                    repaired_first_idx = back_i;
+                }
+            }
+
+            let new_start = (fragments[repaired_first_idx].start - 0.25).max(intro_skip).max(0.0);
+            let new_end = (fragments[repaired_last_idx].end + 0.35).min(outro_limit).min(video_duration);
+
+            if new_end - new_start < min_dur * 0.75 {
+                return None;
+            }
+
+            // Извлекаем обновленный диалог
+            let mut dialogue_parts: Vec<String> = Vec::new();
+            for f in &fragments[repaired_first_idx..=repaired_last_idx] {
+                let trimmed = f.text.trim();
+                if !trimmed.is_empty() {
+                    dialogue_parts.push(trimmed.to_string());
+                }
+            }
+            let first_p = fragments[repaired_first_idx].text.chars().take(40).collect::<String>();
+            let last_p = fragments[repaired_last_idx].text.chars().take(40).collect::<String>();
+            let full_dialogue = dialogue_parts.join(" — ");
+
+            Some(AssembledClipCandidate {
+                start: new_start,
+                end: new_end,
+                initial_score: cand.initial_score,
+                first_phrase: first_p,
+                last_phrase: last_p,
+                full_dialogue,
+                first_cue_idx: Some(repaired_first_idx),
+                last_cue_idx: Some(repaired_last_idx),
+                cue_count: dialogue_parts.len(),
+                round: 2,
+                repair_note: Some(format!(
+                    "Расширены границы [{:.1}с - {:.1}с] (+{:.1}с) до законченного панчлайна",
+                    new_start, new_end, (new_end - new_start) - (cand.end - cand.start)
+                )),
+            })
+        }
+        ClipDefectType::BoringOrWeakDynamics | ClipDefectType::NonsenseOrGarbage => {
+            // ВЕТКА 2: Ищем более яркий эмоциональный момент в том же тайм-диапазоне (±25 секунд)
+            let search_min = (cand.start - 25.0).max(intro_skip).max(0.0);
+            let search_max = (cand.end + 25.0).min(outro_limit).min(video_duration);
+
+            let mut best_anchor: Option<(usize, f64)> = None;
+
+            for (i, f) in fragments.iter().enumerate() {
+                if f.start < search_min || f.end > search_max {
+                    continue;
+                }
+                if crate::whisper::is_whisper_hallucination(&f.text) || is_opening_or_song_fragment(fragments, i) {
+                    continue;
+                }
+
+                // Оцениваем эмоциональную яркость реплики
+                let mut peak_val = text_scores.get(i).copied().unwrap_or(0.35);
+                if f.text.contains('!') {
+                    peak_val += 0.22;
+                }
+                if f.text.contains("?!") || f.text.contains("!?") {
+                    peak_val += 0.25;
+                }
+                if f.text.chars().filter(|c| c.is_alphabetic()).any(|c| c.is_uppercase()) && f.text.contains('!') {
+                    peak_val += 0.18; // КАПС крик
+                }
+
+                // Учитываем аудио-энергию
+                if let Some(prof) = audio_profile {
+                    let audio_burst = prof.get_peak_energy_between(f.start, f.end);
+                    peak_val += audio_burst * 0.20;
+                }
+
+                // Штрафуем совпадение с проблемным центром
+                let dist_from_old_center = ((f.start + f.end) / 2.0 - (cand.start + cand.end) / 2.0).abs();
+                if dist_from_old_center < 3.0 {
+                    peak_val *= 0.65;
+                }
+
+                if peak_val > best_anchor.map(|(_, sc)| sc).unwrap_or(0.0) {
+                    best_anchor = Some((i, peak_val));
+                }
+            }
+
+            if let Some((anchor_i, peak_sc)) = best_anchor {
+                if peak_sc >= 0.40 {
+                    // Строим альтернативное связное окно вокруг найденного эмоционального пика
+                    let mut start_i = anchor_i;
+                    while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 4 {
+                        start_i -= 1;
+                    }
+                    let mut end_i = anchor_i;
+                    while end_i + 1 < fragments.len()
+                        && (fragments[end_i].end - fragments[start_i].start) < min_dur
+                    {
+                        end_i += 1;
+                    }
+                    while end_i + 1 < fragments.len()
+                        && (fragments[end_i + 1].end - fragments[start_i].start) <= max_dur
+                        && !is_sentence_end(fragments, end_i)
+                    {
+                        end_i += 1;
+                    }
+
+                    let new_start = (fragments[start_i].start - 0.25).max(intro_skip).max(0.0);
+                    let new_end = (fragments[end_i].end + 0.35).min(outro_limit).min(video_duration);
+
+                    // Проверяем, что новое окно действительно отличается от исходного
+                    let shift = (new_start - cand.start).abs() + (new_end - cand.end).abs();
+                    if shift >= 2.5 && (new_end - new_start) >= min_dur * 0.75 {
+                        let mut dialogue_parts: Vec<String> = Vec::new();
+                        for f in &fragments[start_i..=end_i] {
+                            let trimmed = f.text.trim();
+                            if !trimmed.is_empty() {
+                                dialogue_parts.push(trimmed.to_string());
+                            }
+                        }
+                        let first_p = fragments[start_i].text.chars().take(40).collect::<String>();
+                        let last_p = fragments[end_i].text.chars().take(40).collect::<String>();
+                        let full_dialogue = dialogue_parts.join(" — ");
+
+                        return Some(AssembledClipCandidate {
+                            start: new_start,
+                            end: new_end,
+                            initial_score: (cand.initial_score * 0.5 + peak_sc * 0.5).clamp(0.40, 0.95),
+                            first_phrase: first_p,
+                            last_phrase: last_p,
+                            full_dialogue,
+                            first_cue_idx: Some(start_i),
+                            last_cue_idx: Some(end_i),
+                            cue_count: dialogue_parts.len(),
+                            round: 2,
+                            repair_note: Some(format!(
+                                "Фокус сцены перенесен на яркий эмоциональный пик на {:.1}с",
+                                fragments[anchor_i].start
+                            )),
+                        });
+                    }
+                }
+            }
+
+            None
+        }
+        ClipDefectType::None => None,
+    }
+}
+
+

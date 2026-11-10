@@ -127,6 +127,30 @@ export const CATALOG_MODELS: ModelInfo[] = [
     local_path: ''
   },
   {
+    id: 'vikhr-llama-3.2-1b',
+    name: 'Vikhr Llama 3.2 1B (RU Сленг и Юмор)',
+    filename: 'Vikhr-Llama-3.2-1B-Q4_K_M.gguf',
+    url: 'https://huggingface.co/Vikhrmodels/Vikhr-Llama-3.2-1B-instruct-GGUF/resolve/main/Vikhr-Llama-3.2-1B-Q4_K_M.gguf',
+    size_mb: 808,
+    description: 'Русскоязычная модель Vikhr 1B: специально обучена на живой русской речи, сленге, иронии и панчлайнах (808 МБ)',
+    category: 'llm',
+    params: '1B RU',
+    exists: false,
+    local_path: ''
+  },
+  {
+    id: 'vikhr-qwen-2.5-1.5b',
+    name: 'Vikhr Qwen 2.5 1.5B (RU Диалоги и Юмор)',
+    filename: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
+    url: 'https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
+    size_mb: 986,
+    description: 'Русскоязычная дообученная Qwen 2.5 1.5B от проекта Vikhr: отличное чувство юмора, сарказма и сюжетного накала (986 МБ)',
+    category: 'llm',
+    params: '1.5B RU',
+    exists: false,
+    local_path: ''
+  },
+  {
     id: 'qwen-1.5b-chat',
     name: 'Qwen 2.5 1.5B Instruct (Рекомендуется)',
     filename: 'qwen-1.5b-chat.gguf',
@@ -147,6 +171,18 @@ export const CATALOG_MODELS: ModelInfo[] = [
     description: 'Модель от Google (2B): точное выделение смысловых панчлайнов и ярких реплик (1.63 ГБ)',
     category: 'llm',
     params: '2B',
+    exists: false,
+    local_path: ''
+  },
+  {
+    id: 'vikhr-gemma-2b',
+    name: 'Vikhr Gemma 2B Instruct (RU Профи)',
+    filename: 'Vikhr-Gemma-2B-instruct-Q4_K_M.gguf',
+    url: 'https://huggingface.co/Vikhrmodels/Vikhr-Gemma-2B-instruct-GGUF/resolve/main/Vikhr-Gemma-2B-instruct-Q4_K_M.gguf',
+    size_mb: 1630,
+    description: 'Усиленная русскоязычная модель Vikhr 2B (на базе Gemma 2): глубокое понимание русских идиом, шуток и кульминаций (1.63 ГБ)',
+    category: 'llm',
+    params: '2B RU',
     exists: false,
     local_path: ''
   },

@@ -29,6 +29,87 @@ pub struct RenderProgressPayload {
     pub stage: String,
 }
 
+/// Определяет разрешение (ширину, высоту), длительность и наличие аудиодорожки у видеофайла через FFmpeg
+async fn probe_video_stream_info(
+    video_path: &Path,
+    is_vertical: bool,
+    app_handle: &AppHandle,
+) -> (i32, i32, f64, bool) {
+    let default_w = if is_vertical { 1080 } else { 1920 };
+    let default_h = if is_vertical { 1920 } else { 1080 };
+
+    let Ok(sidecar_cmd) = app_handle.shell().sidecar("ffmpeg") else {
+        return (default_w, default_h, 10.0, true);
+    };
+
+    let args = vec![
+        "-i".to_string(),
+        video_path.to_string_lossy().to_string(),
+        "-hide_banner".to_string(),
+    ];
+
+    let Ok((mut rx, child)) = sidecar_cmd
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args(args)
+        .spawn()
+    else {
+        return (default_w, default_h, 10.0, true);
+    };
+
+    let mut stderr_out = String::new();
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Stderr(bytes) = event {
+            stderr_out.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    let _ = child.kill();
+
+    let has_audio = stderr_out.contains("Audio:");
+
+    let mut duration = 10.0;
+    if let Some(pos) = stderr_out.find("Duration: ") {
+        let dur_str = &stderr_out[pos + 10..];
+        let parts: Vec<&str> = dur_str
+            .split(',')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .split(':')
+            .collect();
+        if parts.len() == 3 {
+            let h: f64 = parts[0].parse().unwrap_or(0.0);
+            let m: f64 = parts[1].parse().unwrap_or(0.0);
+            let s: f64 = parts[2].parse().unwrap_or(0.0);
+            let total = h * 3600.0 + m * 60.0 + s;
+            if total > 0.1 {
+                duration = total;
+            }
+        }
+    }
+
+    let mut width = default_w;
+    let mut height = default_h;
+    for line in stderr_out.lines() {
+        if line.contains("Video:") {
+            for token in line.split(|c: char| c == ',' || c.is_whitespace()) {
+                let clean = token.trim_matches(|c: char| !c.is_ascii_digit() && c != 'x');
+                if let Some((w_str, h_str)) = clean.split_once('x') {
+                    if let (Ok(w), Ok(h)) = (w_str.parse::<i32>(), h_str.parse::<i32>()) {
+                        if w >= 120 && h >= 120 && w <= 7680 && h <= 7680 {
+                            width = (w / 2) * 2;
+                            height = (h / 2) * 2;
+                            break;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    (width, height, duration, has_audio)
+}
+
 pub async fn attach_bumpers_if_enabled(
     clip_path: &Path,
     bumper_config: Option<&crate::bumpers::BumperGlobalConfig>,
@@ -36,97 +117,406 @@ pub async fn attach_bumpers_if_enabled(
     source_video_path: &Path,
     app_handle: &AppHandle,
 ) -> AppResult<()> {
-    let Some(global_cfg) = bumper_config else { return Ok(()); };
-    if !global_cfg.enabled { return Ok(()); }
-
-    let active_preset = global_cfg.presets.iter().find(|p| p.id == global_cfg.active_preset_id);
-    let Some(preset) = active_preset else { return Ok(()); };
-
-    let cat_cfg = if is_vertical { &preset.v916 } else { &preset.v169 };
-    if !cat_cfg.preroll.enabled && !cat_cfg.postroll.enabled {
+    let Some(raw_cfg) = bumper_config else {
+        return Ok(());
+    };
+    if !raw_cfg.enabled {
+        return Ok(());
+    }
+    if !clip_path.exists() {
         return Ok(());
     }
 
+    let mut global_cfg = raw_cfg.clone();
+    global_cfg.ensure_populated();
+
+    let active_preset = global_cfg
+        .presets
+        .iter()
+        .find(|p| p.id == global_cfg.active_preset_id)
+        .or_else(|| global_cfg.presets.first());
+    let Some(preset) = active_preset else {
+        return Ok(());
+    };
+
+    // Если в целевой ориентации (например, 16:9 или 9:16) преролл/постролл не были отдельно включены,
+    // но пользователь настроил и включил их во второй ориентации этого же пресета — используем активную настройку!
+    let primary_cat = if is_vertical { &preset.v916 } else { &preset.v169 };
+    let fallback_cat = if is_vertical { &preset.v169 } else { &preset.v916 };
+    let cat_cfg = if primary_cat.preroll.enabled || primary_cat.postroll.enabled {
+        primary_cat
+    } else if fallback_cat.preroll.enabled || fallback_cat.postroll.enabled {
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!(
+                "Для формата {} использована активная конфигурация заставок из смежного слота пресета '{}'",
+                if is_vertical { "9:16" } else { "16:9" },
+                preset.name
+            ),
+        );
+        fallback_cat
+    } else {
+        return Ok(());
+    };
+
     use tauri::Manager;
-    let app_data = app_handle.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let app_data = app_handle
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
     let cache_dir = app_data.join("bumpers_cache").join(&preset.id);
     let _ = tokio::fs::create_dir_all(&cache_dir).await;
 
     let fmt_tag = if is_vertical { "916" } else { "169" };
 
-    let mut parts_to_concat: Vec<PathBuf> = Vec::new();
+    let mut pre_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
+    let mut post_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
 
-    // 1. Преролл
+    // 1. Авто-проверка и генерация на лету Преролла
     if cat_cfg.preroll.enabled {
         let pre_path = cache_dir.join(format!("preroll_{}.mp4", fmt_tag));
-        if !pre_path.exists() {
-            let _ = crate::bumpers::render_single_bumper_video(&cat_cfg.preroll, is_vertical, source_video_path, &pre_path, app_handle).await;
+        let is_valid = std::fs::metadata(&pre_path)
+            .map(|m| m.len() > 512)
+            .unwrap_or(false);
+        if !is_valid {
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("Генерация преролла ({}) на лету перед вклейкой...", fmt_tag),
+            );
+            if let Err(e) = crate::bumpers::render_single_bumper_video(
+                &cat_cfg.preroll,
+                is_vertical,
+                source_video_path,
+                &pre_path,
+                app_handle,
+            )
+            .await
+            {
+                crate::logger::emit_log(
+                    app_handle,
+                    "Bumpers",
+                    "warn",
+                    &format!("Ошибка генерации преролла на лету: {}", e),
+                );
+            }
         }
-        if pre_path.exists() {
-            parts_to_concat.push(pre_path);
+        if std::fs::metadata(&pre_path)
+            .map(|m| m.len() > 512)
+            .unwrap_or(false)
+        {
+            pre_bumper = Some((pre_path, cat_cfg.preroll.clone()));
         }
     }
 
-    // 2. Основной клип
-    parts_to_concat.push(clip_path.to_path_buf());
-
-    // 3. Постролл
+    // 2. Авто-проверка и генерация на лету Постролла
     if cat_cfg.postroll.enabled {
         let post_path = cache_dir.join(format!("postroll_{}.mp4", fmt_tag));
-        if !post_path.exists() {
-            let _ = crate::bumpers::render_single_bumper_video(&cat_cfg.postroll, is_vertical, source_video_path, &post_path, app_handle).await;
+        let is_valid = std::fs::metadata(&post_path)
+            .map(|m| m.len() > 512)
+            .unwrap_or(false);
+        if !is_valid {
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("Генерация постролла ({}) на лету перед вклейкой...", fmt_tag),
+            );
+            if let Err(e) = crate::bumpers::render_single_bumper_video(
+                &cat_cfg.postroll,
+                is_vertical,
+                source_video_path,
+                &post_path,
+                app_handle,
+            )
+            .await
+            {
+                crate::logger::emit_log(
+                    app_handle,
+                    "Bumpers",
+                    "warn",
+                    &format!("Ошибка генерации постролла на лету: {}", e),
+                );
+            }
         }
-        if post_path.exists() {
-            parts_to_concat.push(post_path);
+        if std::fs::metadata(&post_path)
+            .map(|m| m.len() > 512)
+            .unwrap_or(false)
+        {
+            post_bumper = Some((post_path, cat_cfg.postroll.clone()));
         }
     }
 
-    if parts_to_concat.len() <= 1 {
+    if pre_bumper.is_none() && post_bumper.is_none() {
         return Ok(());
     }
 
-    let temp_output = clip_path.with_extension("with_bumpers.tmp.mp4");
+    let (target_w, target_h, clip_dur, clip_has_audio) =
+        probe_video_stream_info(clip_path, is_vertical, app_handle).await;
 
-    let concat_txt = cache_dir.join(format!("concat_{}_{}.txt", fmt_tag, std::process::id()));
-    let mut txt_body = String::new();
-    for p in &parts_to_concat {
-        let p_str = p.to_string_lossy().replace('\\', "/");
-        txt_body.push_str(&format!("file '{}'\n", p_str));
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let temp_output = clip_path.with_extension(format!("with_bumpers_{}.tmp.mp4", ts));
+
+    // Собираем единый граф фильтров с нормализацией разрешения, FPS, SAR, цветового пространства (yuv420p),
+    // стерео-аудио 48000 Hz и плавными переходами (crossfade / fade_black / cut)
+    let mut args = vec!["-hide_banner".to_string(), "-nostdin".to_string(), "-y".to_string()];
+    let mut filter_parts: Vec<String> = Vec::new();
+    let mut concat_pads = String::new();
+    let mut input_idx = 0usize;
+    let mut seg_count = 0usize;
+
+    // Вход Преролла (если активен)
+    if let Some((ref pre_path, ref pre_cfg)) = pre_bumper {
+        let (_, _, pre_dur, pre_has_audio) =
+            probe_video_stream_info(pre_path, is_vertical, app_handle).await;
+        args.push("-i".to_string());
+        args.push(pre_path.to_string_lossy().to_string());
+        let v_in = input_idx;
+        input_idx += 1;
+
+        let a_in = if pre_has_audio {
+            v_in
+        } else {
+            args.push("-f".to_string());
+            args.push("lavfi".to_string());
+            args.push("-t".to_string());
+            args.push(format!("{:.3}", pre_dur.max(0.5)));
+            args.push("-i".to_string());
+            args.push("anullsrc=r=48000:cl=stereo".to_string());
+            let idx = input_idx;
+            input_idx += 1;
+            idx
+        };
+
+        let trans_fade = if pre_cfg.transition != "cut" && pre_dur > 0.5 {
+            format!(",fade=t=out:st={:.3}:d=0.22", (pre_dur - 0.22).max(0.05))
+        } else {
+            String::new()
+        };
+        let audio_fade = if pre_cfg.transition != "cut" && pre_dur > 0.5 {
+            format!(",afade=t=out:st={:.3}:d=0.22", (pre_dur - 0.22).max(0.05))
+        } else {
+            String::new()
+        };
+
+        filter_parts.push(format!(
+            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p{}[v{}]",
+            v_in, target_w, target_h, target_w, target_h, trans_fade, seg_count
+        ));
+        filter_parts.push(format!(
+            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{}[a{}]",
+            a_in, audio_fade, seg_count
+        ));
+        concat_pads.push_str(&format!("[v{}][a{}]", seg_count, seg_count));
+        seg_count += 1;
     }
-    let _ = tokio::fs::write(&concat_txt, txt_body).await;
 
-    let args = vec![
-        "-y".to_string(),
-        "-f".to_string(),
-        "concat".to_string(),
-        "-safe".to_string(),
-        "0".to_string(),
-        "-i".to_string(),
-        concat_txt.to_string_lossy().to_string(),
-        "-c".to_string(),
-        "copy".to_string(),
+    // Вход Основного клипа
+    {
+        args.push("-i".to_string());
+        args.push(clip_path.to_string_lossy().to_string());
+        let v_in = input_idx;
+        input_idx += 1;
+
+        let a_in = if clip_has_audio {
+            v_in
+        } else {
+            args.push("-f".to_string());
+            args.push("lavfi".to_string());
+            args.push("-t".to_string());
+            args.push(format!("{:.3}", clip_dur.max(0.5)));
+            args.push("-i".to_string());
+            args.push("anullsrc=r=48000:cl=stereo".to_string());
+            let idx = input_idx;
+            input_idx += 1;
+            idx
+        };
+
+        let fade_in_clip = if pre_bumper
+            .as_ref()
+            .map(|(_, c)| c.transition != "cut")
+            .unwrap_or(false)
+            && clip_dur > 0.6
+        {
+            ",fade=t=in:st=0:d=0.20".to_string()
+        } else {
+            String::new()
+        };
+        let fade_out_clip = if post_bumper
+            .as_ref()
+            .map(|(_, c)| c.transition != "cut")
+            .unwrap_or(false)
+            && clip_dur > 0.6
+        {
+            format!(",fade=t=out:st={:.3}:d=0.20", (clip_dur - 0.20).max(0.1))
+        } else {
+            String::new()
+        };
+
+        filter_parts.push(format!(
+            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p{}{}[v{}]",
+            v_in, target_w, target_h, target_w, target_h, fade_in_clip, fade_out_clip, seg_count
+        ));
+        filter_parts.push(format!(
+            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{}]",
+            a_in, seg_count
+        ));
+        concat_pads.push_str(&format!("[v{}][a{}]", seg_count, seg_count));
+        seg_count += 1;
+    }
+
+    // Вход Постролла (если активен)
+    if let Some((ref post_path, ref post_cfg)) = post_bumper {
+        let (_, _, post_dur, post_has_audio) =
+            probe_video_stream_info(post_path, is_vertical, app_handle).await;
+        args.push("-i".to_string());
+        args.push(post_path.to_string_lossy().to_string());
+        let v_in = input_idx;
+        input_idx += 1;
+
+        let a_in = if post_has_audio {
+            v_in
+        } else {
+            args.push("-f".to_string());
+            args.push("lavfi".to_string());
+            args.push("-t".to_string());
+            args.push(format!("{:.3}", post_dur.max(0.5)));
+            args.push("-i".to_string());
+            args.push("anullsrc=r=48000:cl=stereo".to_string());
+            let idx = input_idx;
+            input_idx += 1;
+            idx
+        };
+
+        let trans_fade_in = if post_cfg.transition != "cut" && post_dur > 0.5 {
+            ",fade=t=in:st=0:d=0.22".to_string()
+        } else {
+            String::new()
+        };
+        let audio_fade_in = if post_cfg.transition != "cut" && post_dur > 0.5 {
+            ",afade=t=in:st=0:d=0.22".to_string()
+        } else {
+            String::new()
+        };
+
+        filter_parts.push(format!(
+            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p{}[v{}]",
+            v_in, target_w, target_h, target_w, target_h, trans_fade_in, seg_count
+        ));
+        filter_parts.push(format!(
+            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{}[a{}]",
+            a_in, audio_fade_in, seg_count
+        ));
+        concat_pads.push_str(&format!("[v{}][a{}]", seg_count, seg_count));
+        seg_count += 1;
+    }
+
+    filter_parts.push(format!(
+        "{}concat=n={}:v=1:a=1[outv][outa]",
+        concat_pads, seg_count
+    ));
+
+    let filter_complex = filter_parts.join(";");
+    args.extend([
+        "-filter_complex".to_string(),
+        filter_complex,
+        "-map".to_string(),
+        "[outv]".to_string(),
+        "-map".to_string(),
+        "[outa]".to_string(),
+        "-c:v".to_string(),
+        "libx264".to_string(),
+        "-pix_fmt".to_string(),
+        "yuv420p".to_string(),
+        "-preset".to_string(),
+        "veryfast".to_string(),
+        "-crf".to_string(),
+        "20".to_string(),
+        "-c:a".to_string(),
+        "aac".to_string(),
+        "-ar".to_string(),
+        "48000".to_string(),
+        "-ac".to_string(),
+        "2".to_string(),
+        "-b:a".to_string(),
+        "192k".to_string(),
+        "-movflags".to_string(),
+        "+faststart".to_string(),
         temp_output.to_string_lossy().to_string(),
-    ];
+    ]);
 
-    let sidecar_cmd = app_handle.shell().sidecar("ffmpeg")
+    let sidecar_cmd = app_handle
+        .shell()
+        .sidecar("ffmpeg")
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Не удалось запустить FFmpeg: {}", e)))?
         .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
         .args(args);
 
-    let (mut rx, child) = sidecar_cmd.spawn()
-        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка старта FFmpeg: {}", e)))?;
+    let (mut rx, child) = sidecar_cmd
+        .spawn()
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка старта FFmpeg при склейке заставок: {}", e)))?;
 
+    let mut exit_code = None;
+    let mut stderr_log = String::new();
     while let Some(event) = rx.recv().await {
-        if let CommandEvent::Terminated(_) = event {
-            break;
+        match event {
+            CommandEvent::Stderr(bytes) => {
+                stderr_log.push_str(&String::from_utf8_lossy(&bytes));
+            }
+            CommandEvent::Terminated(payload) => {
+                exit_code = payload.code;
+                break;
+            }
+            _ => {}
         }
     }
     let _ = child.kill();
-    let _ = tokio::fs::remove_file(&concat_txt).await;
 
-    if temp_output.exists() {
+    let output_ok = exit_code == Some(0)
+        && std::fs::metadata(&temp_output)
+            .map(|m| m.len() > 1024)
+            .unwrap_or(false);
+
+    if output_ok {
         let _ = tokio::fs::remove_file(clip_path).await;
-        let _ = tokio::fs::rename(&temp_output, clip_path).await;
+        if let Err(rename_err) = tokio::fs::rename(&temp_output, clip_path).await {
+            let _ = tokio::fs::copy(&temp_output, clip_path).await;
+            let _ = tokio::fs::remove_file(&temp_output).await;
+            log::debug!("Fallback copy after rename in attach_bumpers: {}", rename_err);
+        }
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!(
+                "✓ Заставки ({}{}) вшиты в ролик '{}'",
+                if pre_bumper.is_some() { "Преролл " } else { "" },
+                if post_bumper.is_some() { "+ Постролл" } else { "" },
+                clip_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("clip.mp4")
+            ),
+        );
+    } else {
+        let _ = tokio::fs::remove_file(&temp_output).await;
+        let last_err = stderr_log
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("Неизвестная ошибка FFmpeg");
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "warn",
+            &format!("Не удалось вшить заставки в '{}': {}", clip_path.display(), last_err),
+        );
     }
 
     Ok(())

@@ -117,6 +117,12 @@ pub async fn analyze_video(
 pub struct FragmentDto {
     pub start: f64,
     pub end: f64,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub repaired: Option<bool>,
+    #[serde(default)]
+    pub repair_note: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]

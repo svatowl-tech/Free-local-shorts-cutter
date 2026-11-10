@@ -203,6 +203,12 @@ fn expand_model_aliases(filename: &str) -> Vec<String> {
     } else if lower.contains("qwen-3b") || lower.contains("qwen2.5-3b") {
         search_filenames.push("qwen2.5-3b-instruct-q4_k_m.gguf".to_string());
         search_filenames.push("qwen-3b-chat.gguf".to_string());
+    } else if lower.contains("vikhr-llama-3.2-1b") || lower.contains("vikhr-1b") {
+        search_filenames.push("Vikhr-Llama-3.2-1B-Q4_K_M.gguf".to_string());
+    } else if lower.contains("vikhr-qwen-2.5-1.5b") || lower.contains("vikhr-1.5b") {
+        search_filenames.push("Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf".to_string());
+    } else if lower.contains("vikhr-gemma-2b") || lower.contains("vikhr-2b") {
+        search_filenames.push("Vikhr-Gemma-2B-instruct-Q4_K_M.gguf".to_string());
     } else if lower.contains("llama-3.2-1b") {
         search_filenames.push("Llama-3.2-1B-Instruct-Q4_K_M.gguf".to_string());
     } else if lower.contains("llama-3.2-3b") {
@@ -359,7 +365,7 @@ pub fn resolve_any_whisper_model(app_handle: &AppHandle, preferred: Option<&str>
 }
 
 /// Ищет сначала указанную текстовую GGUF-модель, а если передан старый дефолт `models/qwen-1.5b-chat.gguf` —
-/// проверяет сначала более мощные установленные модели (от 3B к 0.5B), чтобы автоматически задействовать `qwen2.5-3b-instruct`!
+/// проверяет сначала русскоязычные модели Vikhr и более мощные установленные модели (от 3B к 0.5B)
 pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) -> Option<PathBuf> {
     if let Some(pref) = preferred {
         let is_legacy_default =
@@ -368,6 +374,17 @@ pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) ->
             if let Some(found) = resolve_model_path(app_handle, pref) {
                 return Some(found);
             }
+        }
+    }
+    // Сначала проверяем специализированные русскоязычные модели Vikhr (2B -> 1.5B -> 1B)
+    let russian_vikhr_priority = [
+        "Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
+        "Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
+        "Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
+    ];
+    for vikhr_file in &russian_vikhr_priority {
+        if let Some(found) = resolve_model_path(app_handle, vikhr_file) {
+            return Some(found);
         }
     }
     for m in get_all_models_config()
@@ -380,6 +397,35 @@ pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) ->
         }
     }
     None
+}
+
+/// Находит приоритетную русскоязычную GGUF-модель (серии Vikhr 2B / 1.5B / 1B) специально для
+/// 2-й финальной проверки уже собранных клипов на связность, юмор, законченность мысли и отсев бреда/скукоты.
+pub fn resolve_russian_verifier_llm_model(
+    app_handle: &AppHandle,
+    preferred: Option<&str>,
+) -> Option<PathBuf> {
+    if let Some(pref) = preferred {
+        let lower = pref.to_lowercase();
+        if lower.contains("vikhr") {
+            if let Some(found) = resolve_model_path(app_handle, pref) {
+                return Some(found);
+            }
+        }
+    }
+    // Приоритет русскоязычных моделей Vikhr (от старшей 2B к быстрой 1B)
+    let russian_vikhr_priority = [
+        "Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
+        "Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
+        "Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
+    ];
+    for vikhr_file in &russian_vikhr_priority {
+        if let Some(found) = resolve_model_path(app_handle, vikhr_file) {
+            return Some(found);
+        }
+    }
+    // Если ни одна модель Vikhr ещё не скачана, используем выбранную пользователем или лучшую доступную GGUF-модель
+    resolve_any_llm_model(app_handle, preferred)
 }
 
 pub fn get_all_models_config() -> Vec<ModelInfo> {
@@ -468,6 +514,26 @@ pub fn get_all_models_config() -> Vec<ModelInfo> {
             "1B",
         ),
         ModelInfo::standard(
+            "vikhr-llama-3.2-1b",
+            "Vikhr Llama 3.2 1B (RU Сленг и Юмор)",
+            "Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
+            "https://huggingface.co/Vikhrmodels/Vikhr-Llama-3.2-1B-instruct-GGUF/resolve/main/Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
+            808.0,
+            "Русскоязычная модель Vikhr 1B: специально обучена на живой русской речи, сленге, иронии и панчлайнах (808 МБ)",
+            "llm",
+            "1B RU",
+        ),
+        ModelInfo::standard(
+            "vikhr-qwen-2.5-1.5b",
+            "Vikhr Qwen 2.5 1.5B (RU Диалоги и Юмор)",
+            "Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
+            "https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
+            986.0,
+            "Русскоязычная дообученная Qwen 2.5 1.5B от проекта Vikhr: отличное чувство юмора, сарказма и сюжетного накала (986 МБ)",
+            "llm",
+            "1.5B RU",
+        ),
+        ModelInfo::standard(
             "qwen-1.5b-chat",
             "Qwen 2.5 1.5B Instruct (Рекомендуется)",
             "qwen-1.5b-chat.gguf",
@@ -486,6 +552,16 @@ pub fn get_all_models_config() -> Vec<ModelInfo> {
             "Модель от Google (2B): точное выделение смысловых панчлайнов и ярких реплик (1.63 ГБ)",
             "llm",
             "2B",
+        ),
+        ModelInfo::standard(
+            "vikhr-gemma-2b",
+            "Vikhr Gemma 2B Instruct (RU Профи)",
+            "Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
+            "https://huggingface.co/Vikhrmodels/Vikhr-Gemma-2B-instruct-GGUF/resolve/main/Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
+            1630.0,
+            "Усиленная русскоязычная модель Vikhr 2B (на базе Gemma 2): глубокое понимание русских идиом, шуток и кульминаций (1.63 ГБ)",
+            "llm",
+            "2B RU",
         ),
         ModelInfo::standard(
             "llama-3.2-3b",

@@ -76,7 +76,7 @@ const DEFAULT_CONFIG: PipelineConfig = {
   asr_model_path: 'models/ggml-base.bin',
   vision_model_path: 'models/moondream2-q4_k.gguf',
   text_engine: 'llama',
-  text_model_name: 'qwen2.5-3b-instruct-q4_k_m.gguf',
+  text_model_name: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
   ollama_url: 'http://localhost:11434',
   openai_base_url: 'https://api.openai.com/v1',
   openai_api_key: '',
@@ -288,6 +288,8 @@ const createPipelineStore = () => {
       }
       addLog('Qwen3-VL завершил анализ. Обнаружено несколько сцен для нарезки.');
       addLog('Построение карты интенсивности звука (шаг 20 мс, RMS/Peak, отсев OP/ED)...', 'Audio');
+      addLog('🇷🇺 [2-я проверка ИИ] Запуск финальной редактуры готовых фрагментов на связность, юмор и отсев бреда через русскую модель Vikhr...', 'LLM');
+      addLog('✓ Итог 2-й проверки готовых фрагментов: одобрено 3 связных и интересных клипа, отбраковано 2 (скукота / обрыв мысли).', 'Pipeline');
       addLog('✓ Аудио-выравнивание границ по тихим местам (окно до ±2.5с): скорректировано 3/3 клипов, добавлены экшн-пики', 'Audio');
       
       // Добавляем качественные фрагменты в fragmentsStore
@@ -395,12 +397,34 @@ const createPipelineStore = () => {
       update(s => {
         const config = { ...s.config, ...fields };
         if (typeof window !== 'undefined' && window.localStorage) {
+          const persistedConfig: PipelineConfig = { ...config, openai_api_key: '' };
           try {
             // Никогда не сохраняем секретный API-ключ в браузерный localStorage
-            const persistedConfig: PipelineConfig = { ...config, openai_api_key: '' };
             window.localStorage.setItem(STORAGE_CONFIG_KEY, JSON.stringify(persistedConfig));
           } catch (err: unknown) {
-            console.warn('Не удалось сохранить конфигурацию пайплайна в localStorage:', formatErrorMessage(err));
+            // Если размер bumper_config с base64-оверлеями превышает лимит localStorage (5 МБ),
+            // сохраняем облегченную копию в localStorage, оставляя полные данные в оперативной памяти стора
+            try {
+              const slimConfig: PipelineConfig = JSON.parse(JSON.stringify(persistedConfig));
+              if (slimConfig.bumper_config?.presets) {
+                for (const preset of slimConfig.bumper_config.presets) {
+                  for (const orient of ['v916', 'v169'] as const) {
+                    for (const slot of ['preroll', 'postroll'] as const) {
+                      const item = preset[orient]?.[slot];
+                      if (item) {
+                        item.overlay_png_base64 = null;
+                        if (item.custom_video_path?.startsWith('data:')) item.custom_video_path = null;
+                        if (item.custom_audio_path?.startsWith('data:')) item.custom_audio_path = null;
+                        if (item.bg_video_path?.startsWith('data:')) item.bg_video_path = null;
+                      }
+                    }
+                  }
+                }
+              }
+              window.localStorage.setItem(STORAGE_CONFIG_KEY, JSON.stringify(slimConfig));
+            } catch (fallbackErr: unknown) {
+              console.warn('Не удалось сохранить конфигурацию пайплайна в localStorage:', formatErrorMessage(fallbackErr || err));
+            }
           }
         }
         return { ...s, config };
@@ -409,7 +433,11 @@ const createPipelineStore = () => {
       if (safeFields.openai_api_key) {
         safeFields.openai_api_key = '***';
       }
-      addLog(`Обновлены настройки пайплайна: ${JSON.stringify(safeFields)}`);
+      if (safeFields.bumper_config) {
+        addLog(`Обновлены настройки заставок (enabled=${safeFields.bumper_config.enabled}, preset=${safeFields.bumper_config.active_preset_id})`);
+      } else {
+        addLog(`Обновлены настройки пайплайна: ${JSON.stringify(safeFields)}`);
+      }
     },
     updateError: (error: string | null) => {
       update(s => ({ ...s, error }));
@@ -820,10 +848,13 @@ const createPipelineStore = () => {
                 id: Math.random().toString(36).substring(2, 9),
                 start: Math.round(f.start * 10) / 10,
                 end: Math.round(f.end * 10) / 10,
-                title: `Клип #${idx + 1}`
+                title: f.title || (f.repaired ? `Клип #${idx + 1} (✓ Доработан ИИ)` : `Клип #${idx + 1}`),
+                repaired: f.repaired || false,
+                repair_note: f.repair_note || undefined,
               }));
               fragmentsStore.set(mapped);
-              addLog(`Получено ${mapped.length} фрагментов, предложенных ИИ.`);
+              const repairedCount = mapped.filter(m => m.repaired).length;
+              addLog(`Получено ${mapped.length} фрагментов, предложенных ИИ${repairedCount > 0 ? ` (из них ${repairedCount} доработано на 2 круге)` : ''}.`);
             }
           }),
           'suggested-fragments'
@@ -887,10 +918,13 @@ const createPipelineStore = () => {
             id: Math.random().toString(36).substring(2, 9),
             start: Math.round(f.start * 10) / 10,
             end: Math.round(f.end * 10) / 10,
-            title: `Клип #${idx + 1}`
+            title: f.title || (f.repaired ? `Клип #${idx + 1} (✓ Доработан ИИ)` : `Клип #${idx + 1}`),
+            repaired: f.repaired || false,
+            repair_note: f.repair_note || undefined,
           }));
           fragmentsStore.set(mapped);
-          addLog(`✓ Успешно выделено ${mapped.length} хайлайт-фрагментов на таймлайне.`);
+          const repairedCount = mapped.filter(m => m.repaired).length;
+          addLog(`✓ Успешно выделено ${mapped.length} хайлайт-фрагментов на таймлайне${repairedCount > 0 ? ` (из них ${repairedCount} доработано ИИ на 2 круге)` : ''}.`);
         } else {
           addLog('Пайплайн завершил отбор: сформировано 0 фрагментов.', 'Pipeline', 'warn');
         }

@@ -158,6 +158,7 @@
 
   let initializedFromStore = false;
   $: if (show && !initializedFromStore) {
+    activeTab = $pipelineStore.config.vertical_format ? 'v916' : 'v169';
     if ($pipelineStore.config.bumper_config && $pipelineStore.config.bumper_config.presets?.length > 0) {
       const clone = JSON.parse(JSON.stringify($pipelineStore.config.bumper_config)) as BumperGlobalConfig;
       clone.presets = clone.presets.map(normalizePreset);
@@ -173,6 +174,24 @@
   } else if (!show) {
     initializedFromStore = false;
     stopLiveAudioPreview();
+  }
+
+  function handleSyncCurrentTabToOther() {
+    stopLiveAudioPreview();
+    const sourceKey = activeTab;
+    const targetKey = activeTab === 'v916' ? 'v169' : 'v916';
+    const clonedPreroll = JSON.parse(JSON.stringify(activePreset[sourceKey].preroll)) as BumperItemConfig;
+    const clonedPostroll = JSON.parse(JSON.stringify(activePreset[sourceKey].postroll)) as BumperItemConfig;
+    clonedPreroll.overlay_png_base64 = null;
+    clonedPostroll.overlay_png_base64 = null;
+    activePreset[targetKey] = {
+      preroll: clonedPreroll,
+      postroll: clonedPostroll
+    };
+    config = { ...config };
+    saveConfigToStore();
+    renderFeedback = `✓ Настройки заставок скопированы из ${sourceKey === 'v916' ? '9:16' : '16:9'} в формат ${targetKey === 'v916' ? '9:16' : '16:9'}!`;
+    setTimeout(() => (renderFeedback = ''), 3500);
   }
 
   $: activePreset =
@@ -478,6 +497,7 @@
     isRenderingSingle[bumperType] = true;
     renderError = '';
     try {
+      config.enabled = true;
       const overlayPng = await buildOverlayPngBase64(item, isVertical);
       item.overlay_png_base64 = overlayPng;
       saveConfigToStore();
@@ -503,6 +523,7 @@
     const sourceVideo = $pipelineStore.video?.path || '';
 
     try {
+      config.enabled = true;
       const curPreset = activePreset;
       if (curPreset.v916.preroll.enabled) {
         renderFeedback = '⚡ Генерация заставки 9:16 (Преролл)...';
@@ -529,7 +550,7 @@
       }
 
       saveConfigToStore();
-      renderFeedback = '✓ Все заставки предрендерены в MP4 и сохранены в кэше! Склейка с клипами будет мгновенной.';
+      renderFeedback = '✓ Все заставки (9:16 и 16:9) предрендерены в MP4 и активированы для экспорта!';
       setTimeout(() => {
         renderFeedback = '';
       }, 4500);
@@ -980,7 +1001,7 @@
       {/if}
 
       <!-- Format Tabs (9:16 vs 16:9) -->
-      <div class="flex border-b border-[rgba(226,226,224,0.1)] bg-[#16161a]">
+      <div class="flex items-center border-b border-[rgba(226,226,224,0.1)] bg-[#16161a]">
         <button 
           type="button"
           on:click={() => {
@@ -1011,6 +1032,15 @@
           }"
         >
           🎬 Хайлайты / Ток-видео / YouTube (16:9 Горизонтальные)
+        </button>
+
+        <button
+          type="button"
+          on:click={handleSyncCurrentTabToOther}
+          title="Скопировать настройки преролла и постролла из текущей вкладки во вторую ориентацию (9:16 ↔ 16:9)"
+          class="px-3 py-2 mx-2 text-[11px] font-mono bg-[#18181c] hover:bg-[#5865f2]/20 border border-[rgba(226,226,224,0.18)] hover:border-[#5865f2] text-slate-300 hover:text-white rounded transition-colors cursor-pointer shrink-0"
+        >
+          ⇄ Скопировать в {activeTab === 'v916' ? '16:9' : '9:16'}
         </button>
       </div>
 

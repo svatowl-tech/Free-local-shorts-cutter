@@ -1097,3 +1097,139 @@ pub fn extract_high_intensity_action_windows(
 
     action_windows
 }
+
+/// Метрики голосовой экспрессии, динамики хука (первые 3 сек), финального панчлайна и «мертвых пауз» внутри кандидата
+#[derive(Clone, Debug, Default)]
+pub struct VocalEmotionMetrics {
+    pub vocal_expressiveness: f64,
+    pub hook_energy_score: f64,
+    pub punchline_energy_score: f64,
+    pub dead_air_ratio: f64,
+    pub max_dead_pause_sec: f64,
+}
+
+/// Вычисляет мультимодальные акустические метрики для окна кандидата `[start_sec, end_sec]`:
+/// - `hook_energy_score`: сила звуковой атаки и динамики голоса в первых 3.2 сек ролика,
+/// - `punchline_energy_score`: эмоциональный пик (смех, возглас, кульминация) в финальной трети ролика,
+/// - `vocal_expressiveness`: интонационная выразительность (перепад громкости + модуляция ZCR, отличающая живую эмоцию от монотонного бубнежа),
+/// - `dead_air_ratio` и `max_dead_pause_sec`: доля пустой тишины и длина самой затянутой технической паузы.
+pub fn compute_vocal_emotion_metrics(
+    profile: &AudioEnergyProfile,
+    start_sec: f64,
+    end_sec: f64,
+) -> VocalEmotionMetrics {
+    let dur = (end_sec - start_sec).max(0.1);
+    if profile.rms_db.len() < 20 || end_sec <= start_sec + 0.5 {
+        return VocalEmotionMetrics {
+            vocal_expressiveness: 0.5,
+            hook_energy_score: 0.5,
+            punchline_energy_score: 0.5,
+            dead_air_ratio: 0.0,
+            max_dead_pause_sec: 0.0,
+        };
+    }
+
+    let s_idx = profile.time_to_idx(start_sec);
+    let e_idx = profile.time_to_idx(end_sec);
+    if e_idx <= s_idx + 4 {
+        return VocalEmotionMetrics::default();
+    }
+
+    let slice_rms = &profile.rms_db[s_idx..=e_idx];
+    let slice_zcr = &profile.zcr[s_idx..=e_idx];
+    let total_frames = slice_rms.len().max(1);
+
+    let speech_span = (profile.loud_peak_db - profile.speech_threshold_db).max(4.0);
+
+    // 1. Оценка «мертвых пауз» (Dead Air)
+    let mut dead_frames = 0usize;
+    let mut curr_dead_run = 0usize;
+    let mut max_dead_run = 0usize;
+    for &db in slice_rms {
+        if db <= profile.quiet_valley_db - 1.2 {
+            dead_frames += 1;
+            curr_dead_run += 1;
+            if curr_dead_run > max_dead_run {
+                max_dead_run = curr_dead_run;
+            }
+        } else {
+            curr_dead_run = 0;
+        }
+    }
+    let dead_air_ratio = (dead_frames as f64) / (total_frames as f64);
+    let max_dead_pause_sec = (max_dead_run as f64) * profile.step_sec;
+
+    // 2. Интонационная выразительность (динамический размах активной речи + скачки громкости + ZCR смеха/эмоций)
+    let mut active_rms: Vec<f32> = slice_rms
+        .iter()
+        .copied()
+        .filter(|&v| v > profile.quiet_valley_db + 1.0)
+        .collect();
+    active_rms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let dynamic_spread_norm = if active_rms.len() >= 10 {
+        let p20 = active_rms[active_rms.len() * 20 / 100];
+        let p90 = active_rms[active_rms.len() * 90 / 100];
+        (((p90 - p20) as f64) / 11.0).clamp(0.0, 1.0)
+    } else {
+        0.25
+    };
+
+    let mut bursts = 0usize;
+    for k in 2..slice_rms.len() {
+        let jump = (slice_rms[k] - slice_rms[k - 2]).abs();
+        if jump >= 3.8 && slice_rms[k] >= profile.speech_threshold_db {
+            bursts += 1;
+        }
+    }
+    let burst_rate_norm = ((bursts as f64) / (dur * 2.4)).clamp(0.0, 1.0);
+
+    let expressive_zcr_frames = slice_zcr
+        .iter()
+        .zip(slice_rms.iter())
+        .filter(|(&z, &r)| r >= profile.speech_threshold_db && z >= 0.18)
+        .count();
+    let zcr_norm = ((expressive_zcr_frames as f64) / (total_frames as f64 * 0.28)).clamp(0.0, 1.0);
+
+    let vocal_expressiveness =
+        (dynamic_spread_norm * 0.45 + burst_rate_norm * 0.35 + zcr_norm * 0.20).clamp(0.0, 1.0);
+
+    // 3. Оценка Хука первых 3.2 секунд
+    let hook_end_sec = (start_sec + 3.2).min(end_sec);
+    let h_end_idx = profile.time_to_idx(hook_end_sec).max(s_idx + 1).min(e_idx);
+    let hook_slice = &profile.rms_db[s_idx..=h_end_idx];
+    let hook_max_db = hook_slice.iter().copied().fold(-90.0f32, f32::max);
+    let hook_active_cnt = hook_slice
+        .iter()
+        .filter(|&&db| db >= profile.speech_threshold_db - 1.0)
+        .count();
+    let hook_active_ratio = (hook_active_cnt as f64) / (hook_slice.len().max(1) as f64);
+    let hook_peak_norm =
+        (((hook_max_db - profile.speech_threshold_db) / speech_span) as f64).clamp(0.0, 1.0);
+    let hook_energy_score = (hook_peak_norm * 0.60 + hook_active_ratio * 0.40).clamp(0.0, 1.0);
+
+    // 4. Оценка Панчлайна (финальные 32% длительности клипа, от 2.5 до 5.5 сек до конца)
+    let punch_win = (dur * 0.32).clamp(2.5, 5.5);
+    let punch_start_sec = (end_sec - punch_win).max(start_sec);
+    let p_start_idx = profile.time_to_idx(punch_start_sec).clamp(s_idx, e_idx.saturating_sub(1));
+    let punch_slice = &profile.rms_db[p_start_idx..=e_idx];
+    let punch_max_db = punch_slice.iter().copied().fold(-90.0f32, f32::max);
+    let punch_loud_cnt = punch_slice
+        .iter()
+        .filter(|&&db| db >= profile.speech_threshold_db + 1.5)
+        .count();
+    let punch_loud_ratio = (punch_loud_cnt as f64) / (punch_slice.len().max(1) as f64);
+    let punch_peak_norm =
+        (((punch_max_db - profile.speech_threshold_db) / speech_span) as f64).clamp(0.0, 1.0);
+    let punchline_energy_score =
+        (punch_peak_norm * 0.65 + punch_loud_ratio * 0.35).clamp(0.0, 1.0);
+
+    VocalEmotionMetrics {
+        vocal_expressiveness,
+        hook_energy_score,
+        punchline_energy_score,
+        dead_air_ratio,
+        max_dead_pause_sec,
+    }
+}
+

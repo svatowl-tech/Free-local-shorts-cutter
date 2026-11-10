@@ -286,13 +286,81 @@
     pipelineStore.updateConfig({ render_talk_video: value });
   }
 
+  function createFallbackBumperItem(title: string, subtitle: string) {
+    return {
+      enabled: true,
+      mode: 'generate' as const,
+      custom_video_path: null,
+      custom_audio_path: null,
+      custom_audio_duration: null,
+      sync_duration_to_audio: true,
+      audio_volume: 1.0,
+      audio_fade_in: true,
+      audio_fade_out: true,
+      title,
+      subtitle,
+      duration_sec: 2.5,
+      bg_mode: 'blur_frame' as const,
+      bg_video_path: null,
+      bg_image_path: null,
+      bg_color_primary: '#0f172a',
+      bg_color_secondary: '#312e81',
+      bg_blur: 12,
+      bg_dim: 0.35,
+      bg_scale: 1.1,
+      bg_saturation: 1.0,
+      bg_contrast: 1.0,
+      bg_vignette: true,
+      bg_video_speed: 1.0,
+      logo_image_path: null,
+      logo_scale: 0.45,
+      logo_x_percent: 50,
+      logo_y_percent: 36,
+      logo_opacity: 1.0,
+      logo_radius: 0,
+      logo_shadow: true,
+      title_color: '#FFFFFF',
+      title_size: 36,
+      subtitle_size: 18,
+      subtitle_color: '#cbd5e1',
+      outline_color: '#000000',
+      outline_width: 2,
+      plate_style: 'glass' as const,
+      plate_color: '#000000',
+      plate_opacity: 0.55,
+      title_x_percent: 50,
+      title_y_percent: 74,
+      animation: 'fade_zoom' as const,
+      transition: 'crossfade' as const,
+      overlay_png_base64: null
+    };
+  }
+
   function handleBumperToggle(e: Event) {
     const checked = (e.target as HTMLInputElement).checked;
-    const currentCfg = $pipelineStore.config.bumper_config || {
-      enabled: checked,
-      active_preset_id: 'default',
-      presets: []
-    };
+    const existing = $pipelineStore.config.bumper_config;
+    const hasPresets = existing && Array.isArray(existing.presets) && existing.presets.length > 0;
+    const currentCfg = hasPresets
+      ? existing
+      : {
+          enabled: checked,
+          active_preset_id: 'default',
+          presets: [
+            {
+              id: 'default',
+              name: 'Студия озвучки (По умолчанию)',
+              v916: {
+                preroll: createFallbackBumperItem('Студия озвучки', 'Озвучено специально для вас'),
+                postroll: createFallbackBumperItem('Подпишись на канал', 'Ставь лайк и пиши комментарий!')
+              },
+              v169: {
+                preroll: createFallbackBumperItem('Студия озвучки', 'Приятного просмотра'),
+                postroll: createFallbackBumperItem('Спасибо за просмотр!', 'Подписывайтесь на наши соцсети')
+              },
+              created_at: Date.now()
+            }
+          ]
+        };
     pipelineStore.updateConfig({
       bumper_config: {
         ...currentCfg,
@@ -714,8 +782,8 @@
 
           {#if $pipelineStore.config.text_engine === 'llama'}
             <!-- Local GGUF NLP Model -->
-            <div class="flex flex-col gap-1">
-              <label for="text_model" class="label-mono">Модель анализа диалогов (LLM до 3B)</label>
+            <div class="flex flex-col gap-1.5">
+              <label for="text_model" class="label-mono">Модель анализа диалогов и 2-й проверки (RU Vikhr / Qwen)</label>
               <select
                 id="text_model"
                 value={$pipelineStore.config.text_model_name}
@@ -729,6 +797,9 @@
                   </option>
                 {/each}
               </select>
+              <div class="text-[10px] font-mono text-[rgba(226,226,224,0.55)] leading-relaxed bg-[#16161a]/60 border border-[rgba(226,226,224,0.1)] rounded-[2px] px-2.5 py-1.5">
+                🇷🇺 <span class="text-[#e2e2e4]">Двухэтапный отбор:</span> 1) Первичная оценка реплик и эмоций голоса → 2) Финальная проверка уже собранных клипов целиком через русские модели <span class="text-[#5865f2]">Vikhr</span> на связность, юмор, законченность мысли и отсев бреда/скукоты.
+              </div>
             </div>
           {:else if $pipelineStore.config.text_engine === 'ollama'}
             <!-- Ollama Server Settings -->

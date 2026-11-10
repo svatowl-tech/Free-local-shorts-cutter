@@ -5,6 +5,8 @@ export interface Fragment {
   start: number; // in seconds
   end: number;   // in seconds
   title?: string;
+  repaired?: boolean;
+  repair_note?: string;
 }
 
 export const fragmentsStore = writable<Fragment[]>([]);
@@ -41,10 +43,10 @@ export const addFragmentRange = (start: number, end: number, title?: string) => 
 export const removeFragment = (id: string) => {
   fragmentsStore.update(f => {
     const filtered = f.filter(frag => frag.id !== id);
-    // Перенумеровываем заголовки по порядку
+    // Перенумеровываем заголовки по порядку, сохраняя отметку о доработке
     return filtered.map((frag, idx) => ({
       ...frag,
-      title: `Клип #${idx + 1}`
+      title: frag.repaired ? `Клип #${idx + 1} (✓ Доработан ИИ)` : `Клип #${idx + 1}`
     }));
   });
 };

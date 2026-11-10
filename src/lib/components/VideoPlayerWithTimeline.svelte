@@ -717,10 +717,19 @@
           >
             <!-- Шапка карточки фрагмента -->
             <div class="flex items-center justify-between">
-              <div class="flex items-center gap-1.5">
+              <div class="flex items-center gap-1.5 flex-wrap">
                 <span class="px-1.5 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black' : 'bg-[#5865f2] text-white'} font-mono text-[10px] font-bold">
                   Клип #{idx + 1}
                 </span>
+                {#if frag.repaired || (frag.title && frag.title.includes('Доработан'))}
+                  <span
+                    class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono text-[9px] font-bold flex items-center gap-1"
+                    title={frag.repair_note || 'Клип автоматически доработан на 2-м круге ревизии (закрыта фраза / найден эмоциональный пик)'}
+                  >
+                    <span>✓</span>
+                    <span>Доработан ИИ (2 круг)</span>
+                  </span>
+                {/if}
                 <span class="font-mono text-xs font-semibold text-[#e2e2e4]">
                   {formatTime(frag.start)} → {formatTime(frag.end)}
                 </span>

@@ -208,6 +208,40 @@ pub struct BumperGlobalConfig {
     pub presets: Vec<BumperPreset>,
 }
 
+impl BumperGlobalConfig {
+    /// Гарантирует наличие пресетов и валидного active_preset_id (даже если фронтенд передал пустой массив presets)
+    pub fn ensure_populated(&mut self) {
+        if self.presets.is_empty() {
+            let mut def_cat = BumperCategoryConfig::default();
+            def_cat.preroll.enabled = true;
+            def_cat.preroll.title = "НАЗВАНИЕ ПРОЕКТА".to_string();
+            def_cat.preroll.subtitle = Some("Официальная озвучка".to_string());
+            def_cat.postroll.enabled = true;
+            def_cat.postroll.title = "СПАСИБО ЗА ПРОСМОТР".to_string();
+            def_cat.postroll.subtitle = Some("Подпишись и поставь лайк!".to_string());
+
+            self.presets = (1..=4)
+                .map(|idx| BumperPreset {
+                    id: format!("preset_{}", idx),
+                    name: if idx == 1 {
+                        "Пресет 1 (Основной)".to_string()
+                    } else {
+                        format!("Пресет {}", idx)
+                    },
+                    v916: def_cat.clone(),
+                    v169: def_cat.clone(),
+                    created_at: 1_700_000_000,
+                })
+                .collect();
+        }
+        if !self.presets.iter().any(|p| p.id == self.active_preset_id) {
+            if let Some(first) = self.presets.first() {
+                self.active_preset_id = first.id.clone();
+            }
+        }
+    }
+}
+
 /// Декодирует Base64-строку (включая `data:...;base64,...`) в сырые байты
 pub fn decode_base64_payload(input: &str) -> Option<Vec<u8>> {
     let raw = if let Some((_, b64)) = input.split_once(";base64,") {
@@ -308,6 +342,39 @@ fn materialize_media_path(
     } else {
         None
     }
+}
+
+/// Проверяет наличие аудиодорожки в видеофайле через FFmpeg probe
+async fn probe_has_audio_stream(video_path: &Path, app_handle: &AppHandle) -> bool {
+    let sidecar_cmd = match app_handle.shell().sidecar("ffmpeg") {
+        Ok(cmd) => cmd,
+        Err(_) => return false,
+    };
+
+    let args = vec![
+        "-i".to_string(),
+        video_path.to_string_lossy().to_string(),
+        "-hide_banner".to_string(),
+    ];
+
+    let (mut rx, child) = match sidecar_cmd
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args(args)
+        .spawn()
+    {
+        Ok(res) => res,
+        Err(_) => return false,
+    };
+
+    let mut output = String::new();
+    while let Some(event) = rx.recv().await {
+        if let CommandEvent::Stderr(bytes) = event {
+            output.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    let _ = child.kill();
+
+    output.contains("Audio:")
 }
 
 /// Получает точную длительность аудио- или видеофайла через FFmpeg probe
@@ -450,10 +517,16 @@ pub async fn render_single_bumper_video(
         }
     }
 
-    // Режим А: Готовая видео-заставка (с возможностью замены звука на кастомный аудиофайл)
+    // Режим А: Готовая видео-заставка (с возможностью замены звука на кастомный аудиофайл и авто-подмешиванием тишины, если у видео нет звука)
     if item.mode == "custom_video" {
         if let Some(ref custom_p) = custom_video_file {
             if custom_p.exists() {
+                let video_has_audio = if custom_audio_file.is_some() {
+                    true
+                } else {
+                    probe_has_audio_stream(custom_p, app_handle).await
+                };
+
                 let mut args = vec![
                     "-y".to_string(),
                     "-i".to_string(),
@@ -463,20 +536,27 @@ pub async fn render_single_bumper_video(
                 if let Some(ref aud_p) = custom_audio_file {
                     args.push("-i".to_string());
                     args.push(aud_p.to_string_lossy().to_string());
-                    args.push("-t".to_string());
-                    args.push(format!("{:.3}", duration));
+                } else if !video_has_audio {
+                    args.push("-f".to_string());
+                    args.push("lavfi".to_string());
+                    args.push("-i".to_string());
+                    args.push("anullsrc=r=48000:cl=stereo".to_string());
                 }
 
+                args.push("-t".to_string());
+                args.push(format!("{:.3}", duration));
+
                 let vf_scale = format!(
-                    "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,fps=30",
+                    "scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p",
                     target_w, target_h, target_w, target_h
                 );
                 args.push("-vf".to_string());
                 args.push(vf_scale);
 
+                args.push("-map".to_string());
+                args.push("0:v:0".to_string());
+
                 if custom_audio_file.is_some() {
-                    args.push("-map".to_string());
-                    args.push("0:v:0".to_string());
                     args.push("-map".to_string());
                     args.push("1:a:0".to_string());
                     let vol = item.audio_volume.clamp(0.0, 2.0);
@@ -490,20 +570,31 @@ pub async fn render_single_bumper_video(
                     af_parts.push("aresample=48000".to_string());
                     args.push("-af".to_string());
                     args.push(af_parts.join(","));
-                } else {
+                } else if video_has_audio {
+                    args.push("-map".to_string());
+                    args.push("0:a:0".to_string());
                     args.push("-af".to_string());
                     args.push("aresample=48000".to_string());
+                } else {
+                    args.push("-map".to_string());
+                    args.push("1:a:0".to_string());
                 }
 
                 args.extend([
                     "-c:v".to_string(),
                     "libx264".to_string(),
+                    "-pix_fmt".to_string(),
+                    "yuv420p".to_string(),
                     "-preset".to_string(),
                     "ultrafast".to_string(),
                     "-crf".to_string(),
                     "20".to_string(),
                     "-c:a".to_string(),
                     "aac".to_string(),
+                    "-ar".to_string(),
+                    "48000".to_string(),
+                    "-ac".to_string(),
+                    "2".to_string(),
                     "-b:a".to_string(),
                     "192k".to_string(),
                     output_path.to_string_lossy().to_string(),
@@ -520,13 +611,38 @@ pub async fn render_single_bumper_video(
                     .spawn()
                     .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка создания бампера: {}", e)))?;
 
+                let mut exit_code = None;
+                let mut stderr_log = String::new();
                 while let Some(event) = rx.recv().await {
-                    if let CommandEvent::Terminated(_) = event {
-                        break;
+                    match event {
+                        CommandEvent::Stderr(bytes) => {
+                            stderr_log.push_str(&String::from_utf8_lossy(&bytes));
+                        }
+                        CommandEvent::Terminated(payload) => {
+                            exit_code = payload.code;
+                            break;
+                        }
+                        _ => {}
                     }
                 }
                 let _ = child.kill();
-                return Ok(());
+
+                let valid_file = std::fs::metadata(output_path)
+                    .map(|m| m.len() > 512)
+                    .unwrap_or(false);
+                if exit_code == Some(0) && valid_file {
+                    return Ok(());
+                }
+                crate::logger::emit_log(
+                    app_handle,
+                    "Bumpers",
+                    "warn",
+                    &format!(
+                        "Сбой custom_video заставки (код {:?}), переключение на генератор заставки: {}",
+                        exit_code,
+                        stderr_log.lines().last().unwrap_or_default()
+                    ),
+                );
             }
         }
     }
@@ -593,14 +709,19 @@ pub async fn render_single_bumper_video(
         None
     };
 
-    // Вход аудио: кастомный звук либо тишина
-    let audio_input_idx = if let Some(ref aud_path) = custom_audio_file {
+    // Вход аудио: кастомный звук либо генератор стерео-тишины anullsrc (обязательно ДО -filter_complex!)
+    let (audio_input_idx, has_custom_audio) = if let Some(ref aud_path) = custom_audio_file {
         ffmpeg_args.push("-i".to_string());
         ffmpeg_args.push(aud_path.to_string_lossy().to_string());
         let idx = next_input_idx;
-        Some(idx)
+        (idx, true)
     } else {
-        None
+        ffmpeg_args.push("-f".to_string());
+        ffmpeg_args.push("lavfi".to_string());
+        ffmpeg_args.push("-i".to_string());
+        ffmpeg_args.push("anullsrc=r=48000:cl=stereo".to_string());
+        let idx = next_input_idx;
+        (idx, false)
     };
 
     ffmpeg_args.push("-t".to_string());
@@ -707,25 +828,25 @@ pub async fn render_single_bumper_video(
         }
     }
 
-    // Плавное появление/затухание видеокадра при переходе fade_black
+    // Плавное появление/затухание видеокадра при переходе fade_black + жесткая фиксация SAR=1 и yuv420p
     if item.transition == "fade_black" && duration > 0.6 {
         let fade_out_st = (duration - 0.25).max(0.1);
         filter_chain.push_str(&format!(
-            "[{}]fade=t=in:st=0:d=0.20,fade=t=out:st={:.3}:d=0.25,fps=30[outv]",
+            "[{}]fade=t=in:st=0:d=0.20,fade=t=out:st={:.3}:d=0.25,fps=30,setsar=1,format=yuv420p[outv]",
             current_v, fade_out_st
         ));
     } else {
-        filter_chain.push_str(&format!("[{}]fps=30[outv]", current_v));
+        filter_chain.push_str(&format!("[{}]fps=30,setsar=1,format=yuv420p[outv]", current_v));
     }
 
     ffmpeg_args.push("-filter_complex".to_string());
     ffmpeg_args.push(filter_chain);
     ffmpeg_args.push("-map".to_string());
     ffmpeg_args.push("[outv]".to_string());
+    ffmpeg_args.push("-map".to_string());
+    ffmpeg_args.push(format!("{}:a:0", audio_input_idx));
 
-    if let Some(a_idx) = audio_input_idx {
-        ffmpeg_args.push("-map".to_string());
-        ffmpeg_args.push(format!("{}:a", a_idx));
+    if has_custom_audio {
         let vol = item.audio_volume.clamp(0.0, 2.0);
         let mut af_parts = vec![format!("volume={:.2}", vol)];
         if item.audio_fade_in {
@@ -740,23 +861,23 @@ pub async fn render_single_bumper_video(
         af_parts.push("aresample=48000".to_string());
         ffmpeg_args.push("-af".to_string());
         ffmpeg_args.push(af_parts.join(","));
-    } else {
-        ffmpeg_args.push("-f".to_string());
-        ffmpeg_args.push("lavfi".to_string());
-        ffmpeg_args.push("-i".to_string());
-        ffmpeg_args.push("anullsrc=r=48000:cl=stereo".to_string());
-        ffmpeg_args.push("-shortest".to_string());
     }
 
     ffmpeg_args.extend([
         "-c:v".to_string(),
         "libx264".to_string(),
+        "-pix_fmt".to_string(),
+        "yuv420p".to_string(),
         "-preset".to_string(),
         "ultrafast".to_string(),
         "-crf".to_string(),
         "20".to_string(),
         "-c:a".to_string(),
         "aac".to_string(),
+        "-ar".to_string(),
+        "48000".to_string(),
+        "-ac".to_string(),
+        "2".to_string(),
         "-b:a".to_string(),
         "192k".to_string(),
         output_path.to_string_lossy().to_string(),
@@ -773,12 +894,37 @@ pub async fn render_single_bumper_video(
         .spawn()
         .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка отрисовки заставки: {}", e)))?;
 
+    let mut exit_code = None;
+    let mut stderr_log = String::new();
     while let Some(event) = rx.recv().await {
-        if let CommandEvent::Terminated(_) = event {
-            break;
+        match event {
+            CommandEvent::Stderr(bytes) => {
+                stderr_log.push_str(&String::from_utf8_lossy(&bytes));
+            }
+            CommandEvent::Terminated(payload) => {
+                exit_code = payload.code;
+                break;
+            }
+            _ => {}
         }
     }
     let _ = child.kill();
+
+    let valid_file = std::fs::metadata(output_path)
+        .map(|m| m.len() > 512)
+        .unwrap_or(false);
+    if exit_code != Some(0) || !valid_file {
+        let last_err = stderr_log
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("Неизвестная ошибка FFmpeg");
+        return Err(AppError::Pipeline(format!(
+            "Не удалось срендерить заставку '{}': {}",
+            output_path.display(),
+            last_err
+        )));
+    }
 
     Ok(())
 }

@@ -1,6 +1,7 @@
 <!-- src/lib/components/ResultsList.svelte -->
 <script lang="ts">
   import { pipelineStore } from '../stores/pipeline';
+  import { fragmentsStore } from '../stores/fragments';
   import { convertFileSrc } from '@tauri-apps/api/core';
   import { isTauriRuntime, getFileName, getParentDir } from '../utils/path';
   import { FolderInput, FolderOpen, ArrowLeft, Play, Pause, X, Copy, Check } from '@lucide/svelte';
@@ -226,6 +227,14 @@
                 <span class="text-[10px] font-mono px-1.5 py-0.5 rounded {clipCat.badgeClass}">
                   {clipCat.label}
                 </span>
+                {#if $fragmentsStore[index]?.repaired || ($fragmentsStore[index]?.title && $fragmentsStore[index].title.includes('Доработан'))}
+                  <span
+                    class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold"
+                    title={$fragmentsStore[index]?.repair_note || 'Клип автоматически доработан на 2-м круге ревизии ИИ'}
+                  >
+                    ✓ Доработан (2 круг)
+                  </span>
+                {/if}
                 <span class="text-[10px] font-mono px-1.5 py-0.5 rounded {isPreviewing ? 'bg-[#23c55e]/20 text-[#23c55e]' : 'bg-[#5865f2]/15 text-[#5865f2]'}">
                   {isPreviewing ? 'Воспроизводится' : 'Предпросмотр'}
                 </span>
