@@ -1191,3 +1191,36 @@ pub fn import_preset_from_vcpb_file(
         Ok(preset)
     }
 }
+
+/// Возвращает путь к сохраненному файлу bumpers_config.json в app_data
+pub fn get_bumpers_config_path(app: &AppHandle) -> PathBuf {
+    use tauri::Manager;
+    let app_data = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    app_data.join("bumpers_config.json")
+}
+
+/// Загружает сохраненную конфигурацию заставок с диска
+pub fn load_saved_bumper_config(app: &AppHandle) -> Option<BumperGlobalConfig> {
+    let p = get_bumpers_config_path(app);
+    if p.exists() {
+        if let Ok(content) = std::fs::read_to_string(&p) {
+            if let Ok(mut cfg) = serde_json::from_str::<BumperGlobalConfig>(&content) {
+                cfg.ensure_populated();
+                return Some(cfg);
+            }
+        }
+    }
+    None
+}
+
+/// Сохраняет конфигурацию заставок на диск
+pub fn save_bumper_config_to_disk(app: &AppHandle, cfg: &BumperGlobalConfig) -> AppResult<()> {
+    let p = get_bumpers_config_path(app);
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let json = serde_json::to_string_pretty(cfg)
+        .map_err(|e| AppError::Anyhow(anyhow::anyhow!("Ошибка сериализации bumpers config: {}", e)))?;
+    std::fs::write(&p, json).map_err(AppError::Io)?;
+    Ok(())
+}

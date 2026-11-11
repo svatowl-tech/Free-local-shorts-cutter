@@ -148,6 +148,21 @@ pub async fn start_pipeline(
         return Err(AppError::Anyhow(anyhow::anyhow!(err)));
     }
     
+    let mut config = config;
+    if config.bumper_config.as_ref().map(|b| !b.enabled).unwrap_or(true) {
+        if let Some(saved) = crate::bumpers::load_saved_bumper_config(&app) {
+            if saved.enabled {
+                crate::logger::emit_log(
+                    &app,
+                    "Bumpers",
+                    "info",
+                    &format!("Загружена активная сохраненная конфигурация заставок с диска (пресет: '{}')", saved.active_preset_id),
+                );
+                config.bumper_config = Some(saved);
+            }
+        }
+    }
+
     let cancel_rx = state.cancel_tx.subscribe();
     
     let (results, suggested) = crate::pipeline::orchestrator::run_pipeline(
@@ -178,6 +193,21 @@ pub async fn render_clips_from_fragments(
     let video_buf = PathBuf::from(&video_path);
     if !video_buf.exists() {
         return Err(AppError::Anyhow(anyhow::anyhow!("Файл видео не найден: {}", video_path)));
+    }
+
+    let mut config = config;
+    if config.bumper_config.as_ref().map(|b| !b.enabled).unwrap_or(true) {
+        if let Some(saved) = crate::bumpers::load_saved_bumper_config(&app) {
+            if saved.enabled {
+                crate::logger::emit_log(
+                    &app,
+                    "Bumpers",
+                    "info",
+                    &format!("Загружена активная сохраненная конфигурация заставок с диска для экспорта (пресет: '{}')", saved.active_preset_id),
+                );
+                config.bumper_config = Some(saved);
+            }
+        }
     }
 
     let cancel_rx = state.cancel_tx.subscribe();
@@ -866,7 +896,58 @@ pub async fn render_bumper_preview(
         &app
     ).await?;
 
+    // Автоматически синхронизируем состояние заставок на диск: пресет активен и включен
+    let mut disk_cfg = crate::bumpers::load_saved_bumper_config(&app).unwrap_or_else(|| {
+        let mut def = crate::bumpers::BumperGlobalConfig {
+            enabled: true,
+            active_preset_id: preset_id.clone(),
+            presets: Vec::new(),
+        };
+        def.ensure_populated();
+        def
+    });
+    disk_cfg.enabled = true;
+    disk_cfg.active_preset_id = preset_id.clone();
+    if let Some(p) = disk_cfg.presets.iter_mut().find(|p| p.id == preset_id) {
+        let cat = if is_vertical { &mut p.v916 } else { &mut p.v169 };
+        if bumper_type == "preroll" {
+            cat.preroll = item.clone();
+            cat.preroll.enabled = true;
+        } else {
+            cat.postroll = item.clone();
+            cat.postroll.enabled = true;
+        }
+    }
+    let _ = crate::bumpers::save_bumper_config_to_disk(&app, &disk_cfg);
+
     Ok(out_path.to_string_lossy().to_string())
+}
+
+/// Асинхронная команда: Сохранение глобальной конфигурации заставок на диск
+#[tauri::command]
+pub async fn save_bumper_config(
+    app: AppHandle,
+    config: crate::bumpers::BumperGlobalConfig,
+) -> AppResult<()> {
+    crate::bumpers::save_bumper_config_to_disk(&app, &config)
+}
+
+/// Асинхронная команда: Загрузка глобальной конфигурации заставок с диска
+#[tauri::command]
+pub async fn load_bumper_config(
+    app: AppHandle,
+) -> AppResult<crate::bumpers::BumperGlobalConfig> {
+    if let Some(cfg) = crate::bumpers::load_saved_bumper_config(&app) {
+        Ok(cfg)
+    } else {
+        let mut def = crate::bumpers::BumperGlobalConfig {
+            enabled: true,
+            active_preset_id: "default".to_string(),
+            presets: Vec::new(),
+        };
+        def.ensure_populated();
+        Ok(def)
+    }
 }
 
 /// Асинхронная команда: Определение точной длительности загруженного аудиофайла через FFmpeg
@@ -905,4 +986,235 @@ pub async fn import_bumper_preset_bundle(
         return Err(AppError::Anyhow(anyhow::anyhow!("Файл архива пресета не найден: {}", archive_path)));
     }
     crate::bumpers::import_preset_from_vcpb_file(&src, &app_data)
+}
+
+/// Асинхронная команда: Ручная отправка выбранных рилсов/клипов на доработку через ИИ до рендеринга
+#[tauri::command]
+pub async fn repair_selected_fragments(
+    app: AppHandle,
+    video_path: String,
+    fragments: Vec<FragmentDto>,
+    repair_mode: Option<String>,
+    config: PipelineConfig,
+) -> AppResult<Vec<FragmentDto>> {
+    crate::logger::emit_log(
+        &app,
+        "Pipeline",
+        "info",
+        &format!("Ручная отправка {} клипов на доработку через ИИ (режим: {:?})...", fragments.len(), repair_mode),
+    );
+
+    let video_buf = PathBuf::from(&video_path);
+    if !video_buf.exists() {
+        return Err(AppError::Anyhow(anyhow::anyhow!("Файл видео не найден: {}", video_path)));
+    }
+
+    let video_duration = match crate::ffmpeg::probe_video(video_buf.clone(), app.clone()).await {
+        Ok(meta) if meta.duration > 1.0 => meta.duration,
+        _ => 180.0,
+    };
+
+    // Загружаем готовые субтитры проекта
+    let project_srt = crate::whisper::get_project_srt_path(&video_buf);
+    let srt_content = if project_srt.exists() {
+        tokio::fs::read_to_string(&project_srt).await.unwrap_or_default()
+    } else if let Some(ref custom_path_str) = config.custom_subtitles_path {
+        let cp = PathBuf::from(custom_path_str);
+        if cp.exists() {
+            tokio::fs::read_to_string(&cp).await.unwrap_or_default()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    let all_subtitles = crate::text_analyzer::parse_srt(&srt_content);
+
+    // Загружаем аудио-профиль если есть в кэше проекта
+    let audio_prof_path = crate::audio_analyzer::get_project_audio_profile_path(&video_buf);
+    let audio_profile_opt: Option<crate::audio_analyzer::AudioEnergyProfile> = if audio_prof_path.exists() {
+        std::fs::read_to_string(&audio_prof_path)
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok())
+    } else {
+        None
+    };
+
+    // Текстовые баллы из кэша (если есть)
+    let file_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
+    let video_parent = video_buf.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let project_dir = video_parent.join(format!("{}_Проект", file_stem));
+    let cache_dir = project_dir.join("Кэш_анализа");
+    let text_scores_path = cache_dir.join("text_scores_cache.json");
+    let text_scores: Vec<f64> = if text_scores_path.exists() {
+        std::fs::read_to_string(&text_scores_path)
+            .ok()
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+            .and_then(|v| v.get("scores").and_then(|s| serde_json::from_value(s.clone()).ok()))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let min_dur = (config.max_clip_duration_sec as f64 * 0.45).clamp(8.0, 20.0);
+    let max_dur = (config.max_clip_duration_sec as f64).clamp(15.0, 90.0);
+    let intro_skip = 0.0;
+    let outro_limit = video_duration;
+
+    let target_defect = match repair_mode.as_deref() {
+        Some("boring") => crate::text_analyzer::ClipDefectType::BoringOrWeakDynamics,
+        Some("incomplete_thought") => crate::text_analyzer::ClipDefectType::IncompleteThought,
+        _ => crate::text_analyzer::ClipDefectType::IncompleteThought,
+    };
+
+    let mut repaired_results: Vec<FragmentDto> = Vec::new();
+
+    for (idx, frag) in fragments.iter().enumerate() {
+        let f_start = frag.start;
+        let f_end = frag.end;
+
+        if all_subtitles.is_empty() {
+            // Без субтитров: эластичное расширение границ на 1.5с
+            let new_s = (f_start - 1.0).max(0.0);
+            let new_e = (f_end + 1.5).min(video_duration);
+            let diff = (new_e - new_s) - (f_end - f_start);
+            let sign = if diff >= 0.0 { "+" } else { "" };
+            repaired_results.push(FragmentDto {
+                start: new_s,
+                end: new_e,
+                title: frag.title.clone().map(|t| format!("{} (✓ Доработан)", t.replace(" (✓ Доработан ИИ)", "").replace(" (✓ Доработан)", ""))),
+                repaired: Some(true),
+                repair_note: Some(format!("Скорректированы границы [{:.1}с - {:.1}с] ({}{:.1}с)", new_s, new_e, sign, diff)),
+            });
+            continue;
+        }
+
+        // Находим пересекающиеся индексы реплик субтитров
+        let first_cue = all_subtitles.iter().position(|s| s.end > f_start + 0.05).unwrap_or(0);
+        let last_cue = all_subtitles.iter().rposition(|s| s.start < f_end - 0.05).unwrap_or(first_cue);
+
+        let mut dialogue_parts = Vec::new();
+        for s in &all_subtitles[first_cue..=last_cue] {
+            if !s.text.trim().is_empty() {
+                dialogue_parts.push(s.text.trim().to_string());
+            }
+        }
+        let first_phrase = all_subtitles.get(first_cue).map(|s| s.text.chars().take(40).collect()).unwrap_or_default();
+        let last_phrase = all_subtitles.get(last_cue).map(|s| s.text.chars().take(40).collect()).unwrap_or_default();
+
+        let candidate = crate::text_analyzer::AssembledClipCandidate {
+            start: f_start,
+            end: f_end,
+            initial_score: 0.85,
+            first_phrase,
+            last_phrase,
+            full_dialogue: dialogue_parts.join(" — "),
+            first_cue_idx: Some(first_cue),
+            last_cue_idx: Some(last_cue),
+            cue_count: dialogue_parts.len(),
+            round: 1,
+            repair_note: None,
+        };
+
+        if let Some(repaired) = crate::text_analyzer::repair_clip_candidate(
+            &candidate,
+            &target_defect,
+            &all_subtitles,
+            &text_scores,
+            audio_profile_opt.as_ref(),
+            min_dur,
+            max_dur,
+            intro_skip,
+            outro_limit,
+            video_duration,
+        ) {
+            let mut final_start = repaired.start;
+            let mut final_end = repaired.end;
+
+            // Дополнительно выравниваем по тихим точкам в аудио
+            if let Some(ref prof) = audio_profile_opt {
+                let (refined_s, refined_e, _, _) = crate::audio_analyzer::refine_clip_bounds_by_audio(
+                    prof,
+                    final_start,
+                    final_end,
+                    &all_subtitles,
+                    1.2,
+                    min_dur * 0.7,
+                    max_dur + 5.0,
+                );
+                final_start = refined_s;
+                final_end = refined_e;
+            }
+
+            let diff = (final_end - final_start) - (f_end - f_start);
+            let sign = if diff >= 0.0 { "+" } else { "" };
+            let note = repaired.repair_note.unwrap_or_else(|| {
+                format!(
+                    "Расширены границы [{:.1}с - {:.1}с] ({}{:.1}с) до законченного панчлайна",
+                    final_start,
+                    final_end,
+                    sign,
+                    diff
+                )
+            });
+
+            crate::logger::emit_log(
+                &app,
+                "Pipeline",
+                "info",
+                &format!("  ✓ Клип #{} успешно доработан: [{:.1}с - {:.1}с] -> [{:.1}с - {:.1}с] ({})", idx + 1, f_start, f_end, final_start, final_end, note),
+            );
+
+            let old_title = frag.title.clone().unwrap_or_else(|| format!("Клип #{}", idx + 1));
+            let clean_title = old_title.replace(" (✓ Доработан ИИ)", "").replace(" (✓ Доработан)", "");
+            repaired_results.push(FragmentDto {
+                start: final_start,
+                end: final_end,
+                title: Some(format!("{} (✓ Доработан ИИ)", clean_title)),
+                repaired: Some(true),
+                repair_note: Some(note),
+            });
+        } else {
+            // Если границы уже упираются в лимит, мягко доводим по тихим точкам в окне
+            let mut new_start = f_start;
+            let mut new_end = f_end;
+            if let Some(ref prof) = audio_profile_opt {
+                let (refined_s, refined_e, _, _) = crate::audio_analyzer::refine_clip_bounds_by_audio(
+                    prof,
+                    new_start,
+                    new_end,
+                    &all_subtitles,
+                    1.5,
+                    min_dur * 0.7,
+                    max_dur + 5.0,
+                );
+                new_start = refined_s;
+                new_end = refined_e;
+            } else {
+                new_start = (f_start - 0.5).max(0.0);
+                new_end = (f_end + 0.8).min(video_duration);
+            }
+            let diff = (new_end - new_start) - (f_end - f_start);
+            let sign = if diff >= 0.0 { "+" } else { "" };
+            let note = format!("Скорректированы границы [{:.1}с - {:.1}с] ({}{:.1}с) по границам речи", new_start, new_end, sign, diff);
+            crate::logger::emit_log(
+                &app,
+                "Pipeline",
+                "info",
+                &format!("  ✓ Клип #{} скорректирован: [{:.1}с - {:.1}с]", idx + 1, new_start, new_end),
+            );
+            let old_title = frag.title.clone().unwrap_or_else(|| format!("Клип #{}", idx + 1));
+            let clean_title = old_title.replace(" (✓ Доработан ИИ)", "").replace(" (✓ Доработан)", "");
+            repaired_results.push(FragmentDto {
+                start: new_start,
+                end: new_end,
+                title: Some(format!("{} (✓ Доработан ИИ)", clean_title)),
+                repaired: Some(true),
+                repair_note: Some(note),
+            });
+        }
+    }
+
+    Ok(repaired_results)
 }

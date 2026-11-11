@@ -4,7 +4,7 @@
   import { pipelineStore } from '../stores/pipeline';
   import { fragmentsStore, type Fragment } from '../stores/fragments';
   import { modelsStore } from '../stores/models';
-  import { getOpenAiProfiles, saveOpenAiProfiles, fetchOpenAiModels, parseCustomSubtitles, type OpenAiProfile, type SubtitleCharacterInfo } from '../ipc';
+  import { getOpenAiProfiles, saveOpenAiProfiles, fetchOpenAiModels, parseCustomSubtitles, saveBumperConfig, type OpenAiProfile, type SubtitleCharacterInfo } from '../ipc';
   import { isTauriRuntime, joinRelativePath, formatErrorMessage } from '../utils/path';
   import { ChevronDown, ChevronUp, Settings } from '@lucide/svelte';
   import BumperModal from './BumperModal.svelte';
@@ -361,12 +361,16 @@
             }
           ]
         };
+    const updated = {
+      ...currentCfg,
+      enabled: checked
+    };
     pipelineStore.updateConfig({
-      bumper_config: {
-        ...currentCfg,
-        enabled: checked
-      }
+      bumper_config: updated
     });
+    if (isTauriRuntime()) {
+      saveBumperConfig(updated).catch(() => {});
+    }
   }
 
   let loadedCharacters: SubtitleCharacterInfo[] = [];

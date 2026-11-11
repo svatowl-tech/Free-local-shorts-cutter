@@ -76,6 +76,21 @@ pub async fn run_pipeline(
     app_handle: AppHandle,
     cancel_rx: Receiver<()>,
 ) -> AppResult<(Vec<PathBuf>, Vec<crate::commands::FragmentDto>)> {
+    let mut config = config;
+    if config.bumper_config.as_ref().map(|b| !b.enabled).unwrap_or(true) {
+        if let Some(saved) = crate::bumpers::load_saved_bumper_config(&app_handle) {
+            if saved.enabled {
+                crate::logger::emit_log(
+                    &app_handle,
+                    "Bumpers",
+                    "info",
+                    &format!("Загружена активная сохраненная конфигурация заставок с диска (пресет: '{}')", saved.active_preset_id),
+                );
+                config.bumper_config = Some(saved);
+            }
+        }
+    }
+
     let mode = config.mode.clone().unwrap_or_else(|| "auto".to_string());
     crate::logger::emit_log(
         &app_handle,
@@ -1096,13 +1111,54 @@ pub async fn run_pipeline(
         effective_threshold
     };
 
-    // 2. Строгий отбор клипов, реально преодолевших рабочий порог интенсивности эмоций
-    let mut selected_intervals: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = processed_scenes
+    // 2. Сбалансированный отбор клипов с обязательным резервированием слотов под качественно доработанные клипы 2-го круга:
+    // Клипы, прошедшие ревизию и успешно доработанные (cand.5 == true), спасли ключевые мысли и панчлайны.
+    // Если они преодолели порог качества, гарантируем им включение в итоговую выборку (до 2-3 слотов),
+    // чтобы они не вытеснялись исключительно сырыми баллами клипов 1-го круга.
+    let repaired_qualifying: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = processed_scenes
         .iter()
-        .filter(|cand| cand.2 >= effective_threshold)
-        .take(effective_limit)
+        .filter(|cand| cand.5 && cand.2 >= (effective_threshold * 0.85).max(0.12))
         .cloned()
         .collect();
+
+    let standard_qualifying: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = processed_scenes
+        .iter()
+        .filter(|cand| !cand.5 && cand.2 >= effective_threshold)
+        .cloned()
+        .collect();
+
+    let mut selected_intervals: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = Vec::new();
+
+    if !repaired_qualifying.is_empty() && effective_limit >= 2 {
+        let max_repaired_slots = (effective_limit / 3).max(1).min(2).min(repaired_qualifying.len());
+        // Добавляем лучшие доработанные клипы 2-го круга
+        for rep in repaired_qualifying.iter().take(max_repaired_slots) {
+            selected_intervals.push(rep.clone());
+        }
+        // Заполняем оставшиеся слоты лучшими стандартными клипами 1-го круга
+        let remaining_slots = effective_limit.saturating_sub(selected_intervals.len());
+        for std in standard_qualifying.iter().take(remaining_slots) {
+            selected_intervals.push(std.clone());
+        }
+        // Если слоты еще остались (например, мало стандартных), добираем оставшиеся доработанные клипы
+        if selected_intervals.len() < effective_limit {
+            for rep in repaired_qualifying.iter().skip(max_repaired_slots) {
+                if selected_intervals.len() >= effective_limit { break; }
+                if !selected_intervals.iter().any(|s| (s.0 - rep.0).abs() < 2.0) {
+                    selected_intervals.push(rep.clone());
+                }
+            }
+        }
+        // Предварительно сортируем по рейтингу
+        selected_intervals.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    } else {
+        selected_intervals = processed_scenes
+            .iter()
+            .filter(|cand| cand.2 >= effective_threshold)
+            .take(effective_limit)
+            .cloned()
+            .collect();
+    }
 
     // 2б. Адаптивное пополнение для длинных видео:
     let min_desired = if is_auto_clips {

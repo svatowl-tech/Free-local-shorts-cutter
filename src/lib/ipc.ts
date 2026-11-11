@@ -409,6 +409,35 @@ export async function renderClipsFromFragments(
   }
 }
 
+export async function repairSelectedFragments(
+  videoPath: string,
+  fragments: FragmentDto[],
+  repairMode: 'auto' | 'incomplete_thought' | 'boring',
+  config: PipelineConfig
+): Promise<FragmentDto[]> {
+  if (!isTauriRuntime()) {
+    // Web simulation
+    return fragments.map((f, i) => ({
+      ...f,
+      start: Math.max(0, f.start - 0.5),
+      end: f.end + 2.0,
+      title: f.title ? `${f.title.replace(' (✓ Доработан ИИ)', '')} (✓ Доработан ИИ)` : `Клип #${i + 1} (✓ Доработан ИИ)`,
+      repaired: true,
+      repair_note: 'Расширены границы [+2.5с] до завершения панчлайна (Демо)'
+    }));
+  }
+  try {
+    return await invoke<FragmentDto[]>('repair_selected_fragments', {
+      videoPath,
+      fragments,
+      repairMode,
+      config
+    });
+  } catch (err: unknown) {
+    throw new Error(`Ошибка доработки фрагментов: ${formatErrorMessage(err)}`);
+  }
+}
+
 export async function generateSubtitlesOnly(videoPath: string, config: PipelineConfig): Promise<string> {
   try {
     return await invoke<string>('generate_subtitles_only', { videoPath, config });
@@ -615,5 +644,24 @@ export async function importBumperPresetBundle(archivePath: string): Promise<Bum
     return await invoke<BumperPreset>('import_bumper_preset_bundle', { archivePath });
   } catch (err: unknown) {
     throw new Error(`Ошибка импорта архива пресета: ${formatErrorMessage(err)}`);
+  }
+}
+
+export async function saveBumperConfig(config: BumperGlobalConfig): Promise<void> {
+  if (!isTauriRuntime()) return;
+  try {
+    await invoke('save_bumper_config', { config });
+  } catch (err: unknown) {
+    console.warn('Не удалось сохранить конфигурацию заставок на диск:', formatErrorMessage(err));
+  }
+}
+
+export async function loadBumperConfig(): Promise<BumperGlobalConfig | null> {
+  if (!isTauriRuntime()) return null;
+  try {
+    return await invoke<BumperGlobalConfig>('load_bumper_config');
+  } catch (err: unknown) {
+    console.warn('Не удалось загрузить конфигурацию заставок с диска:', formatErrorMessage(err));
+    return null;
   }
 }

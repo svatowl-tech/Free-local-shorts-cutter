@@ -8,6 +8,8 @@
     probeAudioFileDuration,
     exportBumperPresetBundle,
     importBumperPresetBundle,
+    saveBumperConfig,
+    loadBumperConfig,
     type BumperGlobalConfig,
     type BumperPreset,
     type BumperItemConfig
@@ -169,6 +171,15 @@
         active_preset_id: 'default',
         presets: [createDefaultPreset('default', 'Студия озвучки (По умолчанию)')]
       };
+      if (isTauriRuntime()) {
+        loadBumperConfig().then((diskCfg) => {
+          if (diskCfg && diskCfg.presets && diskCfg.presets.length > 0) {
+            diskCfg.presets = diskCfg.presets.map(normalizePreset);
+            config = diskCfg;
+            pipelineStore.updateConfig({ bumper_config: config });
+          }
+        }).catch(() => {});
+      }
     }
     initializedFromStore = true;
   } else if (!show) {
@@ -318,8 +329,13 @@
   }
 
   function saveConfigToStore() {
-    config = { ...config };
+    config = { ...config, enabled: true };
     pipelineStore.updateConfig({ bumper_config: config });
+    if (isTauriRuntime()) {
+      saveBumperConfig(config).catch((err) => {
+        console.warn('Не удалось сохранить конфигурацию заставок на диск:', err);
+      });
+    }
   }
 
   function handleClose() {

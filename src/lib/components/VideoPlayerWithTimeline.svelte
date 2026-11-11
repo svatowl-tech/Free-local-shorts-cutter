@@ -22,8 +22,10 @@
     AlertTriangle,
     FolderOpen,
     ZoomIn,
-    Repeat
+    Repeat,
+    RefreshCw
   } from '@lucide/svelte';
+  import { repairSelectedFragments, type FragmentDto } from '../ipc';
 
   let videoEl: HTMLVideoElement;
   let timelineComponent: Timeline;
@@ -53,6 +55,127 @@
 
   // Экспортное состояние
   let isExporting = false;
+
+  // Состояние выбора фрагментов для ручной доработки через ИИ
+  let selectedFragmentIds: string[] = [];
+  let isRepairing = false;
+  let repairingId: string | null = null;
+  let repairFeedback = '';
+  let repairMode: 'auto' | 'incomplete_thought' | 'boring' = 'auto';
+
+  $: allSelected = $fragmentsStore.length > 0 && selectedFragmentIds.length === $fragmentsStore.length;
+
+  function toggleSelectFragment(id: string) {
+    if (selectedFragmentIds.includes(id)) {
+      selectedFragmentIds = selectedFragmentIds.filter(x => x !== id);
+    } else {
+      selectedFragmentIds = [...selectedFragmentIds, id];
+    }
+  }
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      selectedFragmentIds = [];
+    } else {
+      selectedFragmentIds = $fragmentsStore.map(f => f.id);
+    }
+  }
+
+  async function handleRepairSelected() {
+    if (selectedFragmentIds.length === 0 || isRepairing || !$pipelineStore.video) return;
+    const targets = $fragmentsStore.filter(f => selectedFragmentIds.includes(f.id));
+    if (targets.length === 0) return;
+
+    isRepairing = true;
+    repairFeedback = '';
+    try {
+      const targetDtos: FragmentDto[] = targets.map(f => ({
+        start: f.start,
+        end: f.end,
+        title: f.title,
+        repaired: f.repaired,
+        repair_note: f.repair_note
+      }));
+
+      const repairedDtos = await repairSelectedFragments(
+        $pipelineStore.video.path,
+        targetDtos,
+        repairMode,
+        $pipelineStore.config
+      );
+
+      for (let i = 0; i < targets.length; i++) {
+        const origId = targets[i].id;
+        const rep = repairedDtos[i];
+        if (rep) {
+          updateFragment(origId, {
+            start: rep.start,
+            end: rep.end,
+            title: rep.title,
+            repaired: rep.repaired ?? true,
+            repair_note: rep.repair_note
+          });
+        }
+      }
+
+      repairFeedback = `✓ Успешно доработано ${targets.length} ${targets.length === 1 ? 'клип' : 'клипов'} через ИИ (закрыты фразы и панчлайны)`;
+      selectedFragmentIds = [];
+      setTimeout(() => {
+        repairFeedback = '';
+      }, 6000);
+    } catch (err: unknown) {
+      console.error('Ошибка доработки фрагментов:', formatErrorMessage(err));
+      pipelineStore.updateError(`Ошибка доработки фрагментов: ${formatErrorMessage(err)}`);
+    } finally {
+      isRepairing = false;
+      repairingId = null;
+    }
+  }
+
+  async function handleRepairSingle(frag: Fragment, e?: MouseEvent) {
+    e?.stopPropagation();
+    if (isRepairing || !$pipelineStore.video) return;
+
+    isRepairing = true;
+    repairingId = frag.id;
+    repairFeedback = '';
+    try {
+      const targetDto: FragmentDto = {
+        start: frag.start,
+        end: frag.end,
+        title: frag.title,
+        repaired: frag.repaired,
+        repair_note: frag.repair_note
+      };
+
+      const [repaired] = await repairSelectedFragments(
+        $pipelineStore.video.path,
+        [targetDto],
+        repairMode,
+        $pipelineStore.config
+      );
+
+      if (repaired) {
+        updateFragment(frag.id, {
+          start: repaired.start,
+          end: repaired.end,
+          title: repaired.title,
+          repaired: repaired.repaired ?? true,
+          repair_note: repaired.repair_note
+        });
+        repairFeedback = `✓ ${frag.title || 'Клип'} успешно доработан: ${repaired.repair_note || 'границы расширены до панчлайна'}`;
+        setTimeout(() => {
+          repairFeedback = '';
+        }, 6000);
+      }
+    } catch (err: unknown) {
+      console.error('Ошибка доработки фрагмента:', formatErrorMessage(err));
+      pipelineStore.updateError(`Ошибка доработки: ${formatErrorMessage(err)}`);
+    } finally {
+      isRepairing = false;
+      repairingId = null;
+    }
+  }
 
   $: {
     if ($pipelineStore.video) {
@@ -696,6 +819,77 @@
       </div>
     </div>
 
+    <!-- Панель ручной доработки выбранных клипов через ИИ -->
+    {#if $fragmentsStore.length > 0}
+      <div class="flex flex-wrap items-center justify-between gap-2.5 bg-[#121217] p-2.5 rounded-[3px] border border-[rgba(226,226,224,0.1)]">
+        <div class="flex items-center gap-2.5">
+          <button
+            type="button"
+            on:click={toggleSelectAll}
+            class="px-2.5 py-1 rounded-[3px] bg-[#1a1a24] hover:bg-[#252532] text-[#e2e2e4] font-mono text-xs border border-[rgba(226,226,224,0.15)] flex items-center gap-1.5 transition-colors cursor-pointer select-none"
+            title="Выбрать все клипы или снять выделение"
+          >
+            <input
+              type="checkbox"
+              checked={allSelected}
+              class="w-3.5 h-3.5 rounded pointer-events-none accent-[#5865f2]"
+            />
+            <span>{allSelected ? 'Снять выделение' : 'Выбрать все клипы'}</span>
+          </button>
+
+          {#if selectedFragmentIds.length > 0}
+            <span class="text-xs font-mono text-[rgba(226,226,224,0.7)] bg-[#5865f2]/15 px-2 py-0.5 rounded border border-[#5865f2]/30">
+              Отмечено: <strong class="text-white">{selectedFragmentIds.length}</strong> из {$fragmentsStore.length}
+            </span>
+          {:else}
+            <span class="text-[11px] font-mono text-[rgba(226,226,224,0.45)]">
+              Отметьте клипы галочками для доработки
+            </span>
+          {/if}
+        </div>
+
+        <div class="flex items-center gap-2">
+          <!-- Выбор режима доработки -->
+          <select
+            bind:value={repairMode}
+            disabled={isRepairing}
+            class="bg-[#181820] border border-[rgba(226,226,224,0.18)] text-[#e2e2e4] text-xs font-mono px-2 py-1 rounded cursor-pointer"
+            title="Выберите стратегию доработки выбранных роликов"
+          >
+            <option value="auto">⚡ Авто-доработка (мысли + панчлайн)</option>
+            <option value="incomplete_thought">🗣️ Закрыть обрыв фразы / мысли</option>
+            <option value="boring">🔥 Найти яркий пик (±25с)</option>
+          </select>
+
+          <!-- Кнопка отправки на доработку -->
+          <button
+            type="button"
+            on:click={handleRepairSelected}
+            disabled={selectedFragmentIds.length === 0 || isRepairing || !$pipelineStore.video}
+            class="px-3.5 py-1 rounded-[3px] bg-[#5865f2] hover:bg-[#4752c4] disabled:opacity-40 disabled:cursor-not-allowed text-white font-mono text-xs font-bold flex items-center gap-1.5 transition-all shadow-md shadow-[#5865f2]/20 cursor-pointer"
+            title="Отправить отмеченные клипы на доработку через ИИ до рендера"
+          >
+            <RefreshCw class="w-3.5 h-3.5 {isRepairing && !repairingId ? 'animate-spin' : ''}" />
+            <span>
+              {#if isRepairing && !repairingId}
+                Доработка ({selectedFragmentIds.length})...
+              {:else}
+                Отправить на доработку {selectedFragmentIds.length > 0 ? `(${selectedFragmentIds.length})` : ''}
+              {/if}
+            </span>
+          </button>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Уведомление об успешной доработке -->
+    {#if repairFeedback}
+      <div class="p-2.5 rounded-[3px] bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 font-mono text-xs flex items-center gap-2 animate-fadeIn">
+        <Check class="w-4 h-4 text-emerald-400 shrink-0" />
+        <span class="flex-1">{repairFeedback}</span>
+      </div>
+    {/if}
+
     <!-- Карточки выделенных клипов -->
     {#if $fragmentsStore.length === 0}
       <div class="py-6 px-4 text-center border border-dashed border-[rgba(226,226,224,0.1)] rounded-[3px] bg-[#141418]/50">
@@ -705,29 +899,46 @@
         </p>
       </div>
     {:else}
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[300px] overflow-y-auto pr-1">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 max-h-[340px] overflow-y-auto pr-1">
         {#each $fragmentsStore as frag, idx (frag.id)}
           {@const dur = (frag.end - frag.start).toFixed(1)}
           {@const isPlayingThis = activePlayingFragmentId === frag.id && isPlaying}
+          {@const isSelected = selectedFragmentIds.includes(frag.id)}
+          {@const isThisRepairing = isRepairing && repairingId === frag.id}
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
           <div
             on:click={(e) => togglePreviewFragment(frag, e)}
-            class="p-3 bg-[#15151b] hover:bg-[#191922] border {isPlayingThis ? 'border-[#23c55e] shadow-[0_0_12px_rgba(35,197,94,0.3)]' : 'border-[rgba(226,226,224,0.1)] hover:border-[#5865f2]/60'} rounded-[3px] flex flex-col justify-between gap-2.5 transition-all cursor-pointer"
-            title="Нажмите на карточку для воспроизведения предпросмотра этого ролика"
+            class="p-3 {isSelected ? 'bg-[#181824] border-[#5865f2] ring-1 ring-[#5865f2]/50' : 'bg-[#15151b] hover:bg-[#191922] border-[rgba(226,226,224,0.1)] hover:border-[#5865f2]/60'} border {isPlayingThis ? 'border-[#23c55e] shadow-[0_0_12px_rgba(35,197,94,0.3)]' : ''} rounded-[3px] flex flex-col justify-between gap-2.5 transition-all cursor-pointer"
+            title="Нажмите на карточку для предпросмотра • Отметьте чекбокс для доработки"
           >
             <!-- Шапка карточки фрагмента -->
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="px-1.5 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black' : 'bg-[#5865f2] text-white'} font-mono text-[10px] font-bold">
-                  Клип #{idx + 1}
-                </span>
+                <!-- Чекбокс ручной пометки клипа на доработку -->
+                <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+                <label
+                  class="flex items-center gap-1 cursor-pointer"
+                  on:click={(e) => e.stopPropagation()}
+                  title="Пометить клип для доработки через ИИ"
+                >
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    on:change={() => toggleSelectFragment(frag.id)}
+                    class="w-3.5 h-3.5 rounded bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] accent-[#5865f2] cursor-pointer"
+                  />
+                  <span class="px-1.5 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black' : isSelected ? 'bg-[#5865f2] text-white' : 'bg-[#1f1f28] text-[#e2e2e4]'} font-mono text-[10px] font-bold">
+                    Клип #{idx + 1}
+                  </span>
+                </label>
+
                 {#if frag.repaired || (frag.title && frag.title.includes('Доработан'))}
                   <span
                     class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-mono text-[9px] font-bold flex items-center gap-1"
-                    title={frag.repair_note || 'Клип автоматически доработан на 2-м круге ревизии (закрыта фраза / найден эмоциональный пик)'}
+                    title={frag.repair_note || 'Клип успешно доработан через ИИ (закрыта фраза / найден эмоциональный пик)'}
                   >
                     <span>✓</span>
-                    <span>Доработан ИИ (2 круг)</span>
+                    <span>Доработан ИИ</span>
                   </span>
                 {/if}
                 <span class="font-mono text-xs font-semibold text-[#e2e2e4]">
@@ -738,6 +949,13 @@
                 {dur}с
               </span>
             </div>
+
+            <!-- Примечание о доработке (если есть) -->
+            {#if frag.repair_note}
+              <div class="text-[9.5px] font-mono text-emerald-300/90 bg-emerald-950/30 border border-emerald-800/30 px-2 py-1 rounded leading-tight" title={frag.repair_note}>
+                ✓ {frag.repair_note}
+              </div>
+            {/if}
 
             <!-- Точная подгонка начала и конца фрагмента (по 0.1с и 1с) -->
             <div class="flex flex-col gap-1.5 text-[10px] font-mono text-[rgba(226,226,224,0.75)] bg-[#0e0e12] p-2 rounded-[2px]">
@@ -801,7 +1019,7 @@
               </div>
             </div>
 
-            <!-- Действия: предпросмотр, зум к клипу и удаление -->
+            <!-- Действия: предпросмотр, доработка, зум к клипу и удаление -->
             <div class="flex items-center justify-between text-[10px] font-mono text-[rgba(226,226,224,0.5)] pt-1 border-t border-[rgba(226,226,224,0.06)]">
               <button
                 type="button"
@@ -814,11 +1032,23 @@
               </button>
 
               <div class="flex items-center gap-1.5">
+                <!-- Одиночная быстрая доработка клипа через ИИ -->
+                <button
+                  type="button"
+                  on:click={(e) => handleRepairSingle(frag, e)}
+                  disabled={isRepairing}
+                  class="px-2 py-0.5 rounded {isThisRepairing ? 'bg-[#5865f2] text-white' : 'bg-[#5865f2]/15 hover:bg-[#5865f2] text-[#818cf8] hover:text-white border border-[#5865f2]/30'} transition-colors flex items-center gap-1 cursor-pointer"
+                  title="Отправить этот клип на доработку через ИИ (закрыть обрыв фразы или панчлайн)"
+                >
+                  <RefreshCw class="w-2.5 h-2.5 {isThisRepairing ? 'animate-spin' : ''}" />
+                  <span>{isThisRepairing ? 'ИИ...' : 'Доработать'}</span>
+                </button>
+
                 <!-- Кнопка воспроизведения / паузы только этого фрагмента -->
                 <button
                   type="button"
                   on:click={(e) => togglePreviewFragment(frag, e)}
-                  class="px-2.5 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black font-bold' : 'bg-[#5865f2]/20 hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white border border-[#5865f2]/40'} transition-colors flex items-center gap-1"
+                  class="px-2 py-0.5 rounded {isPlayingThis ? 'bg-[#23c55e] text-black font-bold' : 'bg-[#5865f2]/20 hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white border border-[#5865f2]/40'} transition-colors flex items-center gap-1"
                   title="Воспроизвести или остановить предпросмотр клипа"
                 >
                   {#if isPlayingThis}
@@ -836,6 +1066,7 @@
                   on:click={(e) => {
                     e.stopPropagation();
                     if (activePlayingFragmentId === frag.id) activePlayingFragmentId = null;
+                    selectedFragmentIds = selectedFragmentIds.filter(id => id !== frag.id);
                     removeFragment(frag.id);
                   }}
                   class="p-1 rounded hover:bg-red-500/20 text-[rgba(226,226,224,0.4)] hover:text-red-400 transition-colors"

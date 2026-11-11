@@ -13,6 +13,7 @@ import {
   cancelPipeline as ipcCancelPipeline,
   openFolder as ipcOpenFolder,
   getOpenAiProfiles,
+  loadBumperConfig,
   type PipelineLogPayload,
   type PipelineConfig,
   type CustomSubtitlesParseResult
@@ -1004,6 +1005,18 @@ const createPipelineStore = () => {
 };
 
 export const pipelineStore = createPipelineStore();
+
+// Авто-гидратация конфигурации заставок с диска при старте в Tauri, если в localStorage она отсутствовала
+if (typeof window !== 'undefined' && isTauriRuntime()) {
+  loadBumperConfig().then((diskCfg) => {
+    if (diskCfg && diskCfg.presets && diskCfg.presets.length > 0) {
+      const cur = get(pipelineStore);
+      if (!cur.config.bumper_config || !cur.config.bumper_config.presets || cur.config.bumper_config.presets.length === 0) {
+        pipelineStore.updateConfig({ bumper_config: diskCfg });
+      }
+    }
+  }).catch(() => {});
+}
 
 export async function copyLogsToClipboard(): Promise<void> {
   return await pipelineStore.copyLogsToClipboard();

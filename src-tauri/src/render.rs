@@ -117,18 +117,78 @@ pub async fn attach_bumpers_if_enabled(
     source_video_path: &Path,
     app_handle: &AppHandle,
 ) -> AppResult<()> {
-    let Some(raw_cfg) = bumper_config else {
-        return Ok(());
-    };
-    if !raw_cfg.enabled {
-        return Ok(());
-    }
     if !clip_path.exists() {
         return Ok(());
     }
 
-    let mut global_cfg = raw_cfg.clone();
-    global_cfg.ensure_populated();
+    use tauri::Manager;
+    let app_data = app_handle
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
+
+    // 1. Разрешаем конфигурацию: переданная в параметрах -> сохраненная на диске -> авто-поиск файлов в кэше
+    let mut resolved_cfg: Option<crate::bumpers::BumperGlobalConfig> = None;
+    if let Some(raw) = bumper_config {
+        if raw.enabled {
+            resolved_cfg = Some(raw.clone());
+        }
+    }
+    if resolved_cfg.is_none() {
+        if let Some(disk_cfg) = crate::bumpers::load_saved_bumper_config(app_handle) {
+            if disk_cfg.enabled {
+                resolved_cfg = Some(disk_cfg);
+            }
+        }
+    }
+
+    // Проверяем наличие предрендеренных файлов в cache_dir
+    let cache_root = app_data.join("bumpers_cache");
+    let mut detected_preset_dir: Option<PathBuf> = None;
+    let mut detected_preset_id: Option<String> = None;
+
+    if cache_root.exists() {
+        if let Ok(entries) = std::fs::read_dir(&cache_root) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    let d = entry.path();
+                    let has_files = ["preroll_916.mp4", "preroll_169.mp4", "postroll_916.mp4", "postroll_169.mp4"]
+                        .iter()
+                        .any(|name| d.join(name).metadata().map(|m| m.len() > 512).unwrap_or(false));
+                    if has_files {
+                        detected_preset_id = d.file_name().and_then(|n| n.to_str()).map(|s| s.to_string());
+                        detected_preset_dir = Some(d);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut global_cfg = match (resolved_cfg, detected_preset_id.as_ref()) {
+        (Some(mut cfg), _) => {
+            cfg.ensure_populated();
+            cfg
+        }
+        (None, Some(pid)) => {
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("Обнаружены предрендеренные заставки в кэше '{}', авто-активация склейки...", pid),
+            );
+            let mut cfg = crate::bumpers::BumperGlobalConfig {
+                enabled: true,
+                active_preset_id: pid.clone(),
+                presets: Vec::new(),
+            };
+            cfg.ensure_populated();
+            cfg
+        }
+        (None, None) => {
+            return Ok(());
+        }
+    };
 
     let active_preset = global_cfg
         .presets
@@ -139,114 +199,96 @@ pub async fn attach_bumpers_if_enabled(
         return Ok(());
     };
 
-    // Если в целевой ориентации (например, 16:9 или 9:16) преролл/постролл не были отдельно включены,
-    // но пользователь настроил и включил их во второй ориентации этого же пресета — используем активную настройку!
-    let primary_cat = if is_vertical { &preset.v916 } else { &preset.v169 };
-    let fallback_cat = if is_vertical { &preset.v169 } else { &preset.v916 };
-    let cat_cfg = if primary_cat.preroll.enabled || primary_cat.postroll.enabled {
-        primary_cat
-    } else if fallback_cat.preroll.enabled || fallback_cat.postroll.enabled {
-        crate::logger::emit_log(
-            app_handle,
-            "Bumpers",
-            "info",
-            &format!(
-                "Для формата {} использована активная конфигурация заставок из смежного слота пресета '{}'",
-                if is_vertical { "9:16" } else { "16:9" },
-                preset.name
-            ),
-        );
-        fallback_cat
-    } else {
-        return Ok(());
-    };
-
-    use tauri::Manager;
-    let app_data = app_handle
-        .path()
-        .app_data_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    let cache_dir = app_data.join("bumpers_cache").join(&preset.id);
+    let cache_dir = detected_preset_dir.unwrap_or_else(|| cache_root.join(&preset.id));
     let _ = tokio::fs::create_dir_all(&cache_dir).await;
 
     let fmt_tag = if is_vertical { "916" } else { "169" };
+    let alt_fmt_tag = if is_vertical { "169" } else { "916" };
+
+    let pre_file_primary = cache_dir.join(format!("preroll_{}.mp4", fmt_tag));
+    let pre_file_alt = cache_dir.join(format!("preroll_{}.mp4", alt_fmt_tag));
+    let post_file_primary = cache_dir.join(format!("postroll_{}.mp4", fmt_tag));
+    let post_file_alt = cache_dir.join(format!("postroll_{}.mp4", alt_fmt_tag));
+
+    let primary_cat = if is_vertical { &preset.v916 } else { &preset.v169 };
+    let fallback_cat = if is_vertical { &preset.v169 } else { &preset.v916 };
 
     let mut pre_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
     let mut post_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
 
-    // 1. Авто-проверка и генерация на лету Преролла
-    if cat_cfg.preroll.enabled {
-        let pre_path = cache_dir.join(format!("preroll_{}.mp4", fmt_tag));
-        let is_valid = std::fs::metadata(&pre_path)
-            .map(|m| m.len() > 512)
-            .unwrap_or(false);
-        if !is_valid {
-            crate::logger::emit_log(
-                app_handle,
-                "Bumpers",
-                "info",
-                &format!("Генерация преролла ({}) на лету перед вклейкой...", fmt_tag),
-            );
-            if let Err(e) = crate::bumpers::render_single_bumper_video(
-                &cat_cfg.preroll,
-                is_vertical,
-                source_video_path,
-                &pre_path,
-                app_handle,
-            )
-            .await
-            {
-                crate::logger::emit_log(
-                    app_handle,
-                    "Bumpers",
-                    "warn",
-                    &format!("Ошибка генерации преролла на лету: {}", e),
-                );
-            }
-        }
-        if std::fs::metadata(&pre_path)
-            .map(|m| m.len() > 512)
-            .unwrap_or(false)
-        {
-            pre_bumper = Some((pre_path, cat_cfg.preroll.clone()));
+    // 1. Авто-проверка и прикрепление Преролла
+    if pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!("✓ Использован готовый предрендеренный преролл ({})", fmt_tag),
+        );
+        pre_bumper = Some((pre_file_primary, primary_cat.preroll.clone()));
+    } else if pre_file_alt.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!("✓ Использован готовый предрендеренный преролл из формата {} с авто-масштабированием под {}", alt_fmt_tag, fmt_tag),
+        );
+        pre_bumper = Some((pre_file_alt, fallback_cat.preroll.clone()));
+    } else if primary_cat.preroll.enabled || fallback_cat.preroll.enabled {
+        let use_item = if primary_cat.preroll.enabled { &primary_cat.preroll } else { &fallback_cat.preroll };
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!("Генерация преролла ({}) на лету перед вклейкой...", fmt_tag),
+        );
+        if let Err(e) = crate::bumpers::render_single_bumper_video(
+            use_item,
+            is_vertical,
+            source_video_path,
+            &pre_file_primary,
+            app_handle,
+        ).await {
+            crate::logger::emit_log(app_handle, "Bumpers", "warn", &format!("Ошибка генерации преролла на лету: {}", e));
+        } else if pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+            pre_bumper = Some((pre_file_primary, use_item.clone()));
         }
     }
 
-    // 2. Авто-проверка и генерация на лету Постролла
-    if cat_cfg.postroll.enabled {
-        let post_path = cache_dir.join(format!("postroll_{}.mp4", fmt_tag));
-        let is_valid = std::fs::metadata(&post_path)
-            .map(|m| m.len() > 512)
-            .unwrap_or(false);
-        if !is_valid {
-            crate::logger::emit_log(
-                app_handle,
-                "Bumpers",
-                "info",
-                &format!("Генерация постролла ({}) на лету перед вклейкой...", fmt_tag),
-            );
-            if let Err(e) = crate::bumpers::render_single_bumper_video(
-                &cat_cfg.postroll,
-                is_vertical,
-                source_video_path,
-                &post_path,
-                app_handle,
-            )
-            .await
-            {
-                crate::logger::emit_log(
-                    app_handle,
-                    "Bumpers",
-                    "warn",
-                    &format!("Ошибка генерации постролла на лету: {}", e),
-                );
-            }
-        }
-        if std::fs::metadata(&post_path)
-            .map(|m| m.len() > 512)
-            .unwrap_or(false)
-        {
-            post_bumper = Some((post_path, cat_cfg.postroll.clone()));
+    // 2. Авто-проверка и прикрепление Постролла
+    if post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!("✓ Использован готовый предрендеренный постролл ({})", fmt_tag),
+        );
+        post_bumper = Some((post_file_primary, primary_cat.postroll.clone()));
+    } else if post_file_alt.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!("✓ Использован готовый предрендеренный постролл из формата {} с авто-масштабированием под {}", alt_fmt_tag, fmt_tag),
+        );
+        post_bumper = Some((post_file_alt, fallback_cat.postroll.clone()));
+    } else if primary_cat.postroll.enabled || fallback_cat.postroll.enabled {
+        let use_item = if primary_cat.postroll.enabled { &primary_cat.postroll } else { &fallback_cat.postroll };
+        crate::logger::emit_log(
+            app_handle,
+            "Bumpers",
+            "info",
+            &format!("Генерация постролла ({}) на лету перед вклейкой...", fmt_tag),
+        );
+        if let Err(e) = crate::bumpers::render_single_bumper_video(
+            use_item,
+            is_vertical,
+            source_video_path,
+            &post_file_primary,
+            app_handle,
+        ).await {
+            crate::logger::emit_log(app_handle, "Bumpers", "warn", &format!("Ошибка генерации постролла на лету: {}", e));
+        } else if post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+            post_bumper = Some((post_file_primary, use_item.clone()));
         }
     }
 
