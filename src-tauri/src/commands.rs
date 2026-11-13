@@ -296,10 +296,11 @@ pub async fn render_clips_from_fragments(
     .ok();
 
     let mut generated_clips = Vec::new();
+    let mut exported_smm_targets: Vec<(PathBuf, f64, f64, String)> = Vec::new();
     let total_fragments = fragments.len().max(1);
 
     for (i, frag) in fragments.iter().enumerate() {
-        let pct = 50.0 + ((i as f64 + 1.0) / total_fragments as f64) * 48.0;
+        let pct = 50.0 + ((i as f64 + 1.0) / total_fragments as f64) * 44.0;
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
             percent: pct, 
             stage: format!("Рендеринг клипа {} из {} ({})...", i + 1, fragments.len(), format_label) 
@@ -357,6 +358,7 @@ pub async fn render_clips_from_fragments(
             &app,
         ).await;
 
+        exported_smm_targets.push((clip_path.clone(), start_sec, end_sec, "shorts".to_string()));
         generated_clips.push(clip_path.to_string_lossy().to_string());
     }
 
@@ -376,7 +378,7 @@ pub async fn render_clips_from_fragments(
         let highlights_path = highlights_dir.join(format!("Хайлайты_{}{}.mp4", char_prefix, file_stem));
 
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
-            percent: 98.0, 
+            percent: 95.0, 
             stage: "Экспорт сборника хайлайтов (16:9 Full HD + Crossfade 0.4с + субтитры)...".to_string() 
         });
 
@@ -398,6 +400,9 @@ pub async fn render_clips_from_fragments(
                 &video_buf,
                 &app,
             ).await;
+            let h_start = fragments.first().map(|f| f.start).unwrap_or(0.0);
+            let h_end = fragments.last().map(|f| f.end).unwrap_or(180.0);
+            exported_smm_targets.push((highlights_path.clone(), h_start, h_end, "highlights".to_string()));
             generated_clips.push(highlights_path.to_string_lossy().to_string());
         }
     }
@@ -410,7 +415,7 @@ pub async fn render_clips_from_fragments(
         let talk_path = talk_dir.join(format!("{}_{}{}.mp4", talk_label, char_prefix, file_stem));
 
         let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
-            percent: 99.0, 
+            percent: 97.0, 
             stage: format!("Экспорт разговорного видео ({}, 16:9 без пауз)...", talk_label) 
         });
 
@@ -431,13 +436,72 @@ pub async fn render_clips_from_fragments(
                 &video_buf,
                 &app,
             ).await;
+            let max_end = srt_fragments.last().map(|s| s.end).unwrap_or(180.0);
+            exported_smm_targets.push((talk_path.clone(), 0.0, max_end, "talk_video".to_string()));
             generated_clips.push(talk_path.to_string_lossy().to_string());
         }
     }
 
+    // ФИНАЛЬНАЯ (3-Я) LLM-ЗАДАЧА: SMM-КОПИРАЙТЕР (Названия, описания с иронией и хештеги для всех роликов + .txt файлы)
+    if !exported_smm_targets.is_empty() {
+        let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload {
+            percent: 98.5,
+            stage: "Финальный SMM-копирайтинг: генерация названий, ироничных описаний и хештегов...".to_string(),
+        });
+
+        let smm_model_name = config
+            .smm_model_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.verifier_model_name.clone().filter(|s| !s.trim().is_empty()))
+            .unwrap_or_else(|| {
+                if config.text_engine == "openai" {
+                    config
+                        .openai_model
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| config.text_model_name.clone())
+                } else {
+                    config.text_model_name.clone()
+                }
+            });
+
+        let smm_text_cfg = crate::text_analyzer::TextAnalysisConfig {
+            engine: match config.text_engine.as_str() {
+                "openai" => crate::text_analyzer::TextEngine::OpenAi,
+                "ollama" => crate::text_analyzer::TextEngine::Ollama,
+                "llama" => crate::text_analyzer::TextEngine::LlamaCli,
+                "builtin" => crate::text_analyzer::TextEngine::Builtin,
+                _ => crate::text_analyzer::TextEngine::LlamaCli,
+            },
+            model_name: smm_model_name,
+            ollama_url: config.ollama_url.clone(),
+            openai_base_url: config
+                .openai_base_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+        };
+
+        let smm_results = crate::text_analyzer::generate_and_save_smm_bundle(
+            &video_buf,
+            &clips_root,
+            &exported_smm_targets,
+            &srt_fragments,
+            &[],
+            config.selected_characters.as_deref(),
+            &smm_text_cfg,
+            &app,
+            cancel_rx.resubscribe(),
+        )
+        .await;
+
+        let _ = app.emit("smm-metadata-generated", &smm_results);
+    }
+
     let _ = app.emit("pipeline-progress", crate::pipeline::orchestrator::PipelineProgressPayload { 
         percent: 100.0, 
-        stage: "Экспорт всех роликов успешно завершен!".to_string() 
+        stage: "Экспорт всех роликов и SMM-текстов успешно завершен!".to_string() 
     });
 
     Ok(generated_clips)
@@ -1218,3 +1282,133 @@ pub async fn repair_selected_fragments(
 
     Ok(repaired_results)
 }
+
+/// Асинхронная команда: Получение сохраненных SMM-метаданных (название, описание, хештеги) для готовых роликов
+#[tauri::command]
+pub async fn get_project_smm_metadata(
+    video_path: String,
+    config: PipelineConfig,
+) -> AppResult<Vec<crate::text_analyzer::SmmClipMetadata>> {
+    let video_buf = PathBuf::from(&video_path);
+    let file_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
+    let video_parent = video_buf.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let default_clips_root = video_parent.join(format!("{}_Проект", file_stem)).join("Готовые клипы");
+    let clips_root = match config.output_dir.as_deref().map(str::trim) {
+        Some(custom) if !custom.is_empty() && custom != "output_cuts/" && custom != "output_cuts" => {
+            let custom_path = PathBuf::from(custom);
+            if custom_path.is_absolute() {
+                custom_path
+            } else {
+                video_parent.join(custom_path)
+            }
+        }
+        _ => default_clips_root,
+    };
+
+    let meta_path = clips_root.join("smm_metadata.json");
+    if !meta_path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = tokio::fs::read_to_string(&meta_path)
+        .await
+        .unwrap_or_default();
+    let parsed: Vec<crate::text_analyzer::SmmClipMetadata> =
+        serde_json::from_str(&content).unwrap_or_default();
+    Ok(parsed)
+}
+
+/// Асинхронная команда: Перегенерация SMM-описания (название + ироничное описание + хештеги + обновление .txt файла) для конкретного ролика
+#[tauri::command]
+pub async fn regenerate_clip_smm(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    video_path: String,
+    clip_path: String,
+    clip_type: String,
+    clip_index: usize,
+    start_sec: f64,
+    end_sec: f64,
+    config: PipelineConfig,
+) -> AppResult<crate::text_analyzer::SmmClipMetadata> {
+    let video_buf = PathBuf::from(&video_path);
+    let raw_stem = video_buf.file_stem().and_then(|s| s.to_str()).unwrap_or("Видео");
+    let clean_title = crate::text_analyzer::clean_video_title_for_smm(raw_stem);
+
+    let project_srt = crate::whisper::get_project_srt_path(&video_buf);
+    let srt_content = if project_srt.exists() {
+        tokio::fs::read_to_string(&project_srt).await.unwrap_or_default()
+    } else if let Some(ref custom_path_str) = config.custom_subtitles_path {
+        let cp = PathBuf::from(custom_path_str);
+        if cp.exists() {
+            tokio::fs::read_to_string(&cp).await.unwrap_or_default()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    let all_subtitles = crate::text_analyzer::parse_srt(&srt_content);
+
+    let smm_model_name = config
+        .smm_model_name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| config.verifier_model_name.clone().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(|| {
+            if config.text_engine == "openai" {
+                config
+                    .openai_model
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| config.text_model_name.clone())
+            } else {
+                config.text_model_name.clone()
+            }
+        });
+
+    let smm_text_cfg = crate::text_analyzer::TextAnalysisConfig {
+        engine: match config.text_engine.as_str() {
+            "openai" => crate::text_analyzer::TextEngine::OpenAi,
+            "ollama" => crate::text_analyzer::TextEngine::Ollama,
+            "llama" => crate::text_analyzer::TextEngine::LlamaCli,
+            "builtin" => crate::text_analyzer::TextEngine::Builtin,
+            _ => crate::text_analyzer::TextEngine::LlamaCli,
+        },
+        model_name: smm_model_name,
+        ollama_url: config.ollama_url.clone(),
+        openai_base_url: config
+            .openai_base_url
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+        openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+    };
+
+    let input = crate::text_analyzer::build_smm_input_for_clip(
+        &clip_path,
+        &clip_type,
+        clip_index + 1, // смещаем seed для нового варианта ироничной шутки
+        10,
+        &clean_title,
+        start_sec,
+        end_sec,
+        &all_subtitles,
+        &[],
+        config.selected_characters.as_deref(),
+    );
+
+    let cancel_rx = state.cancel_tx.subscribe();
+    let meta = crate::text_analyzer::generate_smm_for_single_clip(&input, &smm_text_cfg, &app, cancel_rx).await?;
+
+    crate::logger::emit_log(
+        &app,
+        "LLM",
+        "info",
+        &format!(
+            "✓ [SMM-копирайтер] Обновлен текст для '{}' (модель: {})",
+            meta.title, meta.model_used
+        ),
+    );
+
+    Ok(meta)
+}
+

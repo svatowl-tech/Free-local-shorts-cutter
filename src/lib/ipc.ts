@@ -141,6 +141,8 @@ export interface PipelineConfig {
   vision_model_path?: string;
   text_engine: string;
   text_model_name: string;
+  verifier_model_name?: string;
+  smm_model_name?: string;
   ollama_url: string;
   openai_base_url?: string;
   openai_api_key?: string;
@@ -158,6 +160,19 @@ export interface PipelineConfig {
   subtitle_style?: SubtitleStyle;
   bumper_config?: BumperGlobalConfig;
   mode: 'auto' | 'manual' | 'confirm';
+}
+
+export interface SmmClipMetadata {
+  clip_path: string;
+  txt_path: string;
+  clip_type: 'shorts' | 'highlights' | 'talk_video' | string;
+  title: string;
+  description: string;
+  hashtags: string;
+  full_copy_text: string;
+  model_used: string;
+  start_sec: number;
+  end_sec: number;
 }
 
 export interface PipelineProgressPayload {
@@ -471,6 +486,132 @@ export interface PipelineLogPayload {
 
 export async function onPipelineLog(callback: (payload: PipelineLogPayload) => void) {
   return await listen<PipelineLogPayload>('pipeline-log', (event) => callback(event.payload));
+}
+
+export async function onSmmMetadataGenerated(callback: (payload: SmmClipMetadata[]) => void) {
+  return await listen<SmmClipMetadata[]>('smm-metadata-generated', (event) => callback(event.payload));
+}
+
+export function buildDemoSmmItem(
+  clipPath: string,
+  videoName: string,
+  index: number,
+  startSec: number,
+  endSec: number,
+  modelUsed: string,
+  variantSeed = 0
+): SmmClipMetadata {
+  const cleanVideoTitle = videoName
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[_.-]+/g, ' ')
+    .trim() || 'Выпуск';
+
+  const normalized = clipPath.replace(/\\/g, '/');
+  const clipType: 'shorts' | 'highlights' | 'talk_video' =
+    normalized.includes('/Хайлайты/') || normalized.includes('Хайлайты_')
+      ? 'highlights'
+      : normalized.includes('/Ток-видео/') || normalized.includes('Ток_видео') || normalized.includes('Демка_')
+        ? 'talk_video'
+        : 'shorts';
+
+  const txtPath = clipPath.replace(/\.mp4$/i, '.txt');
+  const ironicJokes = [
+    'План был надежный, как швейцарские часы, но реальность снова забыла прочитать сценарий.',
+    'Уровень спокойствия в кадре: «всё под контролем», правда, никто не уточнил — под чьим именно.',
+    'Когда аргументы в диалоге настолько весомые, что законы логики нервно вышли покурить.',
+    'Искусство тонкой дипломатии: сказать одну фразу так, чтобы у всех вокруг начался внеплановый мозговой штурм.',
+    'Если бы за самообладание в критических ситуациях давали «Оскар», этот момент забрал бы всю полку наград.'
+  ];
+  const joke = ironicJokes[(index + variantSeed) % ironicJokes.length];
+
+  let title = '';
+  let description = '';
+  let hashtags = '';
+
+  if (clipType === 'highlights') {
+    title = `🔥 Все лучшие моменты: ${cleanVideoTitle} | Нарезка хайлайтов`;
+    description = `Сборка самых ярких, эмоциональных и смешных сцен из видео «${cleanVideoTitle}». Внутри — главные кульминации, острые реплики и переломные моменты сюжета без лишних пауз. ${joke}`;
+    hashtags = `#${cleanVideoTitle.split(/\s+/)[0] || 'Видео'} #хайлайты #лучшиемоменты #нарезка #топмоменты #юмор #эпик #рек`;
+  } else if (clipType === 'talk_video') {
+    title = `🎙️ ${cleanVideoTitle} — Полная выжимка без пауз и воды`;
+    description = `Чистовой разговорный монтаж видео «${cleanVideoTitle}» с динамичной подачей и сменой планов. Оставили только суть, ключевые панчлайны и живые эмоции. ${joke}`;
+    hashtags = `#${cleanVideoTitle.split(/\s+/)[0] || 'Видео'} #разговорноевидео #подкаст #озвучка #демка #безводы #рек`;
+  } else {
+    const hooks = [
+      `«Это было слишком внезапно!» | ${cleanVideoTitle}`,
+      `Когда ситуация вышла из-под контроля (#${index + 1}) | ${cleanVideoTitle}`,
+      `Тот самый момент, который всё изменил | ${cleanVideoTitle}`,
+      `«А вот к такому жизнь нас не готовила!» | ${cleanVideoTitle}`
+    ];
+    title = hooks[(index + variantSeed) % hooks.length];
+    const sm = String(Math.floor(startSec / 60)).padStart(2, '0');
+    const ss = String(Math.floor(startSec % 60)).padStart(2, '0');
+    const em = String(Math.floor(endSec / 60)).padStart(2, '0');
+    const es = String(Math.floor(endSec % 60)).padStart(2, '0');
+    description = `Яркий момент [${sm}:${ss}–${em}:${es}] из видео «${cleanVideoTitle}». Внутри — напряженный диалог, кульминация сцены и неожиданная развязка, которая идеально передает весь контекст происходящего. ${joke}`;
+    hashtags = `#${cleanVideoTitle.split(/\s+/)[0] || 'Видео'} #shorts #шортс #reels #рилс #рек #лучшиемоменты #юмор #ирония`;
+  }
+
+  return {
+    clip_path: clipPath,
+    txt_path: txtPath,
+    clip_type: clipType,
+    title,
+    description,
+    hashtags,
+    full_copy_text: `${title}\n\n${description}\n\n${hashtags}`,
+    model_used: modelUsed || 'Vikhr-Gemma-2B-instruct-Q4_K_M.gguf',
+    start_sec: startSec,
+    end_sec: endSec
+  };
+}
+
+export async function getProjectSmmMetadata(videoPath: string, config: PipelineConfig): Promise<SmmClipMetadata[]> {
+  if (!isTauriRuntime()) {
+    return [];
+  }
+  try {
+    return await invoke<SmmClipMetadata[]>('get_project_smm_metadata', { videoPath, config });
+  } catch (err: unknown) {
+    console.warn('Не удалось загрузить SMM-метаданные проекта:', formatErrorMessage(err));
+    return [];
+  }
+}
+
+export async function regenerateClipSmm(
+  videoPath: string,
+  clipPath: string,
+  clipType: string,
+  clipIndex: number,
+  startSec: number,
+  endSec: number,
+  config: PipelineConfig
+): Promise<SmmClipMetadata> {
+  if (!isTauriRuntime()) {
+    const modelUsed = config.smm_model_name || config.verifier_model_name || config.text_model_name;
+    return buildDemoSmmItem(
+      clipPath,
+      videoPath.split(/[/\\]/).pop() || 'Видео',
+      clipIndex,
+      startSec,
+      endSec,
+      modelUsed,
+      Math.floor(Math.random() * 10) + 1
+    );
+  }
+  try {
+    return await invoke<SmmClipMetadata>('regenerate_clip_smm', {
+      videoPath,
+      clipPath,
+      clipType,
+      clipIndex,
+      startSec,
+      endSec,
+      config
+    });
+  } catch (err: unknown) {
+    throw new Error(`Ошибка генерации SMM: ${formatErrorMessage(err)}`);
+  }
 }
 
 // РАЗДЕЛ: ИНТЕЛЛЕКТУАЛЬНЫЕ МОДЕЛИ И ИХ ЗАГРУЗКА

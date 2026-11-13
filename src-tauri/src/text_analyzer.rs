@@ -3363,4 +3363,1079 @@ pub fn repair_clip_candidate(
     }
 }
 
+// =========================================================================================
+// ФИНАЛЬНАЯ (3-Я) LLM-ЗАДАЧА: SMM-КОПИРАЙТЕР (НАЗВАНИЕ, ОПИСАНИЕ С ИРОНИЕЙ, ХЕШТЕГИ + .TXT)
+// =========================================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SmmClipMetadata {
+    pub clip_path: String,
+    pub txt_path: String,
+    pub clip_type: String, // "shorts" | "highlights" | "talk_video"
+    pub title: String,
+    pub description: String,
+    pub hashtags: String,
+    pub full_copy_text: String,
+    pub model_used: String,
+    pub start_sec: f64,
+    pub end_sec: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SmmGenerationInput {
+    pub clip_path: String,
+    pub clip_type: String, // "shorts" | "highlights" | "talk_video"
+    pub clip_index: usize,
+    pub total_clips: usize,
+    pub video_title: String,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub inside_dialogue: String,
+    pub surrounding_context: String,
+    pub visual_actions: String,
+    pub characters: Vec<String>,
+}
+
+/// Очищает техническое имя видеофайла от мусорных тегов релиза, сохраняя красивое название видео/серии
+pub fn clean_video_title_for_smm(raw_stem: &str) -> String {
+    let mut s = raw_stem
+        .replace('_', " ")
+        .replace('.', " ");
+
+    // Удаляем квадратные и круглые скобки с техническими метками (1080p, WEB-DL, x264 и т.д.)
+    let tech_markers = [
+        "1080p", "720p", "2160p", "4k", "web-dl", "webrip", "bdrip", "bluray",
+        "x264", "x265", "hevc", "h264", "aac", "flac", "rus", "sub", "dub",
+    ];
+    for marker in &tech_markers {
+        let lower = s.to_lowercase();
+        if let Some(pos) = lower.find(marker) {
+            // Заменяем технический маркер пробелом
+            s.replace_range(pos..(pos + marker.len()), " ");
+        }
+    }
+
+    let cleaned: String = s
+        .split_whitespace()
+        .filter(|w| {
+            let trimmed = w.trim_matches(['[', ']', '(', ')', '-', '_']);
+            !trimmed.is_empty()
+        })
+        .map(|w| w.trim_matches(['[', ']', '(', ')']))
+        .collect::<Vec<&str>>()
+        .join(" ");
+
+    if cleaned.trim().is_empty() {
+        raw_stem.to_string()
+    } else {
+        cleaned.trim().to_string()
+    }
+}
+
+/// Собирает контекст для генерации SMM-пакета конкретного ролика
+pub fn build_smm_input_for_clip(
+    clip_path: &str,
+    clip_type: &str,
+    clip_index: usize,
+    total_clips: usize,
+    video_title: &str,
+    start_sec: f64,
+    end_sec: f64,
+    all_subtitles: &[SubtitleFragment],
+    scenes: &[crate::analyzer::SceneCandidate],
+    selected_characters: Option<&[String]>,
+) -> SmmGenerationInput {
+    let mut inside_lines = Vec::new();
+    let mut before_lines = Vec::new();
+    let mut after_lines = Vec::new();
+
+    if clip_type == "shorts" {
+        for f in all_subtitles {
+            if crate::whisper::is_whisper_hallucination(&f.text) {
+                continue;
+            }
+            let t = f.text.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if f.end > start_sec + 0.08 && f.start < end_sec - 0.08 {
+                inside_lines.push(t.to_string());
+            } else if f.end <= start_sec + 0.08 && f.end >= (start_sec - 25.0).max(0.0) {
+                before_lines.push(t.to_string());
+            } else if f.start >= end_sec - 0.08 && f.start <= end_sec + 18.0 {
+                after_lines.push(t.to_string());
+            }
+        }
+    } else if clip_type == "highlights" {
+        // Для сборника хайлайтов берем самые яркие эмоциональные реплики со всего видео
+        for f in all_subtitles.iter().filter(|f| {
+            !crate::whisper::is_whisper_hallucination(&f.text)
+                && (f.text.contains('!') || f.text.contains('?'))
+        }).take(14) {
+            inside_lines.push(f.text.trim().to_string());
+        }
+        if inside_lines.is_empty() {
+            for f in all_subtitles.iter().take(10) {
+                inside_lines.push(f.text.trim().to_string());
+            }
+        }
+        before_lines.push(format!(
+            "Концентрированная выжимка из {} самых эмоциональных и смешных сцен выпуска «{}».",
+            total_clips.max(1),
+            video_title
+        ));
+    } else {
+        // Для разговорного видео / демки
+        for f in all_subtitles.iter().filter(|f| !crate::whisper::is_whisper_hallucination(&f.text)).take(12) {
+            inside_lines.push(f.text.trim().to_string());
+        }
+        if all_subtitles.len() > 14 {
+            for f in all_subtitles.iter().rev().take(5).rev() {
+                after_lines.push(f.text.trim().to_string());
+            }
+        }
+        before_lines.push(format!(
+            "Динамичный монтаж разговорного видео «{}» без пауз, вдохов и воды.",
+            video_title
+        ));
+    }
+
+    let inside_dialogue = if inside_lines.is_empty() {
+        "Динамичная сцена с яркой визуальной подачей и эмоциями в кадре".to_string()
+    } else {
+        inside_lines.join(" — ")
+    };
+
+    let mut context_parts = Vec::new();
+    if !before_lines.is_empty() {
+        let b_str: String = before_lines.join(" ").chars().take(220).collect();
+        context_parts.push(format!("До момента: {}", b_str));
+    }
+    if !after_lines.is_empty() {
+        let a_str: String = after_lines.join(" ").chars().take(180).collect();
+        context_parts.push(format!("После момента: {}", a_str));
+    }
+    let surrounding_context = if context_parts.is_empty() {
+        format!("Ключевой эпизод из видео «{}»", video_title)
+    } else {
+        context_parts.join(" | ")
+    };
+
+    // Визуальные действия из анализатора сцен
+    let mut vis_parts = Vec::new();
+    for sc in scenes {
+        if (clip_type != "shorts" || (sc.timestamp_sec >= start_sec - 4.0 && sc.timestamp_sec <= end_sec + 4.0))
+            && !sc.description.trim().is_empty()
+        {
+            vis_parts.push(sc.description.trim().to_string());
+            if vis_parts.len() >= 3 {
+                break;
+            }
+        }
+    }
+    let visual_actions = if vis_parts.is_empty() {
+        "Активная мимика, смена планов и эмоциональная подача".to_string()
+    } else {
+        vis_parts.join("; ")
+    };
+
+    let mut characters = Vec::new();
+    if let Some(sel) = selected_characters {
+        for c in sel {
+            if !c.trim().is_empty() && c != "Все персонажи" && c.to_lowercase() != "all" {
+                characters.push(c.trim().to_string());
+            }
+        }
+    }
+
+    SmmGenerationInput {
+        clip_path: clip_path.to_string(),
+        clip_type: clip_type.to_string(),
+        clip_index,
+        total_clips,
+        video_title: video_title.to_string(),
+        start_sec,
+        end_sec,
+        inside_dialogue,
+        surrounding_context,
+        visual_actions,
+        characters,
+    }
+}
+
+fn build_smm_copywriter_prompt(input: &SmmGenerationInput) -> String {
+    let format_name = match input.clip_type.as_str() {
+        "highlights" => "Сборник лучших моментов (Хайлайты 16:9)",
+        "talk_video" => "Разговорное видео / Демка без пауз (16:9)",
+        _ => "Вертикальный ролик (Shorts / Reels / TikTok)",
+    };
+
+    let dialogue_clipped: String = input.inside_dialogue.chars().take(480).collect();
+    let context_clipped: String = input.surrounding_context.chars().take(320).collect();
+    let visual_clipped: String = input.visual_actions.chars().take(180).collect();
+    let chars_note = if input.characters.is_empty() {
+        String::new()
+    } else {
+        format!("Персонажи/спикеры: {}\n", input.characters.join(", "))
+    };
+
+    format!(
+        "Ты остроумный русскоязычный SMM-редактор и автор вирусных роликов.\n\
+Напиши цепляющее название ролика, живое описание и хештеги для выкладки.\n\
+Обязательно учитывай:\n\
+1) Название самого видео: «{}»\n\
+2) Формат: {} (ролик #{})\n\
+{}3) Что происходит внутри ролика (реплики): «{}»\n\
+4) Визуал в кадре: {}\n\
+5) Контекст происходящего вокруг: {}\n\
+6) В конце описания ОБЯЗАТЕЛЬНО добавь остроумную ироничную шутку или саркастичный комментарий по поводу этой ситуации!\n\n\
+Выведи ответ СТРОГО в следующем формате (на русском языке, без лишних пояснений):\n\
+НАЗВАНИЕ: [яркий заголовок до 70 символов]\n\
+ОПИСАНИЕ: [2-4 предложения: суть момента из видео «{}», контекст происходящего и ироничная шутка в конце]\n\
+ХЕШТЕГИ: [#хештег1 #хештег2 #хештег3 ... 8-12 тегов]\n\
+</SMM>\n\n\
+НАЗВАНИЕ:",
+        input.video_title,
+        format_name,
+        input.clip_index + 1,
+        chars_note,
+        dialogue_clipped,
+        visual_clipped,
+        context_clipped,
+        input.video_title
+    )
+}
+
+async fn run_openai_smm(
+    client: &Client,
+    config: &TextAnalysisConfig,
+    prompt: &str,
+    app_handle: &AppHandle,
+) -> AppResult<String> {
+    let url = build_openai_chat_url(&config.openai_base_url);
+    let model = if config.model_name.trim().is_empty() || config.model_name.ends_with(".gguf") {
+        "gpt-4o-mini".to_string()
+    } else {
+        config.model_name.trim().to_string()
+    };
+
+    let req_body = OpenAiChatRequest {
+        model: model.clone(),
+        messages: vec![
+            OpenAiMessage {
+                role: "system".to_string(),
+                content: "Ты остроумный русскоязычный SMM-копирайтер для Shorts, Reels и YouTube. Пиши живо, с тонкой иронией, строго соблюдая поля НАЗВАНИЕ:, ОПИСАНИЕ: и ХЕШТЕГИ:.".to_string(),
+            },
+            OpenAiMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            },
+        ],
+        temperature: 0.65,
+        stream: false,
+    };
+
+    let mut req = client.post(&url).json(&req_body);
+    let api_key = config.openai_api_key.trim();
+    if !api_key.is_empty() {
+        req = req.bearer_auth(api_key);
+    }
+
+    let resp = req.send().await.map_err(|e| {
+        AppError::Pipeline(format!("Ошибка запроса к OpenAI API (SMM): {}", e))
+    })?;
+
+    if !resp.status().is_success() {
+        return Err(AppError::Pipeline(format!("HTTP {} от OpenAI API (SMM)", resp.status())));
+    }
+
+    let parsed: OpenAiChatResponse = resp.json().await.map_err(|e| {
+        AppError::Pipeline(format!("Ошибка JSON от OpenAI API (SMM): {}", e))
+    })?;
+
+    let content = parsed
+        .choices
+        .into_iter()
+        .next()
+        .and_then(|c| c.message.content)
+        .unwrap_or_default();
+
+    Ok(content)
+}
+
+async fn run_llama_cli_smm(
+    app_handle: &AppHandle,
+    model_path: &str,
+    prompt: &str,
+    use_gpu: bool,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<String> {
+    use tauri_plugin_shell::process::CommandEvent;
+
+    let sidecar_command = app_handle
+        .shell()
+        .sidecar("llama-cli")
+        .map_err(|e| AppError::Pipeline(format!("llama-cli не найден: {}", e)))?;
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let prompt_file = std::env::temp_dir().join(format!("vc_smm_prompt_{}_{}.txt", std::process::id(), ts));
+    tokio::fs::write(&prompt_file, prompt.as_bytes()).await.map_err(AppError::Io)?;
+
+    let ngl_val = if use_gpu { "99" } else { "0" };
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get().clamp(2, 8))
+        .unwrap_or(4)
+        .to_string();
+
+    let mut cmd = sidecar_command.env("PATH", crate::logger::build_sidecar_env_path(app_handle));
+    if !use_gpu {
+        cmd = cmd
+            .env("CUDA_VISIBLE_DEVICES", "")
+            .env("GGML_CUDA_NO_PINNED", "1");
+    }
+
+    let cmd = cmd.args([
+        "-m",
+        model_path,
+        "-f",
+        &prompt_file.to_string_lossy(),
+        "-c",
+        "2048",
+        "-ngl",
+        ngl_val,
+        "-t",
+        &threads,
+        "-n",
+        "280",
+        "-r",
+        "</SMM>",
+        "--temp",
+        "0.65",
+        "--repeat-penalty",
+        "1.15",
+        "--no-display-prompt",
+    ]);
+
+    let (mut rx, child) = match cmd.spawn() {
+        Ok(pair) => pair,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&prompt_file).await;
+            return Err(AppError::Pipeline(format!("Не удалось запустить llama-cli для SMM: {}", e)));
+        }
+    };
+
+    let run_future = async move {
+        let mut stdout_accum = String::new();
+        while let Some(event) = rx.recv().await {
+            if let CommandEvent::Stdout(bytes) = event {
+                stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
+            } else if let CommandEvent::Terminated(payload) = event {
+                if payload.code == Some(0) || !stdout_accum.trim().is_empty() {
+                    return Ok(stdout_accum);
+                } else {
+                    return Err(AppError::Pipeline(format!("llama-cli (SMM) завершился с кодом {:?}", payload.code)));
+                }
+            }
+        }
+        if !stdout_accum.trim().is_empty() {
+            Ok(stdout_accum)
+        } else {
+            Err(AppError::Pipeline("Пустой ответ от llama-cli (SMM)".to_string()))
+        }
+    };
+
+    let res = tokio::select! {
+        r = tokio::time::timeout(Duration::from_secs(45), run_future) => {
+            match r {
+                Ok(inner) => inner,
+                Err(_) => {
+                    let _ = child.kill();
+                    Err(AppError::Pipeline("Таймаут генерации SMM (45с)".to_string()))
+                }
+            }
+        },
+        _ = cancel_rx.recv() => {
+            let _ = child.kill();
+            Err(AppError::Pipeline("Отменено пользователем".to_string()))
+        }
+    };
+
+    let _ = tokio::fs::remove_file(&prompt_file).await;
+    res
+}
+
+/// Умный детерминированный SMM-генератор с контекстом, анализом реплик и ироничными шутками
+/// (используется как надежная основа и для обогащения неполных ответов легковесных LLM)
+pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, String, String) {
+    let lower_dlg = input.inside_dialogue.to_lowercase().replace('ё', "е");
+    let has_exclam = input.inside_dialogue.contains('!');
+    let has_question = input.inside_dialogue.contains('?');
+
+    // 1. Выделяем самую яркую цитату-панчлайн из реплик внутри ролика
+    let cues: Vec<&str> = input
+        .inside_dialogue
+        .split(" — ")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let best_quote = cues
+        .iter()
+        .copied()
+        .max_by_key(|c| {
+            let mut weight = c.chars().count().min(55);
+            if c.contains('!') {
+                weight += 35;
+            }
+            if c.contains('?') {
+                weight += 20;
+            }
+            weight
+        })
+        .unwrap_or("Когда всё пошло не по плану");
+
+    let short_quote: String = best_quote
+        .trim_matches(['"', '«', '»', '-', '—', ' '])
+        .chars()
+        .take(54)
+        .collect();
+
+    // 2. Подбираем контекстную ироничную шутку по настроению и содержанию сцены
+    let ironic_jokes_action = [
+        "План был надежный, как швейцарские часы, но реальность снова забыла прочитать сценарий.",
+        "Уровень спокойствия в кадре: «всё под контролем», правда, никто не уточнил — под чьим именно.",
+        "Когда пытаешься решить вопрос дипломатично, но харизма работает исключительно в режиме спецэффектов.",
+        "Тот самый случай, когда инструкцию по технике безопасности решили прочитать уже после взрыва.",
+    ];
+    let ironic_jokes_dialogue = [
+        "Переговоры вышли на такой уровень искренности, что даже субтитры слегка покраснели.",
+        "Искусство тонкой дипломатии: сказать одну фразу так, чтобы у всех вокруг начался внеплановый мозговой штурм.",
+        "Когда аргументы в споре настолько весомые, что законы логики нервно вышли покурить.",
+        "Если бы за самообладание в неловких ситуациях давали «Оскар», этот момент забрал бы всю полку наград.",
+    ];
+    let ironic_jokes_highlights = [
+        "Собрали всю концентрацию эпика в одном месте — осторожно, при просмотре возможен передоз харизмой и сарказмом.",
+        "Все моменты, ради которых вообще стоило включать это видео, без лишних предисловий и долгих пауз.",
+    ];
+    let ironic_jokes_talk = [
+        "Вырезали все паузы и раздумья — теперь плотность мыслей в секунду выше, чем на защите диплома за пять минут до дедлайна.",
+        "Чистый концентрат речи без воды: идеально для тех, кто ценит своё время и хорошее чувство иронии.",
+    ];
+
+    let joke_seed = (input.clip_index
+        + (input.start_sec.round() as usize)
+        + input.inside_dialogue.len())
+        .max(1);
+
+    let ironic_joke = match input.clip_type.as_str() {
+        "highlights" => ironic_jokes_highlights[joke_seed % ironic_jokes_highlights.len()],
+        "talk_video" => ironic_jokes_talk[joke_seed % ironic_jokes_talk.len()],
+        _ => {
+            if has_exclam
+                || lower_dlg.contains("атак")
+                || lower_dlg.contains("бой")
+                || lower_dlg.contains("огонь")
+                || lower_dlg.contains("взрыв")
+                || lower_dlg.contains("бежим")
+                || lower_dlg.contains("черт")
+            {
+                ironic_jokes_action[joke_seed % ironic_jokes_action.len()]
+            } else {
+                ironic_jokes_dialogue[joke_seed % ironic_jokes_dialogue.len()]
+            }
+        }
+    };
+
+    // 3. Формируем Название ролика
+    let char_tag = if !input.characters.is_empty() {
+        format!(" ({})", input.characters.join(", "))
+    } else {
+        String::new()
+    };
+
+    let title = match input.clip_type.as_str() {
+        "highlights" => format!(
+            "🔥 Все лучшие моменты: {} | Нарезка хайлайтов{}",
+            input.video_title, char_tag
+        ),
+        "talk_video" => {
+            if !input.characters.is_empty() {
+                format!(
+                    "🎙️ Демка и лучшие реплики: {} — {}",
+                    input.characters.join(", "),
+                    input.video_title
+                )
+            } else {
+                format!(
+                    "🎙️ {} — Полная выжимка без пауз и воды",
+                    input.video_title
+                )
+            }
+        }
+        _ => {
+            if !short_quote.is_empty() && short_quote.chars().count() >= 6 {
+                let end_punct = if has_exclam && !short_quote.ends_with('!') && !short_quote.ends_with('?') {
+                    "!"
+                } else {
+                    ""
+                };
+                format!("«{}{}» | {}{}", short_quote, end_punct, input.video_title, char_tag)
+            } else {
+                format!(
+                    "Момент #{}: Когда ситуация вышла из-под контроля | {}",
+                    input.clip_index + 1,
+                    input.video_title
+                )
+            }
+        }
+    };
+
+    // 4. Формируем Описание (название видео + что внутри + контекст + ироничная шутка)
+    let start_m = (input.start_sec / 60.0) as u32;
+    let start_s = (input.start_sec % 60.0) as u32;
+    let end_m = (input.end_sec / 60.0) as u32;
+    let end_s = (input.end_sec % 60.0) as u32;
+
+    let description = match input.clip_type.as_str() {
+        "highlights" => {
+            let sample_quotes: String = cues.iter().take(3).copied().collect::<Vec<&str>>().join(" / ");
+            format!(
+                "Сборка самых ярких и эмоциональных сцен из видео «{}»{}. Внутри — главные кульминации, острые диалоги («{}») и переломные моменты сюжета в динамичном монтаже. Контекст: {}. {}",
+                input.video_title,
+                char_tag,
+                if sample_quotes.is_empty() { "лучшие моменты выпуска" } else { &sample_quotes },
+                input.surrounding_context,
+                ironic_joke
+            )
+        }
+        "talk_video" => {
+            let sample_quotes: String = cues.iter().take(2).copied().collect::<Vec<&str>>().join(" — ");
+            format!(
+                "Чистовой разговорный монтаж видео «{}»{} без заминок и тишины. В центре внимания ключевые мысли и реплики: «{}». {}. {}",
+                input.video_title,
+                char_tag,
+                if sample_quotes.is_empty() { "главные тезисы и живая подача" } else { &sample_quotes },
+                input.surrounding_context,
+                ironic_joke
+            )
+        }
+        _ => {
+            let dialogue_summary: String = input.inside_dialogue.chars().take(190).collect();
+            let context_summary = if has_question && has_exclam {
+                "Острый диалог с неожиданным вопросом и мгновенной эмоциональной развязкой"
+            } else if has_exclam {
+                "Эмоциональная кульминация сцены на пике накала страстей"
+            } else {
+                "Показательный диалог, раскрывающий характеры и скрытый подтекст ситуации"
+            };
+            format!(
+                "Яркий фрагмент [{:02}:{:02}–{:02}:{:02}] из видео «{}»{}. В кадре: «{}». Контекст момента: {} ({}). {}",
+                start_m,
+                start_s,
+                end_m,
+                end_s,
+                input.video_title,
+                char_tag,
+                dialogue_summary,
+                context_summary,
+                input.surrounding_context.chars().take(140).collect::<String>(),
+                ironic_joke
+            )
+        }
+    };
+
+    // 5. Формируем Хештеги (из названия видео, персонажей и формата)
+    let mut tags: Vec<String> = Vec::new();
+    for word in input
+        .video_title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.chars().count() >= 3)
+        .take(4)
+    {
+        let capitalized: String = word
+            .chars()
+            .enumerate()
+            .map(|(i, c)| if i == 0 { c.to_uppercase().next().unwrap_or(c) } else { c })
+            .collect();
+        let tag = format!("#{}", capitalized);
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+
+    for ch in &input.characters {
+        let clean_ch: String = ch.chars().filter(|c| c.is_alphanumeric()).collect();
+        if clean_ch.chars().count() >= 2 {
+            let tag = format!("#{}", clean_ch);
+            if !tags.contains(&tag) {
+                tags.push(tag);
+            }
+        }
+    }
+
+    let base_tags = match input.clip_type.as_str() {
+        "highlights" => vec![
+            "#хайлайты", "#лучшиемоменты", "#нарезка", "#топмоменты", "#юмор", "#эпик", "#видео", "#рек",
+        ],
+        "talk_video" => vec![
+            "#разговорноевидео", "#озвучка", "#демка", "#подкаст", "#безводы", "#диалоги", "#рек",
+        ],
+        _ => vec![
+            "#shorts", "#шортс", "#reels", "#рилс", "#рек", "#лучшиемоменты", "#юмор", "#ирония", "#нарезка",
+        ],
+    };
+
+    for bt in base_tags {
+        if !tags.iter().any(|t| t.eq_ignore_ascii_case(bt)) {
+            tags.push(bt.to_string());
+        }
+    }
+
+    let hashtags = tags.join(" ");
+    (title, description, hashtags)
+}
+
+/// Парсит ответ LLM для SMM-задачи и дополняет недостающие поля умным контекстным генератором
+fn parse_smm_llm_output(
+    raw_output: &str,
+    input: &SmmGenerationInput,
+) -> (String, String, String) {
+    let (fallback_title, fallback_desc, fallback_tags) = build_deterministic_smm_copy(input);
+
+    let trimmed = raw_output
+        .trim()
+        .trim_end_matches("</SMM>")
+        .trim();
+
+    if trimmed.is_empty() || trimmed.contains("GGGGGGGG") || trimmed.contains('\u{FFFD}') {
+        return (fallback_title, fallback_desc, fallback_tags);
+    }
+
+    // Отсекаем блок <think>...</think>, если модель рассуждала
+    let clean_text = if let Some(pos) = trimmed.rfind("</think>") {
+        trimmed[pos + "</think>".len()..].trim()
+    } else {
+        trimmed
+    };
+
+    let mut parsed_title = String::new();
+    let mut parsed_desc = String::new();
+    let mut parsed_tags = String::new();
+
+    // Так как промпт заканчивается на `НАЗВАНИЕ:`, первая строка без префикса может быть самим названием
+    let mut current_section = "title";
+
+    for raw_line in clean_text.lines() {
+        let line = raw_line
+            .trim()
+            .trim_matches(['*', '`'])
+            .trim();
+        if line.is_empty() || line == "</SMM>" {
+            continue;
+        }
+
+        let upper = line.to_uppercase();
+        if upper.starts_with("НАЗВАНИЕ:") || upper.starts_with("ЗАГОЛОВОК:") || upper.starts_with("TITLE:") {
+            current_section = "title";
+            if let Some((_, val)) = line.split_once(':') {
+                let v = val.trim().trim_matches(['[', ']', '"']);
+                if !v.is_empty() {
+                    parsed_title = v.to_string();
+                }
+            }
+        } else if upper.starts_with("ОПИСАНИЕ:") || upper.starts_with("ТЕКСТ:") || upper.starts_with("DESCRIPTION:") {
+            current_section = "desc";
+            if let Some((_, val)) = line.split_once(':') {
+                let v = val.trim().trim_matches(['[', ']']);
+                if !v.is_empty() {
+                    parsed_desc = v.to_string();
+                }
+            }
+        } else if upper.starts_with("ХЕШТЕГИ:") || upper.starts_with("ХЭШТЕГИ:") || upper.starts_with("ТЕГИ:") || upper.starts_with("HASHTAGS:") {
+            current_section = "tags";
+            if let Some((_, val)) = line.split_once(':') {
+                let v = val.trim().trim_matches(['[', ']']);
+                if !v.is_empty() {
+                    parsed_tags = v.to_string();
+                }
+            }
+        } else if line.starts_with('#') && line.contains(" #") {
+            parsed_tags = line.to_string();
+        } else {
+            match current_section {
+                "title" => {
+                    if parsed_title.is_empty() {
+                        parsed_title = line.trim_matches(['[', ']', '"']).to_string();
+                        current_section = "desc";
+                    }
+                }
+                "desc" => {
+                    if !parsed_desc.is_empty() {
+                        parsed_desc.push(' ');
+                    }
+                    parsed_desc.push_str(line.trim_matches(['[', ']']));
+                }
+                "tags" => {
+                    if !parsed_tags.is_empty() {
+                        parsed_tags.push(' ');
+                    }
+                    parsed_tags.push_str(line.trim_matches(['[', ']']));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let final_title = if parsed_title.chars().count() >= 5 && parsed_title.chars().count() <= 140 {
+        parsed_title
+    } else {
+        fallback_title
+    };
+
+    let final_desc = if parsed_desc.chars().count() >= 25 {
+        parsed_desc
+    } else {
+        fallback_desc
+    };
+
+    let final_tags = if parsed_tags.contains('#') && parsed_tags.chars().count() >= 6 {
+        // Гарантируем, что все слова в хештегах начинаются с #
+        parsed_tags
+            .split_whitespace()
+            .map(|w| {
+                let clean = w.trim_matches([',', ';', '.']);
+                if clean.starts_with('#') {
+                    clean.to_string()
+                } else {
+                    format!("#{}", clean)
+                }
+            })
+            .collect::<Vec<String>>()
+            .join(" ")
+    } else {
+        fallback_tags
+    };
+
+    (final_title, final_desc, final_tags)
+}
+
+/// Форматирует готовый текст для `.txt` файла и для копирования в буфер обмена
+pub fn format_smm_txt_file_content(
+    meta: &SmmClipMetadata,
+    video_title: &str,
+) -> String {
+    let start_m = (meta.start_sec / 60.0) as u32;
+    let start_s = (meta.start_sec % 60.0) as u32;
+    let end_m = (meta.end_sec / 60.0) as u32;
+    let end_s = (meta.end_sec % 60.0) as u32;
+
+    format!(
+        "================================================================\r\n\
+🎬 ГОТОВЫЙ ПОСТ ДЛЯ ВЫКЛАДКИ (СКОПИРУЙТЕ ЦЕЛИКОМ):\r\n\
+================================================================\r\n\
+{}\r\n\
+\r\n\
+{}\r\n\
+\r\n\
+{}\r\n\
+\r\n\
+----------------------------------------------------------------\r\n\
+📌 РАЗДЕЛЫ ПО ОТДЕЛЬНОСТИ:\r\n\
+----------------------------------------------------------------\r\n\
+[НАЗВАНИЕ РОЛИКА]:\r\n\
+{}\r\n\
+\r\n\
+[ОПИСАНИЕ РОЛИКА (С КОНТЕКСТОМ И ИРОНИЕЙ)]:\r\n\
+{}\r\n\
+\r\n\
+[ХЕШТЕГИ]:\r\n\
+{}\r\n\
+\r\n\
+----------------------------------------------------------------\r\n\
+Исходное видео: {}\r\n\
+Файл ролика: {}\r\n\
+Таймкод: {:02}:{:02} - {:02}:{:02}\r\n\
+Модель SMM: {}\r\n\
+================================================================\r\n",
+        meta.title,
+        meta.description,
+        meta.hashtags,
+        meta.title,
+        meta.description,
+        meta.hashtags,
+        video_title,
+        meta.clip_path,
+        start_m,
+        start_s,
+        end_m,
+        end_s,
+        meta.model_used
+    )
+}
+
+/// Генерирует SMM-метаданные для одного клипа/ролика через выбранную модель (и сохраняет `.txt` файл рядом с видео)
+pub async fn generate_smm_for_single_clip(
+    input: &SmmGenerationInput,
+    smm_config: &TextAnalysisConfig,
+    app_handle: &AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> AppResult<SmmClipMetadata> {
+    if cancel_rx.try_recv().is_ok() {
+        return Err(AppError::Pipeline("Отменено пользователем".into()));
+    }
+
+    let prompt = build_smm_copywriter_prompt(input);
+    let mut llm_raw_opt: Option<String> = None;
+    let mut model_label = match smm_config.engine {
+        TextEngine::Builtin => "Встроенный SMM-автор (RU)".to_string(),
+        _ => smm_config.model_name.clone(),
+    };
+
+    if smm_config.engine != TextEngine::Builtin {
+        let http_client = Client::builder()
+            .timeout(Duration::from_secs(25))
+            .build()
+            .unwrap_or_default();
+
+        if smm_config.engine == TextEngine::OpenAi {
+            if let Ok(resp) = run_openai_smm(&http_client, smm_config, &prompt, app_handle).await {
+                llm_raw_opt = Some(resp);
+                model_label = format!("OpenAI ({})", smm_config.model_name);
+            }
+        } else if smm_config.engine == TextEngine::Ollama {
+            if let Ok(resp) = run_ollama(&http_client, smm_config, &prompt, app_handle).await {
+                llm_raw_opt = Some(resp);
+                model_label = format!("Ollama ({})", smm_config.model_name);
+            }
+        }
+
+        if llm_raw_opt.is_none() {
+            if let Some(gguf_path) = crate::models::resolve_russian_verifier_llm_model(
+                app_handle,
+                Some(&smm_config.model_name),
+            ) {
+                let gguf_str = gguf_path.to_string_lossy().to_string();
+                let fname = gguf_path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Vikhr-GGUF")
+                    .to_string();
+                if !is_model_marked_broken(&gguf_str) {
+                    if let Ok(out) = run_llama_cli_smm(
+                        app_handle,
+                        &gguf_str,
+                        &prompt,
+                        true,
+                        cancel_rx.resubscribe(),
+                    )
+                    .await
+                    {
+                        llm_raw_opt = Some(out);
+                        model_label = fname;
+                    } else if let Ok(cpu_out) = run_llama_cli_smm(
+                        app_handle,
+                        &gguf_str,
+                        &prompt,
+                        false,
+                        cancel_rx.resubscribe(),
+                    )
+                    .await
+                    {
+                        llm_raw_opt = Some(cpu_out);
+                        model_label = format!("{} (CPU)", fname);
+                    }
+                }
+            }
+        }
+    }
+
+    let (title, description, hashtags) = if let Some(ref raw) = llm_raw_opt {
+        parse_smm_llm_output(raw, input)
+    } else {
+        build_deterministic_smm_copy(input)
+    };
+
+    let full_copy_text = format!("{}\n\n{}\n\n{}", title, description, hashtags);
+
+    // Определяем путь к парному .txt файлу в той же папке, где лежит видеофайл
+    let clip_path_buf = std::path::PathBuf::from(&input.clip_path);
+    let txt_path_buf = clip_path_buf.with_extension("txt");
+    let txt_path_str = txt_path_buf.to_string_lossy().to_string();
+
+    let meta = SmmClipMetadata {
+        clip_path: input.clip_path.clone(),
+        txt_path: txt_path_str,
+        clip_type: input.clip_type.clone(),
+        title,
+        description,
+        hashtags,
+        full_copy_text,
+        model_used: model_label,
+        start_sec: input.start_sec,
+        end_sec: input.end_sec,
+    };
+
+    let txt_content = format_smm_txt_file_content(&meta, &input.video_title);
+    if let Some(parent) = txt_path_buf.parent() {
+        let _ = tokio::fs::create_dir_all(parent).await;
+    }
+    let _ = tokio::fs::write(&txt_path_buf, txt_content.as_bytes()).await;
+
+    Ok(meta)
+}
+
+/// Пакетная генерация SMM-описаний для всех экспортированных роликов (Шортсы, Хайлайты, Разговорное видео)
+/// с автоматическим сохранением индивидуальных `.txt` файлов и сводных файлов по папкам
+pub async fn generate_and_save_smm_bundle(
+    video_path: &std::path::Path,
+    clips_root: &std::path::Path,
+    exported_items: &[(std::path::PathBuf, f64, f64, String)],
+    all_subtitles: &[SubtitleFragment],
+    scenes: &[crate::analyzer::SceneCandidate],
+    selected_characters: Option<&[String]>,
+    smm_config: &TextAnalysisConfig,
+    app_handle: &AppHandle,
+    mut cancel_rx: Receiver<()>,
+) -> Vec<SmmClipMetadata> {
+    if exported_items.is_empty() {
+        return Vec::new();
+    }
+
+    let raw_stem = video_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Видео");
+    let clean_title = clean_video_title_for_smm(raw_stem);
+
+    crate::logger::emit_log(
+        app_handle,
+        "LLM",
+        "info",
+        &format!(
+            "✍️ [Финальный SMM-копирайтер] Генерация названий, ироничных описаний и хештегов для {} готовых роликов (модель: '{}')...",
+            exported_items.len(),
+            smm_config.model_name
+        ),
+    );
+
+    let mut results: Vec<SmmClipMetadata> = Vec::with_capacity(exported_items.len());
+    let total = exported_items.len();
+
+    for (idx, (clip_path, start_s, end_s, clip_type)) in exported_items.iter().enumerate() {
+        if cancel_rx.try_recv().is_ok() {
+            break;
+        }
+        let clip_str = clip_path.to_string_lossy().to_string();
+        let input = build_smm_input_for_clip(
+            &clip_str,
+            clip_type,
+            idx,
+            total,
+            &clean_title,
+            *start_s,
+            *end_s,
+            all_subtitles,
+            scenes,
+            selected_characters,
+        );
+
+        match generate_smm_for_single_clip(&input, smm_config, app_handle, cancel_rx.resubscribe()).await {
+            Ok(meta) => {
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "info",
+                    &format!(
+                        "  ✓ [SMM #{}/{}] «{}» → сохранен текстовый файл '{}'",
+                        idx + 1,
+                        total,
+                        meta.title,
+                        meta.txt_path
+                    ),
+                );
+                results.push(meta);
+            }
+            Err(e) => {
+                crate::logger::emit_log(
+                    app_handle,
+                    "LLM",
+                    "warn",
+                    &format!("Предупреждение SMM для ролика #{}: {}", idx + 1, e),
+                );
+            }
+        }
+    }
+
+    // Дополнительно сохраняем сводные текстовые файлы в папки Шортсы/, Хайлайты/, Ток-видео/ и в корень Готовые клипы/
+    if !results.is_empty() {
+        let mut all_summary = format!(
+            "====================================================================\r\n\
+📦 СВОДНЫЙ SMM-ПАКЕТ ДЛЯ ВЫКЛАДКИ ВСЕХ РОЛИКОВ\r\n\
+Исходное видео: {}\r\n\
+Всего роликов: {}\r\n\
+====================================================================\r\n\r\n",
+            clean_title,
+            results.len()
+        );
+
+        let mut shorts_summary = format!(
+            "====================================================================\r\n\
+📱 SMM-ОПИСАНИЯ ДЛЯ ВСЕХ ШОРТСОВ ({})\r\n\
+====================================================================\r\n\r\n",
+            clean_title
+        );
+        let mut has_shorts = false;
+
+        for (i, m) in results.iter().enumerate() {
+            let block = format!(
+                "--------------------------------------------------------------------\r\n\
+РОЛИК #{:02} ({}) — Файл: {}\r\n\
+--------------------------------------------------------------------\r\n\
+НАЗВАНИЕ:\r\n{}\r\n\r\n\
+ОПИСАНИЕ:\r\n{}\r\n\r\n\
+ХЕШТЕГИ:\r\n{}\r\n\r\n",
+                i + 1,
+                m.clip_type.to_uppercase(),
+                m.clip_path,
+                m.title,
+                m.description,
+                m.hashtags
+            );
+            all_summary.push_str(&block);
+            if m.clip_type == "shorts" {
+                has_shorts = true;
+                shorts_summary.push_str(&block);
+            }
+        }
+
+        let _ = tokio::fs::create_dir_all(clips_root).await;
+        let _ = tokio::fs::write(
+            clips_root.join("SMM_Все_описания_и_хештеги.txt"),
+            all_summary.as_bytes(),
+        )
+        .await;
+
+        if has_shorts {
+            let shorts_dir = clips_root.join("Шортсы");
+            let _ = tokio::fs::create_dir_all(&shorts_dir).await;
+            let _ = tokio::fs::write(
+                shorts_dir.join("SMM_Описания_всех_шортсов.txt"),
+                shorts_summary.as_bytes(),
+            )
+            .await;
+        }
+
+        // Сохраняем JSON-кэш SMM-метаданных для быстрой подгрузки в UI
+        if let Ok(json_str) = serde_json::to_string_pretty(&results) {
+            let _ = tokio::fs::write(clips_root.join("smm_metadata.json"), json_str.as_bytes()).await;
+        }
+    }
+
+    results
+}
+
+
 

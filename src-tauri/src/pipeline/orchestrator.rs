@@ -12,6 +12,10 @@ pub struct PipelineConfig {
     pub vision_model_path: Option<String>,
     pub text_engine: String,
     pub text_model_name: String,
+    #[serde(default)]
+    pub verifier_model_name: Option<String>,
+    #[serde(default)]
+    pub smm_model_name: Option<String>,
     pub ollama_url: String,
     pub openai_base_url: Option<String>,
     pub openai_api_key: Option<String>,
@@ -872,15 +876,21 @@ pub async fn run_pipeline(
             });
         }
 
-        let stage2_model_name = if config.text_engine == "openai" {
-            config
-                .openai_model
-                .clone()
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or_else(|| config.text_model_name.clone())
-        } else {
-            config.text_model_name.clone()
-        };
+        let stage2_model_name = config
+            .verifier_model_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                if config.text_engine == "openai" {
+                    config
+                        .openai_model
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| config.text_model_name.clone())
+                } else {
+                    config.text_model_name.clone()
+                }
+            });
 
         let stage2_text_cfg = crate::text_analyzer::TextAnalysisConfig {
             engine: match config.text_engine.as_str() {
@@ -1376,6 +1386,7 @@ pub async fn run_pipeline(
         &format!("Директория сохранения шортсов проекта: '{}'", shorts_dir.display()),
     );
 
+    let mut exported_smm_targets: Vec<(PathBuf, f64, f64, String)> = Vec::new();
     let total_clips = selected_intervals.len();
     for (i, item) in selected_intervals.iter().enumerate() {
         let start_sec = item.0;
@@ -1429,6 +1440,7 @@ pub async fn run_pipeline(
             &app_handle,
         ).await;
 
+        exported_smm_targets.push((clip_path.clone(), start_sec, end_sec, "shorts".to_string()));
         generated_clips.push(clip_path);
     }
 
@@ -1484,6 +1496,9 @@ pub async fn run_pipeline(
                 &video_path,
                 &app_handle,
             ).await;
+            let h_start = selected_intervals.first().map(|s| s.0).unwrap_or(0.0);
+            let h_end = selected_intervals.last().map(|s| s.1).unwrap_or(video_duration);
+            exported_smm_targets.push((highlights_path.clone(), h_start, h_end, "highlights".to_string()));
             generated_clips.push(highlights_path);
         }
     }
@@ -1531,8 +1546,66 @@ pub async fn run_pipeline(
                 &video_path,
                 &app_handle,
             ).await;
+            exported_smm_targets.push((talk_path.clone(), 0.0, video_duration, "talk_video".to_string()));
             generated_clips.push(talk_path);
         }
+    }
+
+    // 7. ФИНАЛЬНАЯ (3-Я) LLM-ЗАДАЧА: SMM-КОПИРАЙТЕР (Названия, ироничные описания, хештеги и экспорт .txt файлов)
+    if !exported_smm_targets.is_empty() {
+        let _ = app_handle.emit("pipeline-progress", PipelineProgressPayload {
+            percent: 99.5,
+            stage: "Финальный SMM-копирайтинг: генерация названий, описаний с иронией и хештегов...".to_string(),
+        });
+
+        let smm_model_name = config
+            .smm_model_name
+            .clone()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| config.verifier_model_name.clone().filter(|s| !s.trim().is_empty()))
+            .unwrap_or_else(|| {
+                if config.text_engine == "openai" {
+                    config
+                        .openai_model
+                        .clone()
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or_else(|| config.text_model_name.clone())
+                } else {
+                    config.text_model_name.clone()
+                }
+            });
+
+        let smm_text_cfg = crate::text_analyzer::TextAnalysisConfig {
+            engine: match config.text_engine.as_str() {
+                "openai" => crate::text_analyzer::TextEngine::OpenAi,
+                "ollama" => crate::text_analyzer::TextEngine::Ollama,
+                "llama" => crate::text_analyzer::TextEngine::LlamaCli,
+                "builtin" => crate::text_analyzer::TextEngine::Builtin,
+                _ => crate::text_analyzer::TextEngine::LlamaCli,
+            },
+            model_name: smm_model_name,
+            ollama_url: config.ollama_url.clone(),
+            openai_base_url: config
+                .openai_base_url
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+        };
+
+        let smm_results = crate::text_analyzer::generate_and_save_smm_bundle(
+            &video_path,
+            &clips_root,
+            &exported_smm_targets,
+            &fragments,
+            &scenes,
+            config.selected_characters.as_deref(),
+            &smm_text_cfg,
+            &app_handle,
+            cancel_rx.resubscribe(),
+        )
+        .await;
+
+        let _ = app_handle.emit("smm-metadata-generated", &smm_results);
     }
 
     crate::logger::emit_log(

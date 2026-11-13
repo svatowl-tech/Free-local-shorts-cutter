@@ -44,6 +44,8 @@ async fn main() -> anyhow::Result<()> {
             commands::start_pipeline,
             commands::render_clips_from_fragments,
             commands::repair_selected_fragments,
+            commands::get_project_smm_metadata,
+            commands::regenerate_clip_smm,
             commands::generate_subtitles_only,
             commands::parse_custom_subtitles,
             commands::parse_custom_subtitles_content,

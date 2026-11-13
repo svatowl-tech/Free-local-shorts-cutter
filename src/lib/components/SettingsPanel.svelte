@@ -459,6 +459,16 @@
     pipelineStore.updateConfig({ text_model_name: value });
   }
 
+  function handleVerifierModelChange(e: Event) {
+    const value = (e.target as HTMLSelectElement | HTMLInputElement).value;
+    pipelineStore.updateConfig({ verifier_model_name: value });
+  }
+
+  function handleSmmModelChange(e: Event) {
+    const value = (e.target as HTMLSelectElement | HTMLInputElement).value;
+    pipelineStore.updateConfig({ smm_model_name: value });
+  }
+
   function handleOllamaUrlChange(e: Event) {
     const value = (e.target as HTMLInputElement).value;
     pipelineStore.updateConfig({ ollama_url: value });
@@ -484,6 +494,8 @@
 
   $: whisperModels = $modelsStore.models.filter(m => m.category === 'whisper');
   $: llmModels = $modelsStore.models.filter(m => m.category === 'llm');
+  $: installedLlmModels = llmModels.filter(m => m.exists);
+  $: uninstalledLlmModels = llmModels.filter(m => !m.exists);
   $: visionModels = $modelsStore.models.filter(m => m.category === 'vision');
 </script>
 
@@ -728,7 +740,7 @@
         on:click={toggleAdvanced}
         class="label-mono flex items-center justify-between w-full text-left cursor-pointer hover:text-[#e2e2e4] transition-colors"
       >
-        <span>Расширенные настройки нейросетей</span>
+        <span>Расширенные настройки нейросетей и SMM</span>
         {#if showAdvanced}
           <ChevronUp class="h-3.5 w-3.5 text-[#5865f2]" />
         {:else}
@@ -769,7 +781,7 @@
 
           <!-- NLP Text Engine -->
           <div class="flex flex-col gap-1">
-            <label for="text_engine" class="label-mono">Движок анализа диалогов и хайлайтов</label>
+            <label for="text_engine" class="label-mono">Движок анализа диалогов, проверки и SMM</label>
             <select 
               id="text_engine"
               value={$pipelineStore.config.text_engine}
@@ -785,24 +797,137 @@
           </div>
 
           {#if $pipelineStore.config.text_engine === 'llama'}
-            <!-- Local GGUF NLP Model -->
-            <div class="flex flex-col gap-1.5">
-              <label for="text_model" class="label-mono">Модель анализа диалогов и 2-й проверки (RU Vikhr / Qwen)</label>
-              <select
-                id="text_model"
-                value={$pipelineStore.config.text_model_name}
-                on:change={handleTextModelChange}
-                disabled={$pipelineStore.status === 'running'}
-                class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
-              >
-                {#each llmModels as lm}
-                  <option value={lm.filename}>
-                    {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Скачана]' : '[Не скачана]'}
-                  </option>
-                {/each}
-              </select>
-              <div class="text-[10px] font-mono text-[rgba(226,226,224,0.55)] leading-relaxed bg-[#16161a]/60 border border-[rgba(226,226,224,0.1)] rounded-[2px] px-2.5 py-1.5">
-                🇷🇺 <span class="text-[#e2e2e4]">Двухэтапный отбор:</span> 1) Первичная оценка реплик и эмоций голоса → 2) Финальная проверка уже собранных клипов целиком через русские модели <span class="text-[#5865f2]">Vikhr</span> на связность, юмор, законченность мысли и отсев бреда/скукоты.
+            <!-- 3-Stage Local GGUF NLP Models Configuration -->
+            <div class="p-3 bg-[#16161a]/75 border border-[rgba(226,226,224,0.14)] rounded-[3px] flex flex-col gap-3">
+              <div class="flex items-center justify-between">
+                <span class="label-mono text-[#e2e2e4] normal-case text-xs font-semibold">Распределение моделей по 3 этапам ИИ-конвейера</span>
+                <span class="font-mono text-[10px] text-[#23c55e]">
+                  Установлено: {installedLlmModels.length}/{llmModels.length}
+                </span>
+              </div>
+
+              <!-- Stage 1: Initial replica scoring -->
+              <div class="flex flex-col gap-1">
+                <label for="text_model_stage1" class="label-mono text-[10px] text-[#9aa4ff]">
+                  1. Первичная оценка реплик и эмоций (Отбор кандидатов)
+                </label>
+                <select
+                  id="text_model_stage1"
+                  value={$pipelineStore.config.text_model_name}
+                  on:change={handleTextModelChange}
+                  disabled={$pipelineStore.status === 'running'}
+                  class="w-full bg-[#0c0c0e] border border-[rgba(226,226,224,0.18)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+                >
+                  {#if installedLlmModels.length > 0}
+                    <optgroup label="✓ Установленные модели (Готовы к работе)">
+                      {#each installedLlmModels as lm}
+                        <option value={lm.filename}>
+                          ✓ {lm.name} ({lm.params}) [Установлена]
+                        </option>
+                      {/each}
+                    </optgroup>
+                    {#if uninstalledLlmModels.length > 0}
+                      <optgroup label="Доступные для скачивания в менеджере">
+                        {#each uninstalledLlmModels as lm}
+                          <option value={lm.filename}>
+                            {lm.name} ({lm.params}) [Не скачана]
+                          </option>
+                        {/each}
+                      </optgroup>
+                    {/if}
+                  {:else}
+                    {#each llmModels as lm}
+                      <option value={lm.filename}>
+                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Установлена]' : '[Не скачана]'}
+                      </option>
+                    {/each}
+                  {/if}
+                </select>
+              </div>
+
+              <!-- Stage 2: Final 2nd verification & repair loop -->
+              <div class="flex flex-col gap-1">
+                <label for="text_model_stage2" class="label-mono text-[10px] text-emerald-400">
+                  2. Финальная 2-я проверка (Связность, юмор, отсев бреда и 2-й круг доработки)
+                </label>
+                <select
+                  id="text_model_stage2"
+                  value={$pipelineStore.config.verifier_model_name || $pipelineStore.config.text_model_name}
+                  on:change={handleVerifierModelChange}
+                  disabled={$pipelineStore.status === 'running'}
+                  class="w-full bg-[#0c0c0e] border border-emerald-500/30 rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-emerald-400 focus:outline-none"
+                >
+                  {#if installedLlmModels.length > 0}
+                    <optgroup label="✓ Установленные модели (Готовы к работе)">
+                      {#each installedLlmModels as lm}
+                        <option value={lm.filename}>
+                          ✓ {lm.name} ({lm.params}) [Установлена]
+                        </option>
+                      {/each}
+                    </optgroup>
+                    {#if uninstalledLlmModels.length > 0}
+                      <optgroup label="Доступные для скачивания в менеджере">
+                        {#each uninstalledLlmModels as lm}
+                          <option value={lm.filename}>
+                            {lm.name} ({lm.params}) [Не скачана]
+                          </option>
+                        {/each}
+                      </optgroup>
+                    {/if}
+                  {:else}
+                    {#each llmModels as lm}
+                      <option value={lm.filename}>
+                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Установлена]' : '[Не скачана]'}
+                      </option>
+                    {/each}
+                  {/if}
+                </select>
+              </div>
+
+              <!-- Stage 3: Final SMM Copywriter -->
+              <div class="flex flex-col gap-1">
+                <label for="text_model_stage3" class="label-mono text-[10px] text-amber-300">
+                  3. Финальный SMM-копирайтер (Название, описание с иронией, хештеги в .txt)
+                </label>
+                <select
+                  id="text_model_stage3"
+                  value={$pipelineStore.config.smm_model_name || $pipelineStore.config.verifier_model_name || $pipelineStore.config.text_model_name}
+                  on:change={handleSmmModelChange}
+                  disabled={$pipelineStore.status === 'running'}
+                  class="w-full bg-[#0c0c0e] border border-amber-500/35 rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-amber-400 focus:outline-none"
+                >
+                  {#if installedLlmModels.length > 0}
+                    <optgroup label="✓ Установленные модели (Готовы к работе)">
+                      {#each installedLlmModels as lm}
+                        <option value={lm.filename}>
+                          ✓ {lm.name} ({lm.params}) [Установлена]
+                        </option>
+                      {/each}
+                    </optgroup>
+                    {#if uninstalledLlmModels.length > 0}
+                      <optgroup label="Доступные для скачивания в менеджере">
+                        {#each uninstalledLlmModels as lm}
+                          <option value={lm.filename}>
+                            {lm.name} ({lm.params}) [Не скачана]
+                          </option>
+                        {/each}
+                      </optgroup>
+                    {/if}
+                  {:else}
+                    {#each llmModels as lm}
+                      <option value={lm.filename}>
+                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Установлена]' : '[Не скачана]'}
+                      </option>
+                    {/each}
+                  {/if}
+                </select>
+              </div>
+
+              <div class="text-[10px] font-mono text-[rgba(226,226,224,0.55)] leading-relaxed bg-[#0c0c0e]/80 border border-[rgba(226,226,224,0.1)] rounded-[2px] px-2.5 py-2">
+                <div>🇷🇺 <span class="text-[#e2e2e4]">3-ступенчатый ИИ-конвейер:</span></div>
+                <div>• <span class="text-[#9aa4ff]">Этап 1:</span> Первичная оценка реплик и эмоциональных пиков.</div>
+                <div>• <span class="text-emerald-400">Этап 2:</span> Финальная ревизия клипов на связность, юмор и возврат на доработку (1 круг).</div>
+                <div>• <span class="text-amber-300">Этап 3 (SMM):</span> Генерация названия, описания (с учётом названия видео, контекста, сути внутри и ироничной шутки) + хештегов и экспорт в <span class="text-[#e2e2e4]">.txt</span> для Шортсов, Хайлайтов и Разговорного видео.</div>
               </div>
             </div>
           {:else if $pipelineStore.config.text_engine === 'ollama'}
@@ -821,7 +946,7 @@
                 />
               </div>
               <div class="flex flex-col gap-1">
-                <label for="ollama_model" class="label-mono">Имя модели в Ollama</label>
+                <label for="ollama_model" class="label-mono">1. Модель первичной оценки (Ollama)</label>
                 <input
                   id="ollama_model"
                   type="text"
@@ -830,6 +955,30 @@
                   on:input={handleTextModelChange}
                   disabled={$pipelineStore.status === 'running'}
                   class="w-full bg-[#0c0c0e] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
+                />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="ollama_verifier_model" class="label-mono text-emerald-400">2. Модель финальной проверки (Ollama)</label>
+                <input
+                  id="ollama_verifier_model"
+                  type="text"
+                  placeholder="По умолчанию = модель этапа 1"
+                  value={$pipelineStore.config.verifier_model_name || $pipelineStore.config.text_model_name}
+                  on:input={handleVerifierModelChange}
+                  disabled={$pipelineStore.status === 'running'}
+                  class="w-full bg-[#0c0c0e] border border-emerald-500/30 rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-emerald-400 focus:outline-none"
+                />
+              </div>
+              <div class="flex flex-col gap-1">
+                <label for="ollama_smm_model" class="label-mono text-amber-300">3. Модель SMM-копирайтера (Название, описание, хештеги)</label>
+                <input
+                  id="ollama_smm_model"
+                  type="text"
+                  placeholder="По умолчанию = модель этапа 2"
+                  value={$pipelineStore.config.smm_model_name || $pipelineStore.config.verifier_model_name || $pipelineStore.config.text_model_name}
+                  on:input={handleSmmModelChange}
+                  disabled={$pipelineStore.status === 'running'}
+                  class="w-full bg-[#0c0c0e] border border-amber-500/35 rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-amber-400 focus:outline-none"
                 />
               </div>
             </div>

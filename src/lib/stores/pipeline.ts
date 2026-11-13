@@ -10,13 +10,17 @@ import {
   onRenderProgress,
   onSuggestedFragments,
   onPipelineLog,
+  onSmmMetadataGenerated,
+  getProjectSmmMetadata,
+  buildDemoSmmItem,
   cancelPipeline as ipcCancelPipeline,
   openFolder as ipcOpenFolder,
   getOpenAiProfiles,
   loadBumperConfig,
   type PipelineLogPayload,
   type PipelineConfig,
-  type CustomSubtitlesParseResult
+  type CustomSubtitlesParseResult,
+  type SmmClipMetadata
 } from '../ipc';
 import { fragmentsStore, type Fragment } from './fragments';
 import {
@@ -58,6 +62,7 @@ export interface PipelineState {
   percentage: number;
   stageDetails: StageDetails;
   clips: string[];
+  smmMetadata: SmmClipMetadata[];
   error: string | null;
   logs: string[];
   detailedLogs: LogEntry[];
@@ -78,6 +83,8 @@ const DEFAULT_CONFIG: PipelineConfig = {
   vision_model_path: 'models/moondream2-q4_k.gguf',
   text_engine: 'llama',
   text_model_name: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
+  verifier_model_name: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
+  smm_model_name: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
   ollama_url: 'http://localhost:11434',
   openai_base_url: 'https://api.openai.com/v1',
   openai_api_key: '',
@@ -148,6 +155,7 @@ const createPipelineStore = () => {
     percentage: 0,
     stageDetails: {},
     clips: [],
+    smmMetadata: [],
     error: null,
     logs: [],
     detailedLogs: []
@@ -349,25 +357,41 @@ const createPipelineStore = () => {
       generatedClips.push(`${baseDir}/Ток-видео/Ток_видео_${videoName}`);
     }
 
+    const smmModelName = state.config.smm_model_name || state.config.verifier_model_name || state.config.text_model_name;
+    addLog(`✍️ [Финальный SMM-копирайтер] Генерация названий, ироничных описаний и хештегов через модель '${smmModelName}' + сохранение .txt файлов...`, 'LLM');
+    const demoSmm = generatedClips.map((cPath, idx) =>
+      buildDemoSmmItem(cPath, videoName, idx, idx * 20 + 8, idx * 20 + 23, smmModelName)
+    );
+
     update(s => ({
       ...s,
       status: 'completed',
       currentStage: 'Обработка успешно завершена!',
       percentage: 100,
-      clips: generatedClips
+      clips: generatedClips,
+      smmMetadata: demoSmm
     }));
-    addLog(`Пайплайн успешно отработал! Сгенерировано роликов: ${generatedClips.length}`);
+    addLog(`Пайплайн успешно отработал! Сгенерировано роликов: ${generatedClips.length} (+ .txt файлы SMM-описаний)`);
   };
 
   return {
     subscribe,
     addLog,
+    updateSmmItem: (updated: SmmClipMetadata) => {
+      update(s => {
+        const exists = s.smmMetadata.some(m => m.clip_path === updated.clip_path);
+        const nextList = exists
+          ? s.smmMetadata.map(m => (m.clip_path === updated.clip_path ? updated : m))
+          : [...s.smmMetadata, updated];
+        return { ...s, smmMetadata: nextList };
+      });
+    },
     setCustomSubtitles: (customSubtitles: CustomSubtitlesParseResult | null) => {
       update(s => ({ ...s, customSubtitles }));
     },
     setVideo: (video: SelectedVideo | null) => {
       update(s => {
-        const newState = { ...s, video, clips: [], error: null, percentage: 0, status: 'idle' as const, currentStage: '' };
+        const newState = { ...s, video, clips: [], smmMetadata: [], error: null, percentage: 0, status: 'idle' as const, currentStage: '' };
         return newState;
       });
       if (video) {
@@ -487,6 +511,7 @@ const createPipelineStore = () => {
         percentage: 0,
         stageDetails: {},
         clips: [],
+        smmMetadata: [],
         error: null,
         logs: [],
         detailedLogs: []
@@ -553,14 +578,23 @@ const createPipelineStore = () => {
           generatedClips.push(`${baseDir}/Ток-видео/Ток_видео_Без_пауз.mp4`);
         }
 
+        const smmModelName = config.smm_model_name || config.verifier_model_name || config.text_model_name;
+        addLog(`✍️ [Финальный SMM-копирайтер] Написание названий, описаний с иронией и хештегов (модель: ${smmModelName})...`, 'LLM');
+        const videoTitle = videoPath.split(/[/\\]/).pop() || 'Видео';
+        const demoSmm = generatedClips.map((cPath, idx) => {
+          const frag = fragments[idx] || { start: 0, end: 15 };
+          return buildDemoSmmItem(cPath, videoTitle, idx, frag.start, frag.end, smmModelName);
+        });
+
         update(s => ({
           ...s,
           status: 'completed',
-          currentStage: 'Экспорт всех роликов успешно завершен!',
+          currentStage: 'Экспорт всех роликов и SMM-текстов успешно завершен!',
           percentage: 100,
-          clips: generatedClips
+          clips: generatedClips,
+          smmMetadata: demoSmm
         }));
-        addLog(`Экспорт завершен! Готово роликов: ${generatedClips.length}.`);
+        addLog(`Экспорт завершен! Готово роликов: ${generatedClips.length} (SMM-описания сохранены в .txt файлы).`);
         return generatedClips;
       }
 
@@ -665,6 +699,15 @@ const createPipelineStore = () => {
           'pipeline-progress'
         );
 
+        const unlistenSmm = await safeListen(
+          () => onSmmMetadataGenerated((payload) => {
+            if (Array.isArray(payload) && payload.length > 0) {
+              update(s => ({ ...s, smmMetadata: payload }));
+            }
+          }),
+          'smm-metadata-generated'
+        );
+
         const formattedFragments = fragments.map(f => ({ start: f.start, end: f.end }));
 
         const clipPaths = await renderClipsFromFragments(
@@ -673,16 +716,22 @@ const createPipelineStore = () => {
             config
         );
 
+        const diskSmm = await getProjectSmmMetadata(videoPath, config);
+        if (diskSmm.length > 0) {
+          update(s => ({ ...s, smmMetadata: diskSmm }));
+        }
+
         unlistenPipelineLog();
         unlistenFfmpeg();
         unlistenWhisper();
         unlistenRender();
         unlistenPipeline();
+        unlistenSmm();
 
         update(s => ({
           ...s,
           status: 'completed',
-          currentStage: 'Экспорт клипов успешно завершен!',
+          currentStage: 'Экспорт клипов и SMM-текстов успешно завершен!',
           percentage: 100,
           clips: clipPaths
         }));
@@ -908,6 +957,15 @@ const createPipelineStore = () => {
           }
         }
 
+        const unlistenSmm = await safeListen(
+          () => onSmmMetadataGenerated((payload) => {
+            if (Array.isArray(payload) && payload.length > 0) {
+              update(s => ({ ...s, smmMetadata: payload }));
+            }
+          }),
+          'smm-metadata-generated'
+        );
+
         addLog(`Отправка IPC-запроса start_pipeline для файла: ${currentState.video.path}`, 'IPC', 'info');
 
         // Запускаем сам пайплайн
@@ -930,6 +988,13 @@ const createPipelineStore = () => {
           addLog('Пайплайн завершил отбор: сформировано 0 фрагментов.', 'Pipeline', 'warn');
         }
 
+        if (currentState.config.mode !== 'confirm') {
+          const diskSmm = await getProjectSmmMetadata(currentState.video.path, currentState.config);
+          if (diskSmm.length > 0) {
+            update(s => ({ ...s, smmMetadata: diskSmm }));
+          }
+        }
+
         // Даем слушателям событий завершить чтение потока перед отпиской
         setTimeout(() => {
           unlistenPipelineLog();
@@ -939,6 +1004,7 @@ const createPipelineStore = () => {
           unlistenPipeline();
           unlistenSuggested();
           unlistenRender();
+          unlistenSmm();
         }, 1200);
 
         if (currentState.config.mode === 'confirm') {

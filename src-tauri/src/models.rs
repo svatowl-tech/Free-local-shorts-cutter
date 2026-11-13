@@ -362,14 +362,15 @@ pub fn resolve_any_whisper_model(app_handle: &AppHandle, preferred: Option<&str>
     None
 }
 
-/// Ищет сначала указанную текстовую GGUF-модель, а если передан старый дефолт `models/qwen-1.5b-chat.gguf` —
+/// Ищет сначала указанную текстовую GGUF-модель, а если передан `auto` или старый дефолт `models/qwen-1.5b-chat.gguf` —
 /// проверяет сначала русскоязычные модели Vikhr и более мощные установленные модели (от 3B к 0.5B)
 pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) -> Option<PathBuf> {
     if let Some(pref) = preferred {
-        let is_legacy_default =
-            pref == "models/qwen-1.5b-chat.gguf" || pref == "qwen-1.5b-chat.gguf";
-        if !is_legacy_default {
-            if let Some(found) = resolve_model_path(app_handle, pref) {
+        let trimmed = pref.trim();
+        let is_legacy_or_auto =
+            trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") || trimmed == "models/qwen-1.5b-chat.gguf";
+        if !is_legacy_or_auto {
+            if let Some(found) = resolve_model_path(app_handle, trimmed) {
                 return Some(found);
             }
         }
@@ -397,16 +398,16 @@ pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) ->
     None
 }
 
-/// Находит приоритетную русскоязычную GGUF-модель (серии Vikhr 2B / 1.5B / 1B) специально для
-/// 2-й финальной проверки уже собранных клипов на связность, юмор, законченность мысли и отсев бреда/скукоты.
+/// Находит выбранную пользователем GGUF-модель (или приоритетную русскоязычную модель серии Vikhr 2B / 1.5B / 1B при режиме `auto`)
+/// для 2-й финальной проверки и финального SMM-копирайтинга.
 pub fn resolve_russian_verifier_llm_model(
     app_handle: &AppHandle,
     preferred: Option<&str>,
 ) -> Option<PathBuf> {
     if let Some(pref) = preferred {
-        let lower = pref.to_lowercase();
-        if lower.contains("vikhr") {
-            if let Some(found) = resolve_model_path(app_handle, pref) {
+        let trimmed = pref.trim();
+        if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("auto") {
+            if let Some(found) = resolve_model_path(app_handle, trimmed) {
                 return Some(found);
             }
         }
@@ -422,7 +423,7 @@ pub fn resolve_russian_verifier_llm_model(
             return Some(found);
         }
     }
-    // Если ни одна модель Vikhr ещё не скачана, используем выбранную пользователем или лучшую доступную GGUF-модель
+    // Если ни одна модель Vikhr ещё не скачана, используем любую лучшую доступную GGUF-модель
     resolve_any_llm_model(app_handle, preferred)
 }
 
