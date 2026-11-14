@@ -428,8 +428,11 @@ pub fn is_gguf_compatible_with_llama_cli(path: &Path) -> bool {
         if let Ok(n) = file.read(&mut buf) {
             let slice = &buf[..n];
             // Проверяем маркеры неподдерживаемых в b3201 архитектур (`gemma2` и RoPE-скейлинг `llama-3.2`)
+            const ROPE_SCALING_MARKER: &[u8] = b"rope.scaling.original_context_length";
             if slice.windows(6).any(|w| w == b"gemma2")
-                || slice.windows(35).any(|w| w == b"rope.scaling.original_context_length"[..35].as_ref())
+                || slice
+                    .windows(ROPE_SCALING_MARKER.len())
+                    .any(|w| w == ROPE_SCALING_MARKER)
             {
                 log::warn!(
                     "GGUF-модель '{}' использует несовместимую архитектуру/метаданные. Автоматическое переключение на совместимую модель (qwen2 / phi3).",

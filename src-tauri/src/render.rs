@@ -165,7 +165,7 @@ pub async fn attach_bumpers_if_enabled(
         }
     }
 
-    let mut global_cfg = match (resolved_cfg, detected_preset_id.as_ref()) {
+    let global_cfg = match (resolved_cfg, detected_preset_id.as_ref()) {
         (Some(mut cfg), _) => {
             cfg.ensure_populated();
             cfg
