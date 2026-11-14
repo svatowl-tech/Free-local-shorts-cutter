@@ -127,19 +127,19 @@ pub async fn attach_bumpers_if_enabled(
         .app_data_dir()
         .unwrap_or_else(|_| PathBuf::from("."));
 
-    // 1. Разрешаем конфигурацию: переданная в параметрах -> сохраненная на диске -> авто-поиск файлов в кэше
+    // 1. Разрешаем конфигурацию: если пользователь явно отключил заставки (enabled = false) в параметрах или на диске —
+    // строго выходим без авто-активации из кэша!
     let mut resolved_cfg: Option<crate::bumpers::BumperGlobalConfig> = None;
     if let Some(raw) = bumper_config {
-        if raw.enabled {
-            resolved_cfg = Some(raw.clone());
+        if !raw.enabled {
+            return Ok(());
         }
-    }
-    if resolved_cfg.is_none() {
-        if let Some(disk_cfg) = crate::bumpers::load_saved_bumper_config(app_handle) {
-            if disk_cfg.enabled {
-                resolved_cfg = Some(disk_cfg);
-            }
+        resolved_cfg = Some(raw.clone());
+    } else if let Some(disk_cfg) = crate::bumpers::load_saved_bumper_config(app_handle) {
+        if !disk_cfg.enabled {
+            return Ok(());
         }
+        resolved_cfg = Some(disk_cfg);
     }
 
     // Проверяем наличие предрендеренных файлов в cache_dir
@@ -216,79 +216,83 @@ pub async fn attach_bumpers_if_enabled(
     let mut pre_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
     let mut post_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
 
-    // 1. Авто-проверка и прикрепление Преролла
-    if pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
-        crate::logger::emit_log(
-            app_handle,
-            "Bumpers",
-            "info",
-            &format!("✓ Использован готовый предрендеренный преролл ({})", fmt_tag),
-        );
-        pre_bumper = Some((pre_file_primary, primary_cat.preroll.clone()));
-    } else if pre_file_alt.metadata().map(|m| m.len() > 512).unwrap_or(false) {
-        crate::logger::emit_log(
-            app_handle,
-            "Bumpers",
-            "info",
-            &format!("✓ Использован готовый предрендеренный преролл из формата {} с авто-масштабированием под {}", alt_fmt_tag, fmt_tag),
-        );
-        pre_bumper = Some((pre_file_alt, fallback_cat.preroll.clone()));
-    } else if primary_cat.preroll.enabled || fallback_cat.preroll.enabled {
-        let use_item = if primary_cat.preroll.enabled { &primary_cat.preroll } else { &fallback_cat.preroll };
-        crate::logger::emit_log(
-            app_handle,
-            "Bumpers",
-            "info",
-            &format!("Генерация преролла ({}) на лету перед вклейкой...", fmt_tag),
-        );
-        if let Err(e) = crate::bumpers::render_single_bumper_video(
-            use_item,
-            is_vertical,
-            source_video_path,
-            &pre_file_primary,
-            app_handle,
-        ).await {
-            crate::logger::emit_log(app_handle, "Bumpers", "warn", &format!("Ошибка генерации преролла на лету: {}", e));
-        } else if pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
-            pre_bumper = Some((pre_file_primary, use_item.clone()));
+    // 1. Авто-проверка и прикрепление Преролла (только если преролл включен в пресете)
+    if primary_cat.preroll.enabled || fallback_cat.preroll.enabled {
+        if primary_cat.preroll.enabled && pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("✓ Использован готовый предрендеренный преролл ({})", fmt_tag),
+            );
+            pre_bumper = Some((pre_file_primary, primary_cat.preroll.clone()));
+        } else if pre_file_alt.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("✓ Использован готовый предрендеренный преролл из формата {} с авто-масштабированием под {}", alt_fmt_tag, fmt_tag),
+            );
+            pre_bumper = Some((pre_file_alt, fallback_cat.preroll.clone()));
+        } else {
+            let use_item = if primary_cat.preroll.enabled { &primary_cat.preroll } else { &fallback_cat.preroll };
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("Генерация преролла ({}) на лету перед вклейкой...", fmt_tag),
+            );
+            if let Err(e) = crate::bumpers::render_single_bumper_video(
+                use_item,
+                is_vertical,
+                source_video_path,
+                &pre_file_primary,
+                app_handle,
+            ).await {
+                crate::logger::emit_log(app_handle, "Bumpers", "warn", &format!("Ошибка генерации преролла на лету: {}", e));
+            } else if pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+                pre_bumper = Some((pre_file_primary, use_item.clone()));
+            }
         }
     }
 
-    // 2. Авто-проверка и прикрепление Постролла
-    if post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
-        crate::logger::emit_log(
-            app_handle,
-            "Bumpers",
-            "info",
-            &format!("✓ Использован готовый предрендеренный постролл ({})", fmt_tag),
-        );
-        post_bumper = Some((post_file_primary, primary_cat.postroll.clone()));
-    } else if post_file_alt.metadata().map(|m| m.len() > 512).unwrap_or(false) {
-        crate::logger::emit_log(
-            app_handle,
-            "Bumpers",
-            "info",
-            &format!("✓ Использован готовый предрендеренный постролл из формата {} с авто-масштабированием под {}", alt_fmt_tag, fmt_tag),
-        );
-        post_bumper = Some((post_file_alt, fallback_cat.postroll.clone()));
-    } else if primary_cat.postroll.enabled || fallback_cat.postroll.enabled {
-        let use_item = if primary_cat.postroll.enabled { &primary_cat.postroll } else { &fallback_cat.postroll };
-        crate::logger::emit_log(
-            app_handle,
-            "Bumpers",
-            "info",
-            &format!("Генерация постролла ({}) на лету перед вклейкой...", fmt_tag),
-        );
-        if let Err(e) = crate::bumpers::render_single_bumper_video(
-            use_item,
-            is_vertical,
-            source_video_path,
-            &post_file_primary,
-            app_handle,
-        ).await {
-            crate::logger::emit_log(app_handle, "Bumpers", "warn", &format!("Ошибка генерации постролла на лету: {}", e));
-        } else if post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
-            post_bumper = Some((post_file_primary, use_item.clone()));
+    // 2. Авто-проверка и прикрепление Постролла (только если постролл включен в пресете)
+    if primary_cat.postroll.enabled || fallback_cat.postroll.enabled {
+        if primary_cat.postroll.enabled && post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("✓ Использован готовый предрендеренный постролл ({})", fmt_tag),
+            );
+            post_bumper = Some((post_file_primary, primary_cat.postroll.clone()));
+        } else if post_file_alt.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("✓ Использован готовый предрендеренный постролл из формата {} с авто-масштабированием под {}", alt_fmt_tag, fmt_tag),
+            );
+            post_bumper = Some((post_file_alt, fallback_cat.postroll.clone()));
+        } else {
+            let use_item = if primary_cat.postroll.enabled { &primary_cat.postroll } else { &fallback_cat.postroll };
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!("Генерация постролла ({}) на лету перед вклейкой...", fmt_tag),
+            );
+            if let Err(e) = crate::bumpers::render_single_bumper_video(
+                use_item,
+                is_vertical,
+                source_video_path,
+                &post_file_primary,
+                app_handle,
+            ).await {
+                crate::logger::emit_log(app_handle, "Bumpers", "warn", &format!("Ошибка генерации постролла на лету: {}", e));
+            } else if post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+                post_bumper = Some((post_file_primary, use_item.clone()));
+            }
         }
     }
 
@@ -1466,9 +1470,17 @@ fn analyze_bmp_frame_2d(
 
                 // 3. Операторский композиционный центрирующий Prior:
                 // В кадре 16:9 персонажи компонуются в центре (0.50) или по правилу третей (0.33..0.66).
-                // Край кадра (x > 0.78 или x < 0.22) требует гораздо более высокой обоснованности.
+                // Край кадра (x > 0.75 или x < 0.25) требует четких черт глаз/лица, чтобы лампы/стены на краю не уводили камеру в 19%!
                 let center_dist = (center_gx - 0.50).abs();
-                let composition_prior = (1.0 - (center_dist / 0.46).powi(2) * 0.44).clamp(0.55, 1.00);
+                let base_comp_prior = (1.0 - (center_dist / 0.46).powi(2) * 0.48).clamp(0.48, 1.00);
+                let edge_artifact_damp = if !(0.25..=0.75).contains(&center_gx)
+                    && (eye_density < 0.085 || upper_eye_density < 0.060)
+                {
+                    0.28
+                } else {
+                    1.00
+                };
+                let composition_prior = base_comp_prior * edge_artifact_damp;
 
                 // 4. Баланс черт лица: настоящее лицо обязательно имеет глаза и брови.
                 let feature_balance = if eye_density < 0.035 && skin_density > 0.12 {
@@ -1534,9 +1546,9 @@ fn analyze_bmp_frame_2d(
         }
 
         let refined_cx = if den > 0.1 {
-            (raw_cx * 0.60 + (num / den) * 0.40).clamp(0.18, 0.82)
+            (raw_cx * 0.60 + (num / den) * 0.40).clamp(0.24, 0.76)
         } else {
-            raw_cx.clamp(0.18, 0.82)
+            raw_cx.clamp(0.24, 0.76)
         };
 
         // Оцениваем активность мимики/рта (`speaker_activity`) внутри рамки лица (с акцентом на нижние 65% лица — губы/челюсть)
@@ -1583,7 +1595,7 @@ fn analyze_bmp_frame_2d(
             let w1 = c1.base_score * (1.0 + c1.speaker_activity * 0.4);
             let w2 = c2.base_score * (1.0 + c2.speaker_activity * 0.4);
             let mid = ((c1.center_ratio * w1 + c2.center_ratio * w2) / (w1 + w2).max(0.01))
-                .clamp(0.18, 0.82);
+                .clamp(0.26, 0.74);
             dual_group_ratio = Some(mid);
         }
     }
@@ -1630,7 +1642,7 @@ fn resolve_multiface_shot_segments(
     if dual_samples.len() * 2 >= slice.len() && !dual_samples.is_empty() {
         let num: f64 = dual_samples.iter().map(|(r, w)| r * w).sum();
         let den: f64 = dual_samples.iter().map(|(_, w)| *w).sum();
-        let group_ratio = (num / den.max(0.01)).clamp(0.18, 0.82);
+        let group_ratio = (num / den.max(0.01)).clamp(0.26, 0.74);
         return vec![CameraSegment {
             start_t,
             end_t,
@@ -1679,15 +1691,15 @@ fn resolve_multiface_shot_segments(
     clusters.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // Защита от краевых ложных кластеров (водяные знаки, колонны, края стен):
-    // Если первый кластер оказался на крайнем краю (x > 0.77 или x < 0.23),
-    // а среди остальных кластеров есть кандидат в комфортной центральной зоне (x от 0.28 до 0.72),
-    // проверяем: если центральный кластер достаточно выражен (>= 35% веса крайнего ИЛИ замечен в 3+ кадрах),
+    // Если первый кластер оказался ближе к краю (x > 0.74 или x < 0.26),
+    // а среди остальных кластеров есть кандидат в комфортной центральной/третьевой зоне (x от 0.26 до 0.74),
+    // проверяем: если центральный кластер достаточно выражен (>= 22% веса крайнего ИЛИ замечен в 2+ кадрах),
     // то предпочтение отдается центральному персонажу!
     let mut best_cluster_idx = 0_usize;
-    if clusters.len() >= 2 && (clusters[0].0 > 0.77 || clusters[0].0 < 0.23) {
+    if clusters.len() >= 2 && (clusters[0].0 > 0.74 || clusters[0].0 < 0.26) {
         for (idx, cl) in clusters.iter().enumerate().skip(1) {
-            let is_central = cl.0 >= 0.28 && cl.0 <= 0.72;
-            if is_central && (cl.1 >= clusters[0].1 * 0.35 || cl.2 >= 3) {
+            let is_central = (0.26..=0.74).contains(&cl.0);
+            if is_central && (cl.1 >= clusters[0].1 * 0.22 || cl.2 >= 2) {
                 best_cluster_idx = idx;
                 break;
             }
@@ -1698,14 +1710,14 @@ fn resolve_multiface_shot_segments(
         clusters.insert(0, chosen);
     }
 
-    let primary_cluster_x = clusters[0].0;
+    let primary_cluster_x = clusters[0].0.clamp(0.26, 0.74);
 
     // 3. Если в ракурсе есть 2 конкурирующих разнесенных лица (например левый собеседник ~30% и правый ~70%)
     // и ракурс длится >= 3.5с (7+ сэмплов), проверяем, нет ли устойчивой смены говорящего между первой и второй половиной ракурса.
-    // ВАЖНО: отсекаем краевые ложные кластеры (< 24% или > 76%), чтобы камера никогда не улетала в край стены/фона!
+    // ВАЖНО: отсекаем краевые ложные кластеры (< 26% или > 74%), чтобы камера никогда не улетала в край стены/фона!
     if clusters.len() >= 2 && slice.len() >= 7 {
         let secondary_cluster_x = clusters[1].0;
-        let secondary_is_valid_zone = (0.24..=0.76).contains(&secondary_cluster_x);
+        let secondary_is_valid_zone = (0.26..=0.74).contains(&secondary_cluster_x);
         let cluster_dist = (primary_cluster_x - secondary_cluster_x).abs();
 
         if secondary_is_valid_zone
@@ -1775,14 +1787,14 @@ fn resolve_multiface_shot_segments(
                     CameraSegment {
                         start_t,
                         end_t: split_t,
-                        start_ratio: target_a.clamp(0.24, 0.76),
-                        end_ratio: target_a.clamp(0.24, 0.76),
+                        start_ratio: target_a.clamp(0.26, 0.74),
+                        end_ratio: target_a.clamp(0.26, 0.74),
                     },
                     CameraSegment {
                         start_t: split_t,
                         end_t,
-                        start_ratio: target_b.clamp(0.24, 0.76),
-                        end_ratio: target_b.clamp(0.24, 0.76),
+                        start_ratio: target_b.clamp(0.26, 0.74),
+                        end_ratio: target_b.clamp(0.26, 0.74),
                     },
                 ];
             }
@@ -1807,12 +1819,12 @@ fn resolve_multiface_shot_segments(
         {
             let w = (matched.base_score * (1.0 + matched.speaker_activity * 1.5)).max(0.10);
             running_x = running_x * 0.65 + matched.center_ratio * 0.35;
-            track_points.push((s.rel_time, matched.center_ratio, w));
+            track_points.push((s.rel_time, matched.center_ratio.clamp(0.26, 0.74), w));
         }
     }
 
     if track_points.is_empty() {
-        let r = primary_cluster_x.clamp(0.19, 0.81);
+        let r = primary_cluster_x.clamp(0.26, 0.74);
         return vec![CameraSegment {
             start_t,
             end_t,
@@ -1823,7 +1835,7 @@ fn resolve_multiface_shot_segments(
 
     let weighted_num: f64 = track_points.iter().map(|(_, r, w)| r * w).sum();
     let weighted_den: f64 = track_points.iter().map(|(_, _, w)| *w).sum();
-    let mean_ratio = (weighted_num / weighted_den.max(0.01)).clamp(0.19, 0.81);
+    let mean_ratio = (weighted_num / weighted_den.max(0.01)).clamp(0.26, 0.74);
 
     // Если персонаж действительно плавно идет/смещается в кадре (4+ точки одного и того же трека) — строим плавное ведение камеры
     if track_points.len() >= 4 {
@@ -1840,8 +1852,8 @@ fn resolve_multiface_shot_segments(
             return vec![CameraSegment {
                 start_t,
                 end_t,
-                start_ratio: avg_first.clamp(0.19, 0.81),
-                end_ratio: avg_second.clamp(0.19, 0.81),
+                start_ratio: avg_first.clamp(0.26, 0.74),
+                end_ratio: avg_second.clamp(0.26, 0.74),
             }];
         }
     }

@@ -652,6 +652,10 @@ pub fn is_weak_clip_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
         "черт",
         "какого",
         "что это",
+        "что такое",
+        "поговорить",
+        "эй, полегче",
+        "полегче",
         "как именно",
         "а как именно",
         "в смысле",
@@ -1164,7 +1168,7 @@ pub async fn analyze_with_llama_cli(
     );
 
     let mut all_scores = Vec::with_capacity(fragments.len());
-    let batch_size = 25;
+    let batch_size = 16;
     let total_batches = (fragments.len() + batch_size - 1) / batch_size;
     let mut use_gpu = true;
     let mut gpu_succeeded_once = false;
@@ -1275,13 +1279,20 @@ pub async fn analyze_with_llama_cli(
                     if use_gpu {
                         gpu_succeeded_once = true;
                     }
+                    let normalized = normalize_batch_scores(batch_scores, chunk);
                     crate::logger::emit_log(
                         app_handle,
                         "LLM",
                         "info",
-                        &format!("✓ Пакет {}/{}: получено {} валидных оценок от llama-cli", batch_idx + 1, total_batches, batch_scores.len()),
+                        &format!(
+                            "✓ Пакет {}/{}: получено {} валидных оценок (сырых от LLM: {})",
+                            batch_idx + 1,
+                            total_batches,
+                            normalized.len(),
+                            batch_scores.len()
+                        ),
                     );
-                    all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
+                    all_scores.extend_from_slice(&normalized);
                 } else {
                     consecutive_parse_failures += 1;
                     crate::logger::emit_log(
@@ -1842,12 +1853,12 @@ fn format_prompt_for_gguf_model(
 fn format_preview_text_68(txt: &str) -> String {
     let clean = txt.split_whitespace().collect::<Vec<&str>>().join(" ");
     let char_len = clean.chars().count();
-    if char_len <= 68 {
+    if char_len <= 96 {
         clean
     } else {
-        let truncated: String = clean.chars().take(68).collect();
+        let truncated: String = clean.chars().take(96).collect();
         if let Some(pos) = truncated.rfind(' ') {
-            if pos >= 36 {
+            if pos >= 48 {
                 return format!("{}...", &truncated[..pos]);
             }
         }
@@ -4266,14 +4277,26 @@ async fn run_llama_cli_smm(
 /// Извлекает ключевой смысловой объект/тему из текста диалога, чтобы заголовки и описания
 /// были предметными, но без дословного копирования фраз субтитров
 fn extract_scene_topic_label(lower_dlg: &str) -> &'static str {
-    if lower_dlg.contains("челюст") || lower_dlg.contains("зуб") || lower_dlg.contains("имплант") || lower_dlg.contains("хром") || lower_dlg.contains("риппер") {
+    if lower_dlg.contains("руль") || lower_dlg.contains("тачк") || lower_dlg.contains("тормоз") || lower_dlg.contains("заклинил") || lower_dlg.contains("взломал мою") {
+        "перехвата управления машиной на полном ходу"
+    } else if lower_dlg.contains("камер") || lower_dlg.contains("лаборатор") || lower_dlg.contains("безопасност") || lower_dlg.contains("охран") {
+        "тихого взлома камер и проникновения на закрытый объект"
+    } else if lower_dlg.contains("клиник") || lower_dlg.contains("шарлатан") || lower_dlg.contains("приступ") || lower_dlg.contains("сознани") || lower_dlg.contains("стабилизир") {
+        "экстренной откачки в подпольной клинике риппера"
+    } else if lower_dlg.contains("операция прошла") || lower_dlg.contains("злишься") || lower_dlg.contains("чувствую вину") || lower_dlg.contains("облажал") || lower_dlg.contains("неудачн") {
+        "тяжёлого разговора после проваленной операции и чувства вины"
+    } else if lower_dlg.contains("хочешь жить") || lower_dlg.contains("не угрожаю") || lower_dlg.contains("отойди от") || lower_dlg.contains("отвезем тебя") || lower_dlg.contains("заложн") {
+        "напряжённых переговоров под прицелом и ультиматума"
+    } else if lower_dlg.contains("дверь открыта") || lower_dlg.contains("убегаешь") || lower_dlg.contains("никуда не уйдешь") || lower_dlg.contains("пойма") || lower_dlg.contains("догон") {
+        "отчаянной погони и попытки уйти от преследования"
+    } else if lower_dlg.contains("челюст") || lower_dlg.contains("зуб") || lower_dlg.contains("имплант") || lower_dlg.contains("хром") || lower_dlg.contains("риппер") {
         "опасного апгрейда имплантов без тормозов"
     } else if lower_dlg.contains("gps") || lower_dlg.contains("слежк") || lower_dlg.contains("чип") || lower_dlg.contains("линк") || lower_dlg.contains("отключ") {
-        "отключения чипа слежки и цифрового поводка"
-    } else if lower_dlg.contains("киберпсих") || lower_dlg.contains("псих") || lower_dlg.contains("галлюцин") || lower_dlg.contains("крыша едет") {
-        "грани киберпсихоза и потери контроля над телом"
-    } else if lower_dlg.contains("полиц") || lower_dlg.contains("коп") || lower_dlg.contains("арест") || lower_dlg.contains("допрос") || lower_dlg.contains("корпорац") || lower_dlg.contains("арасак") {
-        "жесткого прессинга со стороны корпораций и закона"
+        "охоты за секретным чипом и цифрового взлома"
+    } else if lower_dlg.contains("киберпсих") || lower_dlg.contains("псих") || lower_dlg.contains("галлюцин") || lower_dlg.contains("крыша едет") || lower_dlg.contains("перегоревш") {
+        "грани киберпсихоза и потери контроля над хромом"
+    } else if lower_dlg.contains("полиц") || lower_dlg.contains("коп") || lower_dlg.contains("арест") || lower_dlg.contains("допрос") || lower_dlg.contains("корпорац") || lower_dlg.contains("арасак") || lower_dlg.contains("кантао") || lower_dlg.contains("макс-так") {
+        "жесткого столкновения с корпорациями и спецназом"
     } else if lower_dlg.contains("доктор") || lower_dlg.contains("обезбол") || lower_dlg.contains("боль") || lower_dlg.contains("больно") || lower_dlg.contains("ран") || lower_dlg.contains("таблетк") {
         "послебоевой перевязки и упрямого характера"
     } else if lower_dlg.contains("поеду с тобой") || lower_dlg.contains("поеду с ") || lower_dlg.contains("бывайте") || lower_dlg.contains("проща") || lower_dlg.contains("отблагодар") {
@@ -4290,8 +4313,8 @@ fn extract_scene_topic_label(lower_dlg: &str) -> &'static str {
         "рискованного расчёта и отчаянной попытки выстоять"
     } else if lower_dlg.contains("монстр") || lower_dlg.contains("чудовищ") || lower_dlg.contains("демон") || lower_dlg.contains("проклят") {
         "пробуждения опасного проклятия"
-    } else if lower_dlg.contains("оружи") || lower_dlg.contains("меч") || lower_dlg.contains("клин") || lower_dlg.contains("удар") || lower_dlg.contains("бой") || lower_dlg.contains("атак") || lower_dlg.contains("стрел") {
-        "решающей схватки на пределе возможностей"
+    } else if lower_dlg.contains("оружи") || lower_dlg.contains("меч") || lower_dlg.contains("клин") || lower_dlg.contains("удар") || lower_dlg.contains("бой") || lower_dlg.contains("атак") || lower_dlg.contains("стрел") || lower_dlg.contains("прицел") || lower_dlg.contains("меткост") {
+        "решающей перестрелки на пределе возможностей"
     } else if lower_dlg.contains("секрет") || lower_dlg.contains("тайн") || lower_dlg.contains("правд") || lower_dlg.contains("скры") {
         "раскрытия неудобной правды"
     } else if lower_dlg.contains("план") || lower_dlg.contains("ловушк") || lower_dlg.contains("хитр") || lower_dlg.contains("взлом") {
@@ -4321,10 +4344,35 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     let topic_label = extract_scene_topic_label(&lower_dlg);
 
     // Определяем доминирующий драматический/комедийный архетип сцены
+    let is_car_hack_or_chase = lower_dlg.contains("руль")
+        || lower_dlg.contains("тачк")
+        || lower_dlg.contains("заклинил")
+        || lower_dlg.contains("взломал мою")
+        || lower_dlg.contains("дорог");
+    let is_security_breach_or_heist = lower_dlg.contains("камер")
+        || lower_dlg.contains("лаборатор")
+        || lower_dlg.contains("безопасност")
+        || lower_dlg.contains("здани");
+    let is_ripper_clinic = lower_dlg.contains("клиник")
+        || lower_dlg.contains("шарлатан")
+        || lower_dlg.contains("приступ")
+        || lower_dlg.contains("потеряла сознан")
+        || lower_dlg.contains("импланты на попроще")
+        || lower_dlg.contains("стабилизир");
+    let is_failed_op_guilt = lower_dlg.contains("операция прошла")
+        || lower_dlg.contains("еще злишься")
+        || lower_dlg.contains("чувствую вину")
+        || lower_dlg.contains("облажал");
+    let is_hostage_or_standoff = lower_dlg.contains("хочешь жить")
+        || lower_dlg.contains("не угрожаю")
+        || lower_dlg.contains("отойди от")
+        || lower_dlg.contains("отвезем тебя")
+        || lower_dlg.contains("предател");
     let is_cyber_implants = lower_dlg.contains("имплант")
         || lower_dlg.contains("челюст")
         || lower_dlg.contains("хром")
         || lower_dlg.contains("киберпсих")
+        || lower_dlg.contains("перегоревш")
         || lower_dlg.contains("апгрейд")
         || lower_dlg.contains("модификац");
     let is_gps_or_hacking = lower_dlg.contains("gps")
@@ -4371,7 +4419,10 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         || lower_dlg.contains("бежим")
         || lower_dlg.contains("монстр")
         || lower_dlg.contains("берегис")
-        || lower_dlg.contains("осторожн");
+        || lower_dlg.contains("осторожн")
+        || lower_dlg.contains("прицел")
+        || lower_dlg.contains("меткост")
+        || lower_dlg.contains("сдохн");
 
     // 1. Креативный заголовок ролика (БЕЗ дословных цитат из сабов и БЕЗ длинных списков актеров)
     let char_badge = if input.characters.len() == 1 {
@@ -4382,18 +4433,53 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         String::new()
     };
 
-    let hook_headline = if is_cyber_implants {
+    let hook_headline = if is_car_hack_or_chase {
+        let variants = [
+            "Взломали тачку прямо на ходу: когда руль больше тебе не подчиняется",
+            "Дистанционный угон на полной скорости: поездка превратилась в ловушку",
+            "Когда кто-то перехватил управление машиной посреди ночной трассы",
+        ];
+        variants[seed % variants.len()]
+    } else if is_security_breach_or_heist {
+        let variants = [
+            "Камеры погасли не просто так: идеальный взлом секретной лаборатории",
+            "Когда охрана поняла, что систему безопасности отключили изнутри",
+            "Тихий штурм закрытого сектора: за чем на самом деле пришли взломщики",
+        ];
+        variants[seed % variants.len()]
+    } else if is_ripper_clinic {
+        let variants = [
+            "Очнулась на столе у подпольного риппера: цена перегруженного хрома",
+            "Суровый вердикт в клинике: менять боевые импланты или потерять рассудок",
+            "Когда приступ накрыл посреди миссии и спасла только подпольная клиника",
+        ];
+        variants[seed % variants.len()]
+    } else if is_failed_op_guilt {
+        let variants = [
+            "Неловкий звонок после провала миссии: кто возьмёт вину на себя",
+            "Когда операция пошла под откос, но признать ошибку сложнее всего",
+            "Разбор полётов на повышенных тонах: цена одной осечки для всей команды",
+        ];
+        variants[seed % variants.len()]
+    } else if is_hostage_or_standoff {
+        let variants = [
+            "Переговоры под прицелом: когда одно лишнее движение решает всё",
+            "Блеф на грани фола: как выторговать жизнь, когда ты в окружении",
+            "Ультиматум в закрытой комнате: кому здесь на самом деле нужен этот чип",
+        ];
+        variants[seed % variants.len()]
+    } else if is_cyber_implants {
         let variants = [
             "Когда тюнинг собственного тела окончательно вышел из-под контроля",
-            "Поменяла себе челюсть без наркоза и считает это нормой",
-            "Опасная тяга к хрому: почему от имплантов невозможно отказаться",
+            "В шаге от киберпсихоза: почему от дешёвого хрома сносит крышу",
+            "Опасная тяга к имплантам: когда нервная система работает на износ",
         ];
         variants[seed % variants.len()]
     } else if is_gps_or_hacking {
         let variants = [
-            "Как отключить корпоративный маячок слежки и исчезнуть с радаров",
+            "Охота за секретным чипом: ради этих данных готовы пойти по головам",
             "Цифровой поводок дал сбой: когда решил перехитрить систему слежения",
-            "Никакого линка и лишних глаз: мастер-класс по уходу в тень",
+            "Секретный носитель в чужих руках: почему за ним гоняется весь город",
         ];
         variants[seed % variants.len()]
     } else if is_doctor_or_pain {
@@ -4434,8 +4520,8 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     } else if is_combat_or_danger {
         let variants = [
             "Секунда до бури: когда переговоры официально зашли в тупик",
-            "Никаких прелюдий — сразу в эпицентр замеса",
-            "Момент, когда инстинкт самосохранения взял выходной",
+            "Никаких прелюдий — сразу в эпицентр перестрелки на выживание",
+            "Момент, когда инстинкт самосохранения окончательно взял выходной",
         ];
         variants[seed % variants.len()]
     } else if has_question && has_exclam {
@@ -4497,16 +4583,46 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             jokes[seed % jokes.len()]
         }
         _ => {
-            if is_cyber_implants {
+            if is_car_hack_or_chase {
                 let jokes = [
-                    "Обычные люди ходят к стоматологу со страхом, а в Найт-Сити меняют челюсть в обеденный перерыв ради настроения.",
-                    "Когда гарантия на нервную систему давно истекла, но в каталоге как раз появилась скидка на новый хром.",
+                    "Автопилот в Найт-Сити настолько умный, что сам решает, к какому врагу отвезти владельца.",
+                    "Вот почему в 2077 году механическая коробка передач без Wi-Fi ценится на вес золота.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_security_breach_or_heist {
+                let jokes = [
+                    "Служба безопасности корпорации: бюджет в миллиарды, а пароль от камер всё ещё висит на стикере у входа.",
+                    "Когда камеры синхронно уходят на перерыв, охране лучше сразу брать больничный.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_ripper_clinic {
+                let jokes = [
+                    "Приём у подпольного риппера: сначала спасают жизнь, а потом читают лекцию о вреде дешёвых апгрейдов.",
+                    "Диагноз классический: меньше боевого хрома с барахолки и больше здорового сна.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_failed_op_guilt {
+                let jokes = [
+                    "В любой команде есть два этапа идеального плана: бодрый старт и поиск того, кто во всём виноват.",
+                    "Корпоративный созвон по итогам спринта в мире киберпанка выглядит именно так.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_hostage_or_standoff {
+                let jokes = [
+                    "Искусство деловых переговоров: аргументы звучат гораздо убедительнее, когда за спиной есть план отхода.",
+                    "Дипломатия по-найт-ситивски: вежливо попросить отойти в сторону, пока ситуация не взорвалась.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_cyber_implants {
+                let jokes = [
+                    "Обычные люди ходят к врачу за витаминами, а в Найт-Сити ставят боевой хром ради хорошего настроения.",
+                    "Когда гарантия на нервную систему давно истекла, но в каталоге как раз появилась скидка на новый имплант.",
                 ];
                 jokes[seed % jokes.len()]
             } else if is_gps_or_hacking {
                 let jokes = [
-                    "Лучший антивирус в мире киберпанка — вовремя выдернуть штекер до того, как корпорация выставит счёт за роуминг.",
-                    "Режим инкогнито 2077 уровня: если нет встроенного порта, то и взламывать официально нечего.",
+                    "Лучший антивирус в мире киберпанка — вовремя забрать чип до того, как корпорация выставит счёт.",
+                    "Режим инкогнито 2077 уровня: чем меньше лишних свидетелей у данных, тем крепче сон.",
                 ];
                 jokes[seed % jokes.len()]
             } else if is_doctor_or_pain {
@@ -4561,7 +4677,32 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     let end_m = (input.end_sec / 60.0) as u32;
     let end_s = (input.end_sec % 60.0) as u32;
 
-    let inside_action_narrative = if is_cyber_implants {
+    let inside_action_narrative = if is_car_hack_or_chase {
+        format!(
+            "Внутри сцены — экстренная ситуация вокруг {}, когда герои прямо на скорости понимают, что попали в расставленную сеть",
+            topic_label
+        )
+    } else if is_security_breach_or_heist {
+        format!(
+            "Внутри момента — тревожный эпизод вокруг {}, где сбой аппаратуры выдаёт присутствие чужаков",
+            topic_label
+        )
+    } else if is_ripper_clinic {
+        format!(
+            "Внутри сцены — напряжённый разговор вокруг {}, где за сарказмом скрывается реальная угроза жизни из-за перегрузки имплантов",
+            topic_label
+        )
+    } else if is_failed_op_guilt {
+        format!(
+            "Внутри фрагмента — эмоциональное объяснение вокруг {}, где герои пытаются разобраться с последствиями сорванного плана",
+            topic_label
+        )
+    } else if is_hostage_or_standoff {
+        format!(
+            "Внутри момента — жёсткое противостояние вокруг {}, где каждая секунда промедления грозит новой вспышкой огня",
+            topic_label
+        )
+    } else if is_cyber_implants {
         format!(
             "Внутри сцены — жаркий спор вокруг {}, где за кажущейся бравадой скрывается тревога за предел человеческих возможностей",
             topic_label
@@ -4771,13 +4912,66 @@ fn has_leaked_smm_template(text: &str) -> bool {
     })
 }
 
-/// Проверяет, является ли сгенерированный LLM заголовок полноценным осмысленным хуком (минимум 3 собственных слова без учета названия тайтла),
-/// а не повтором названия видео («Киберпанк Бегущие по краю (2 серия)») или робо-ярлыком из промпта («Киберпанк Мимика», «Киберпанк Ирония»)
-fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str) -> bool {
+/// Очищает сгенерированный LLM заголовок от дублирующегося префикса/суффикса названия тайтла
+/// (например, «Киберпанк Бегущие по краю: Зачем нужен чип?» -> «Зачем нужен чип?»),
+/// чтобы при финальном форматировании не получалось двойное название
+fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> String {
+    let mut s = candidate.trim().to_string();
+
+    // 1. Если модель уже приписала `| Название видео` в конце — отрезаем суффикс
+    if let Some((left, _)) = s.split_once(" | ") {
+        let trimmed_left = left.trim();
+        if trimmed_left.chars().count() >= 10 {
+            s = trimmed_left.to_string();
+        }
+    }
+
+    // 2. Базовое имя тайтла без `(3 серия)`
+    let base_title = video_title
+        .split('(')
+        .next()
+        .unwrap_or(video_title)
+        .trim();
+    let first_title_word = base_title
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| !c.is_alphanumeric());
+
+    // Проверяем двоеточие или тире в начале заголовка, если левая часть состоит из слов названия тайтла
+    for sep in [": ", " — ", " - "] {
+        if let Some((prefix, rest)) = s.split_once(sep) {
+            let p_low = prefix.trim().to_lowercase().replace('ё', "е");
+            let b_low = base_title.to_lowercase().replace('ё', "е");
+            let fw_low = first_title_word.to_lowercase().replace('ё', "е");
+            if (!b_low.is_empty() && (p_low == b_low || b_low.starts_with(&p_low) || p_low.starts_with(&b_low)))
+                || (fw_low.chars().count() >= 5 && p_low == fw_low)
+            {
+                let clean_rest = rest.trim().trim_matches(['"', '«', '»']);
+                if clean_rest.chars().count() >= 8 {
+                    let mut chars = clean_rest.chars();
+                    if let Some(first_ch) = chars.next() {
+                        s = format!("{}{}", first_ch.to_uppercase(), chars.as_str());
+                    } else {
+                        s = clean_rest.to_string();
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    s.trim().to_string()
+}
+
+/// Проверяет, является ли сгенерированный LLM заголовок полноценным осмысленным хуком (минимум 4 собственных слова без учета названия тайтла),
+/// грамматически корректным и семантически привязанным к теме сцены
+fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str, inside_dialogue: &str) -> bool {
     let lower_cand = candidate.to_lowercase().replace('ё', "е");
     let lower_video = video_title.to_lowercase().replace('ё', "е");
+    let lower_dlg = inside_dialogue.to_lowercase().replace('ё', "е");
 
-    // 1. Запрещаем эхо-слова из промпта в заголовке («Мимика», «Ирония», «Разлад», «Размышления», «Ракурс»)
+    // 1. Запрещаем эхо-слова из промпта и типичные корявые конструкции малых 3B-моделей
     const BANNED_TITLE_ECHO_WORDS: &[&str] = &[
         "мимика",
         "мимики",
@@ -4793,6 +4987,15 @@ fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str) -> bool {
         "описание",
         "хештеги",
         "субтитр",
+        "чем они хотели",
+        "третий раз меняют",
+        "в третий раз",
+        "завинили",
+        "за язык приколол",
+        "мой слуга",
+        "кавидя",
+        "стох,",
+        "стох ",
     ];
     if BANNED_TITLE_ECHO_WORDS.iter().any(|&w| lower_cand.contains(w)) {
         return false;
@@ -4812,15 +5015,46 @@ fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str) -> bool {
             if char_cnt < 2 {
                 return false;
             }
-            if matches!(*w, "серия" | "эпизод" | "выпуск" | "часть" | "аниме" | "ролик" | "видео" | "шортс" | "клип") {
+            if matches!(
+                *w,
+                "серия" | "эпизод" | "выпуск" | "часть" | "аниме" | "ролик" | "видео" | "шортс" | "клип"
+            ) {
                 return false;
             }
             !video_words.iter().any(|vw| vw == w)
         })
         .collect();
 
-    // Настоящий цепляющий заголовок обязан содержать минимум 3 собственных смысловых слова (помимо слов из названия тайтла)!
-    own_hook_words.len() >= 3
+    if own_hook_words.len() < 4 {
+        return false;
+    }
+
+    // 3. Проверяем семантическую привязку к реальной сцене: хотя бы один 4-буквенный корень из хука
+    // должен перекликаться либо с диалогом, либо с тематическим ярлыком сцены
+    let topic_label = extract_scene_topic_label(&lower_dlg);
+    let reference_corpus = format!("{} {}", lower_dlg, topic_label);
+    let ref_stems: Vec<String> = reference_corpus
+        .split(|c: char| !c.is_alphabetic())
+        .filter_map(|w| {
+            let chs: Vec<char> = w.chars().collect();
+            if chs.len() >= 4 {
+                Some(chs.into_iter().take(4).collect::<String>())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let has_semantic_overlap = own_hook_words.iter().any(|hw| {
+        let chs: Vec<char> = hw.chars().collect();
+        if chs.len() < 4 {
+            return false;
+        }
+        let stem: String = chs.into_iter().take(4).collect();
+        ref_stems.iter().any(|rs| rs == &stem)
+    });
+
+    has_semantic_overlap
 }
 
 /// Отсекает выдуманные малой LLM несуществующие слова-гибриды вроде «Вермильоновый эскалатор» или «Маскеры вермильоновские»
@@ -4968,21 +5202,30 @@ fn parse_smm_llm_output(
         }
     }
 
-    let title_valid = parsed_title.chars().count() >= 18
-        && parsed_title.chars().count() <= 130
-        && cyrillic_word_count(&parsed_title) >= 4
-        && is_meaningful_smm_hook_title(&parsed_title, &input.video_title)
-        && !has_leaked_smm_template(&parsed_title)
-        && !has_hallucinated_title_stem(&parsed_title, &input.video_title, &input.inside_dialogue)
-        && !is_verbatim_subtitle_copy(&parsed_title, &input.inside_dialogue);
+    let cleaned_hook = strip_redundant_video_title_prefix(&parsed_title, &input.video_title);
+
+    let title_valid = cleaned_hook.chars().count() >= 18
+        && cleaned_hook.chars().count() <= 110
+        && cyrillic_word_count(&cleaned_hook) >= 4
+        && is_meaningful_smm_hook_title(&cleaned_hook, &input.video_title, &input.inside_dialogue)
+        && !has_leaked_smm_template(&cleaned_hook)
+        && !has_hallucinated_title_stem(&cleaned_hook, &input.video_title, &input.inside_dialogue)
+        && !is_verbatim_subtitle_copy(&cleaned_hook, &input.inside_dialogue);
 
     let final_title = if title_valid {
-        if !parsed_title.to_lowercase().contains(&input.video_title.to_lowercase())
-            && parsed_title.chars().count() <= 80
+        let base_video_title = input
+            .video_title
+            .split('(')
+            .next()
+            .unwrap_or(&input.video_title)
+            .trim()
+            .to_lowercase();
+        if !cleaned_hook.to_lowercase().contains(&base_video_title)
+            && cleaned_hook.chars().count() <= 85
         {
-            format!("{} | {}", parsed_title, input.video_title)
+            format!("{} | {}", cleaned_hook, input.video_title)
         } else {
-            parsed_title
+            cleaned_hook
         }
     } else {
         fallback_title
