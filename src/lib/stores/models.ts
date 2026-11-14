@@ -101,7 +101,19 @@ export const CATALOG_MODELS: ModelInfo[] = [
     exists: false,
     local_path: ''
   },
-  // LLM (<= 3B)
+  // LLM (<= 3.8B, 100% нативно совместимые с llama-cli b3201: архитектуры qwen2 и phi3)
+  {
+    id: 'vikhr-qwen-2.5-0.5b',
+    name: 'Vikhr Qwen 2.5 0.5B Instruct (RU Ультрабыстрая Q5)',
+    filename: 'Vikhr-Qwen-2.5-0.5B-instruct-Q5_K_M.gguf',
+    url: 'https://huggingface.co/Vikhrmodels/Vikhr-Qwen-2.5-0.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-0.5B-instruct-Q5_K_M.gguf',
+    size_mb: 400,
+    description: 'Сверхбыстрая русскоязычная модель Vikhr 0.5B Q5_K_M (архитектура qwen2): мгновенный отбор реплик и сленга на любых ПК и ноутбуках (400 МБ)',
+    category: 'llm',
+    params: '0.5B RU Q5',
+    exists: false,
+    local_path: ''
+  },
   {
     id: 'qwen-0.5b-chat',
     name: 'Qwen 2.5 0.5B Instruct (Ультралегкая)',
@@ -115,38 +127,14 @@ export const CATALOG_MODELS: ModelInfo[] = [
     local_path: ''
   },
   {
-    id: 'llama-3.2-1b',
-    name: 'Llama 3.2 1B Instruct (Быстрая)',
-    filename: 'Llama-3.2-1B-Instruct-Q4_K_M.gguf',
-    url: 'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf',
-    size_mb: 770,
-    description: 'Легкая открытая модель Meta Llama 3.2 для быстрой оценки динамики диалогов (770 МБ)',
-    category: 'llm',
-    params: '1B',
-    exists: false,
-    local_path: ''
-  },
-  {
-    id: 'vikhr-llama-3.2-1b',
-    name: 'Vikhr Llama 3.2 1B (RU Сленг и Юмор)',
-    filename: 'Vikhr-Llama-3.2-1B-Q4_K_M.gguf',
-    url: 'https://huggingface.co/Vikhrmodels/Vikhr-Llama-3.2-1B-instruct-GGUF/resolve/main/Vikhr-Llama-3.2-1B-Q4_K_M.gguf',
-    size_mb: 808,
-    description: 'Русскоязычная модель Vikhr 1B: специально обучена на живой русской речи, сленге, иронии и панчлайнах (808 МБ)',
-    category: 'llm',
-    params: '1B RU',
-    exists: false,
-    local_path: ''
-  },
-  {
     id: 'vikhr-qwen-2.5-1.5b',
     name: 'Vikhr Qwen 2.5 1.5B (RU Диалоги и Юмор)',
     filename: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
     url: 'https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf',
-    size_mb: 986,
-    description: 'Русскоязычная дообученная Qwen 2.5 1.5B от проекта Vikhr: отличное чувство юмора, сарказма и сюжетного накала (986 МБ)',
+    size_mb: 1065,
+    description: 'Русскоязычная дообученная Qwen 2.5 1.5B от проекта Vikhr: отличное чувство юмора, сарказма и сюжетного накала (1.06 ГБ)',
     category: 'llm',
-    params: '1.5B RU',
+    params: '1.5B RU Q4',
     exists: false,
     local_path: ''
   },
@@ -155,58 +143,70 @@ export const CATALOG_MODELS: ModelInfo[] = [
     name: 'Qwen 2.5 1.5B Instruct (Рекомендуется)',
     filename: 'qwen-1.5b-chat.gguf',
     url: 'https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf',
-    size_mb: 1065,
+    size_mb: 1066,
     description: 'Оптимальный выбор: отличное понимание русского контекста, юмора и эмоций (1.06 ГБ)',
     category: 'llm',
-    params: '1.5B',
+    params: '1.5B Q4',
     exists: false,
     local_path: ''
   },
   {
-    id: 'gemma-2-2b',
-    name: 'Google Gemma 2 2B Instruct',
-    filename: 'gemma-2-2b-it-Q4_K_M.gguf',
-    url: 'https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf',
-    size_mb: 1629,
-    description: 'Модель от Google (2B): точное выделение смысловых панчлайнов и ярких реплик (1.63 ГБ)',
+    id: 'vikhr-qwen-2.5-1.5b-q5',
+    name: 'Vikhr Qwen 2.5 1.5B Q5_K_M (RU Повышенная точность)',
+    filename: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q5_K_M.gguf',
+    url: 'https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q5_K_M.gguf',
+    size_mb: 1225,
+    description: 'Квантование Q5_K_M русскоязычной модели Vikhr 1.5B: минимум потерь точности при оценке панчлайнов и SMM-описаний (1.22 ГБ)',
     category: 'llm',
-    params: '2B',
+    params: '1.5B RU Q5',
     exists: false,
     local_path: ''
   },
   {
-    id: 'vikhr-gemma-2b',
-    name: 'Vikhr Gemma 2B Instruct (RU Профи)',
-    filename: 'Vikhr-Gemma-2B-instruct-Q4_K_M.gguf',
-    url: 'https://huggingface.co/Vikhrmodels/Vikhr-Gemma-2B-instruct-GGUF/resolve/main/Vikhr-Gemma-2B-instruct-Q4_K_M.gguf',
-    size_mb: 1630,
-    description: 'Усиленная русскоязычная модель Vikhr 2B (на базе Gemma 2): глубокое понимание русских идиом, шуток и кульминаций (1.63 ГБ)',
+    id: 'vikhr-qwen-2.5-1.5b-q8',
+    name: 'Vikhr Qwen 2.5 1.5B Q8_0 (RU Студийный эталон)',
+    filename: 'Vikhr-Qwen-2.5-1.5B-Instruct.Q8_0.gguf',
+    url: 'https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q8_0.gguf',
+    size_mb: 1806,
+    description: 'Эталонное 8-битное качество (Q8_0) без деградации весов: идеально для финальной проверки связности и остроумного SMM-копирайтинга (1.8 ГБ)',
     category: 'llm',
-    params: '2B RU',
-    exists: false,
-    local_path: ''
-  },
-  {
-    id: 'llama-3.2-3b',
-    name: 'Llama 3.2 3B Instruct (Продвинутая)',
-    filename: 'Llama-3.2-3B-Instruct-Q4_K_M.gguf',
-    url: 'https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf',
-    size_mb: 1926,
-    description: 'Продвинутая 3B модель с глубоким анализом драматургии и сюжетных поворотов (1.93 ГБ)',
-    category: 'llm',
-    params: '3B',
+    params: '1.5B RU Q8',
     exists: false,
     local_path: ''
   },
   {
     id: 'qwen-3b-chat',
-    name: 'Qwen 2.5 3B Instruct (Максимум 3B)',
+    name: 'Qwen 2.5 3B Instruct Q4_K_M (Мощная 3B)',
     filename: 'qwen2.5-3b-instruct-q4_k_m.gguf',
     url: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf',
     size_mb: 2007,
-    description: 'Максимальное качество анализа русскоязычных диалогов и сленга в пределах 3B (2.0 ГБ)',
+    description: 'Глубокий анализ русскоязычных диалогов, иронии и драматургии в классе 3B (2.0 ГБ)',
     category: 'llm',
-    params: '3B',
+    params: '3B Q4',
+    exists: false,
+    local_path: ''
+  },
+  {
+    id: 'phi-3-mini-4k',
+    name: 'Microsoft Phi-3 Mini 4K Instruct Q4 (Логика и Сюжет)',
+    filename: 'Phi-3-mini-4k-instruct-q4.gguf',
+    url: 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf',
+    size_mb: 2282,
+    description: 'Официальная модель Microsoft Phi-3 Mini (3.8B, архитектура phi3): сильная логика для проверки законченности мысли и структуры диалога (2.28 ГБ)',
+    category: 'llm',
+    params: '3.8B Q4',
+    exists: false,
+    local_path: ''
+  },
+  {
+    id: 'qwen-3b-q5',
+    name: 'Qwen 2.5 3B Instruct Q5_K_M (Флагман Pro)',
+    filename: 'qwen2.5-3b-instruct-q5_k_m.gguf',
+    url: 'https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q5_k_m.gguf',
+    size_mb: 2326,
+    description: 'Максимальное качество анализа диалогов, юмора и генерации креативных SMM-заголовков на базе Qwen 2.5 3B Q5_K_M (2.33 ГБ)',
+    category: 'llm',
+    params: '3B Q5',
     exists: false,
     local_path: ''
   },
@@ -300,11 +300,23 @@ const createModelsStore = () => {
       }
 
       if (installedLlm.length > 0) {
+        const bestLlm = installedLlm[installedLlm.length - 1];
         const currentLlm = pipeState.config.text_model_name || '';
-        const currentLlmInstalled = installedLlm.some(m => currentLlm.includes(m.filename));
-        if (!currentLlmInstalled) {
-          const bestLlm = installedLlm[installedLlm.length - 1];
-          pipelineStore.updateConfig({ text_model_name: bestLlm.filename });
+        const currentVerifier = pipeState.config.verifier_model_name || '';
+        const currentSmm = pipeState.config.smm_model_name || '';
+        const nextLlmPatch: Record<string, string> = {};
+
+        if (!installedLlm.some(m => currentLlm.includes(m.filename))) {
+          nextLlmPatch.text_model_name = bestLlm.filename;
+        }
+        if (!installedLlm.some(m => currentVerifier.includes(m.filename))) {
+          nextLlmPatch.verifier_model_name = bestLlm.filename;
+        }
+        if (!installedLlm.some(m => currentSmm.includes(m.filename))) {
+          nextLlmPatch.smm_model_name = bestLlm.filename;
+        }
+        if (Object.keys(nextLlmPatch).length > 0) {
+          pipelineStore.updateConfig(nextLlmPatch);
         }
       }
 
@@ -485,16 +497,23 @@ const createModelsStore = () => {
             pipelineStore.updateConfig({
               asr_model_path: sameCategoryInstalled ? `models/${sameCategoryInstalled.filename}` : 'models/ggml-base.bin'
             });
-          } else if (targetModel.category === 'llm' && pipeState.config.text_model_name?.includes(targetModel.filename)) {
-            if (sameCategoryInstalled) {
-              pipelineStore.updateConfig({
-                text_engine: 'llama',
-                text_model_name: sameCategoryInstalled.filename
-              });
-            } else {
-              pipelineStore.updateConfig({
-                text_model_name: 'qwen-1.5b-chat.gguf'
-              });
+          } else if (targetModel.category === 'llm') {
+            const fallbackFilename = sameCategoryInstalled ? sameCategoryInstalled.filename : 'Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf';
+            const nextLlmPatch: Record<string, string> = {};
+            if (pipeState.config.text_model_name?.includes(targetModel.filename)) {
+              nextLlmPatch.text_model_name = fallbackFilename;
+            }
+            if (pipeState.config.verifier_model_name?.includes(targetModel.filename)) {
+              nextLlmPatch.verifier_model_name = fallbackFilename;
+            }
+            if (pipeState.config.smm_model_name?.includes(targetModel.filename)) {
+              nextLlmPatch.smm_model_name = fallbackFilename;
+            }
+            if (Object.keys(nextLlmPatch).length > 0) {
+              if (sameCategoryInstalled) {
+                nextLlmPatch.text_engine = 'llama';
+              }
+              pipelineStore.updateConfig(nextLlmPatch);
             }
           }
         }

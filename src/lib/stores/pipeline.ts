@@ -100,6 +100,21 @@ const DEFAULT_CONFIG: PipelineConfig = {
   mode: 'confirm'
 };
 
+function sanitizeLlmModelName(name: string | undefined): string {
+  if (!name || !name.trim()) return DEFAULT_CONFIG.text_model_name;
+  const lower = name.toLowerCase();
+  if (
+    lower.includes('gemma-2') ||
+    lower.includes('gemma2') ||
+    lower.includes('vikhr-gemma') ||
+    lower.includes('llama-3.2') ||
+    lower.includes('llama3.2')
+  ) {
+    return DEFAULT_CONFIG.text_model_name;
+  }
+  return name;
+}
+
 function loadInitialConfig(): PipelineConfig {
   if (typeof window === 'undefined' || !window.localStorage) {
     return { ...DEFAULT_CONFIG };
@@ -111,6 +126,9 @@ function loadInitialConfig(): PipelineConfig {
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
+      text_model_name: sanitizeLlmModelName(parsed.text_model_name),
+      verifier_model_name: sanitizeLlmModelName(parsed.verifier_model_name || parsed.text_model_name),
+      smm_model_name: sanitizeLlmModelName(parsed.smm_model_name || parsed.verifier_model_name || parsed.text_model_name),
       openai_api_key: '',
       max_clips_count: typeof parsed.max_clips_count === 'number' ? parsed.max_clips_count : DEFAULT_CONFIG.max_clips_count,
       subtitle_style: {

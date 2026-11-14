@@ -529,26 +529,26 @@ export function buildDemoSmmItem(
   let hashtags = '';
 
   if (clipType === 'highlights') {
-    title = `🔥 Все лучшие моменты: ${cleanVideoTitle} | Нарезка хайлайтов`;
-    description = `Сборка самых ярких, эмоциональных и смешных сцен из видео «${cleanVideoTitle}». Внутри — главные кульминации, острые реплики и переломные моменты сюжета без лишних пауз. ${joke}`;
+    title = `🔥 Концентрат эпика и сарказма: лучшие моменты «${cleanVideoTitle}»`;
+    description = `Динамичный сборник самых ярких сцен из выпуска «${cleanVideoTitle}». Внутри собраны главные эмоциональные пики, острые конфликты и переломные повороты истории без проходных диалогов. ${joke}`;
     hashtags = `#${cleanVideoTitle.split(/\s+/)[0] || 'Видео'} #хайлайты #лучшиемоменты #нарезка #топмоменты #юмор #эпик #рек`;
   } else if (clipType === 'talk_video') {
-    title = `🎙️ ${cleanVideoTitle} — Полная выжимка без пауз и воды`;
-    description = `Чистовой разговорный монтаж видео «${cleanVideoTitle}» с динамичной подачей и сменой планов. Оставили только суть, ключевые панчлайны и живые эмоции. ${joke}`;
+    title = `🎙️ «${cleanVideoTitle}» на максималках: чистый драйв без пауз и воды`;
+    description = `Концентрированный разговорный монтаж видео «${cleanVideoTitle}» без заминок, тишины и воды. Оставили только суть, живую актёрскую интонацию и самые харизматичные панчлайны. ${joke}`;
     hashtags = `#${cleanVideoTitle.split(/\s+/)[0] || 'Видео'} #разговорноевидео #подкаст #озвучка #демка #безводы #рек`;
   } else {
     const hooks = [
-      `«Это было слишком внезапно!» | ${cleanVideoTitle}`,
-      `Когда ситуация вышла из-под контроля (#${index + 1}) | ${cleanVideoTitle}`,
-      `Тот самый момент, который всё изменил | ${cleanVideoTitle}`,
-      `«А вот к такому жизнь нас не готовила!» | ${cleanVideoTitle}`
+      `Экскурсия с подвохом: почему эти артефакты лучше не трогать | ${cleanVideoTitle}`,
+      `Радикальный подход к чужим шедеврам: когда терпение лопнуло | ${cleanVideoTitle}`,
+      `Стратегия уровня «подождём, пока всё решится само» | ${cleanVideoTitle}`,
+      `Секунда до бури: когда переговоры официально зашли в тупик | ${cleanVideoTitle}`
     ];
     title = hooks[(index + variantSeed) % hooks.length];
     const sm = String(Math.floor(startSec / 60)).padStart(2, '0');
     const ss = String(Math.floor(startSec % 60)).padStart(2, '0');
     const em = String(Math.floor(endSec / 60)).padStart(2, '0');
     const es = String(Math.floor(endSec % 60)).padStart(2, '0');
-    description = `Яркий момент [${sm}:${ss}–${em}:${es}] из видео «${cleanVideoTitle}». Внутри — напряженный диалог, кульминация сцены и неожиданная развязка, которая идеально передает весь контекст происходящего. ${joke}`;
+    description = `Колоритный момент [${sm}:${ss}–${em}:${es}] из выпуска «${cleanVideoTitle}». Внутри сцены — резкий поворот интриги и скрытый подтекст конфликта, где от обманчивого спокойствия разговор за секунды доходит до точки кипения. ${joke}`;
     hashtags = `#${cleanVideoTitle.split(/\s+/)[0] || 'Видео'} #shorts #шортс #reels #рилс #рек #лучшиемоменты #юмор #ирония`;
   }
 
@@ -560,7 +560,7 @@ export function buildDemoSmmItem(
     description,
     hashtags,
     full_copy_text: `${title}\n\n${description}\n\n${hashtags}`,
-    model_used: modelUsed || 'Vikhr-Gemma-2B-instruct-Q4_K_M.gguf',
+    model_used: modelUsed || 'qwen2.5-3b-instruct-q4_k_m.gguf',
     start_sec: startSec,
     end_sec: endSec
   };

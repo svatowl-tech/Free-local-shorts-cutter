@@ -192,27 +192,28 @@ fn expand_model_aliases(filename: &str) -> Vec<String> {
         search_filenames.push("moondream2-text-model-f16.gguf".to_string());
         search_filenames.push("moondream2-text-model.gguf".to_string());
         search_filenames.push("moondream2.gguf".to_string());
+    } else if lower.contains("vikhr-qwen-2.5-0.5b") || lower.contains("vikhr-0.5b") {
+        search_filenames.push("Vikhr-Qwen-2.5-0.5B-instruct-Q5_K_M.gguf".to_string());
+        search_filenames.push("Vikhr-Qwen-2.5-0.5B-instruct-Q4_K_M.gguf".to_string());
     } else if lower.contains("qwen-0.5b") || lower.contains("qwen2.5-0.5b") {
         search_filenames.push("qwen2.5-0.5b-instruct-q4_k_m.gguf".to_string());
         search_filenames.push("qwen-0.5b-chat.gguf".to_string());
+    } else if lower.contains("vikhr-qwen-2.5-1.5b-q8") || lower.contains("vikhr-1.5b-q8") {
+        search_filenames.push("Vikhr-Qwen-2.5-1.5B-Instruct.Q8_0.gguf".to_string());
+    } else if lower.contains("vikhr-qwen-2.5-1.5b-q5") || lower.contains("vikhr-1.5b-q5") {
+        search_filenames.push("Vikhr-Qwen-2.5-1.5B-Instruct.Q5_K_M.gguf".to_string());
+    } else if lower.contains("vikhr-qwen-2.5-1.5b") || lower.contains("vikhr-1.5b") {
+        search_filenames.push("Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf".to_string());
     } else if lower.contains("qwen-1.5b") || lower.contains("qwen2.5-1.5b") {
         search_filenames.push("qwen-1.5b-chat.gguf".to_string());
         search_filenames.push("qwen2.5-1.5b-instruct-q4_k_m.gguf".to_string());
+    } else if lower.contains("qwen-3b-q5") || lower.contains("qwen2.5-3b-instruct-q5") {
+        search_filenames.push("qwen2.5-3b-instruct-q5_k_m.gguf".to_string());
     } else if lower.contains("qwen-3b") || lower.contains("qwen2.5-3b") {
         search_filenames.push("qwen2.5-3b-instruct-q4_k_m.gguf".to_string());
         search_filenames.push("qwen-3b-chat.gguf".to_string());
-    } else if lower.contains("vikhr-llama-3.2-1b") || lower.contains("vikhr-1b") {
-        search_filenames.push("Vikhr-Llama-3.2-1B-Q4_K_M.gguf".to_string());
-    } else if lower.contains("vikhr-qwen-2.5-1.5b") || lower.contains("vikhr-1.5b") {
-        search_filenames.push("Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf".to_string());
-    } else if lower.contains("vikhr-gemma-2b") || lower.contains("vikhr-2b") {
-        search_filenames.push("Vikhr-Gemma-2B-instruct-Q4_K_M.gguf".to_string());
-    } else if lower.contains("llama-3.2-1b") {
-        search_filenames.push("Llama-3.2-1B-Instruct-Q4_K_M.gguf".to_string());
-    } else if lower.contains("llama-3.2-3b") {
-        search_filenames.push("Llama-3.2-3B-Instruct-Q4_K_M.gguf".to_string());
-    } else if lower.contains("gemma-2-2b") {
-        search_filenames.push("gemma-2-2b-it-Q4_K_M.gguf".to_string());
+    } else if lower.contains("phi-3-mini") || lower.contains("phi3-mini") {
+        search_filenames.push("Phi-3-mini-4k-instruct-q4.gguf".to_string());
     } else if lower.contains("small-q5") {
         search_filenames.push("ggml-small-q5_1.bin".to_string());
     } else if lower.contains("medium-q5") {
@@ -362,8 +363,89 @@ pub fn resolve_any_whisper_model(app_handle: &AppHandle, preferred: Option<&str>
     None
 }
 
-/// Ищет сначала указанную текстовую GGUF-модель, а если передан `auto` или старый дефолт `models/qwen-1.5b-chat.gguf` —
-/// проверяет сначала русскоязычные модели Vikhr и более мощные установленные модели (от 3B к 0.5B)
+static BROKEN_GGUF_MODELS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+/// Проверяет, помечена ли GGUF-модель как несовместимая/сбойная в текущей сессии
+pub fn is_model_marked_broken(path_str: &str) -> bool {
+    let lower_full = path_str.trim().to_lowercase();
+    let file_only = Path::new(path_str)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path_str)
+        .to_lowercase();
+
+    BROKEN_GGUF_MODELS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+        .lock()
+        .map(|set| set.contains(&lower_full) || set.contains(&file_only))
+        .unwrap_or(false)
+}
+
+/// Помечает GGUF-модель как несовместимую, чтобы все этапы мгновенно переключались на рабочую модель
+pub fn mark_model_broken(path_str: &str) {
+    let lower_full = path_str.trim().to_lowercase();
+    let file_only = Path::new(path_str)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path_str)
+        .to_lowercase();
+
+    if let Ok(mut set) = BROKEN_GGUF_MODELS
+        .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+        .lock()
+    {
+        set.insert(lower_full);
+        set.insert(file_only);
+    }
+}
+
+/// Быстрая проверка заголовка GGUF-файла на совместимость со встроенным бинарником `llama-cli` (b3201: архитектуры `qwen2`, `phi3`, `phi2`, `llama`).
+/// Отсекает неподдерживаемые модели `gemma2` и `llama-3.2` до запуска дочернего процесса.
+pub fn is_gguf_compatible_with_llama_cli(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    if is_model_marked_broken(&path_str) {
+        return false;
+    }
+
+    let lower_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if lower_name.contains("gemma-2")
+        || lower_name.contains("vikhr-gemma")
+        || lower_name.contains("llama-3.2")
+    {
+        mark_model_broken(&path_str);
+        return false;
+    }
+
+    if let Ok(mut file) = std::fs::File::open(path) {
+        use std::io::Read;
+        let mut buf = [0u8; 4096];
+        if let Ok(n) = file.read(&mut buf) {
+            let slice = &buf[..n];
+            // Проверяем маркеры неподдерживаемых в b3201 архитектур (`gemma2` и RoPE-скейлинг `llama-3.2`)
+            if slice.windows(6).any(|w| w == b"gemma2")
+                || slice.windows(35).any(|w| w == b"rope.scaling.original_context_length"[..35].as_ref())
+            {
+                log::warn!(
+                    "GGUF-модель '{}' использует несовместимую архитектуру/метаданные. Автоматическое переключение на совместимую модель (qwen2 / phi3).",
+                    path.display()
+                );
+                mark_model_broken(&path_str);
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+/// Ищет сначала указанную текстовую GGUF-модель (проверяя её совместимость с `llama-cli`),
+/// а если она не скачана или несовместима — выбирает лучшую установленную совместимую GGUF-модель
 pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) -> Option<PathBuf> {
     if let Some(pref) = preferred {
         let trimmed = pref.trim();
@@ -371,19 +453,29 @@ pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) ->
             trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") || trimmed == "models/qwen-1.5b-chat.gguf";
         if !is_legacy_or_auto {
             if let Some(found) = resolve_model_path(app_handle, trimmed) {
-                return Some(found);
+                if is_gguf_compatible_with_llama_cli(&found) {
+                    return Some(found);
+                }
             }
         }
     }
-    // Сначала проверяем специализированные русскоязычные модели Vikhr (2B -> 1.5B -> 1B)
-    let russian_vikhr_priority = [
-        "Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
+    // Приоритет гарантированно совместимых моделей (архитектуры qwen2 и phi3, от старших к младшим)
+    let compatible_priority = [
+        "qwen2.5-3b-instruct-q5_k_m.gguf",
+        "qwen2.5-3b-instruct-q4_k_m.gguf",
+        "Vikhr-Qwen-2.5-1.5B-Instruct.Q8_0.gguf",
+        "Vikhr-Qwen-2.5-1.5B-Instruct.Q5_K_M.gguf",
         "Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
-        "Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
+        "Phi-3-mini-4k-instruct-q4.gguf",
+        "qwen-1.5b-chat.gguf",
+        "Vikhr-Qwen-2.5-0.5B-instruct-Q5_K_M.gguf",
+        "qwen2.5-0.5b-instruct-q4_k_m.gguf",
     ];
-    for vikhr_file in &russian_vikhr_priority {
-        if let Some(found) = resolve_model_path(app_handle, vikhr_file) {
-            return Some(found);
+    for model_file in &compatible_priority {
+        if let Some(found) = resolve_model_path(app_handle, model_file) {
+            if is_gguf_compatible_with_llama_cli(&found) {
+                return Some(found);
+            }
         }
     }
     for m in get_all_models_config()
@@ -392,14 +484,16 @@ pub fn resolve_any_llm_model(app_handle: &AppHandle, preferred: Option<&str>) ->
         .rev()
     {
         if let Some(found) = resolve_model_path(app_handle, &m.filename) {
-            return Some(found);
+            if is_gguf_compatible_with_llama_cli(&found) {
+                return Some(found);
+            }
         }
     }
     None
 }
 
-/// Находит выбранную пользователем GGUF-модель (или приоритетную русскоязычную модель серии Vikhr 2B / 1.5B / 1B при режиме `auto`)
-/// для 2-й финальной проверки и финального SMM-копирайтинга.
+/// Находит выбранную пользователем GGUF-модель (или лучшую совместимую русскоязычную модель при режиме `auto` / отсутствии файла)
+/// для 2-й финальной проверки и 3-й задачи SMM-копирайтинга.
 pub fn resolve_russian_verifier_llm_model(
     app_handle: &AppHandle,
     preferred: Option<&str>,
@@ -408,23 +502,30 @@ pub fn resolve_russian_verifier_llm_model(
         let trimmed = pref.trim();
         if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("auto") {
             if let Some(found) = resolve_model_path(app_handle, trimmed) {
+                if is_gguf_compatible_with_llama_cli(&found) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    // Приоритет совместимых русскоязычных моделей (Qwen 2.5 3B / Vikhr Qwen 2.5 1.5B Q8/Q5/Q4 / Vikhr Qwen 0.5B Q5)
+    let russian_compatible_priority = [
+        "qwen2.5-3b-instruct-q5_k_m.gguf",
+        "qwen2.5-3b-instruct-q4_k_m.gguf",
+        "Vikhr-Qwen-2.5-1.5B-Instruct.Q8_0.gguf",
+        "Vikhr-Qwen-2.5-1.5B-Instruct.Q5_K_M.gguf",
+        "Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
+        "qwen-1.5b-chat.gguf",
+        "Vikhr-Qwen-2.5-0.5B-instruct-Q5_K_M.gguf",
+    ];
+    for model_file in &russian_compatible_priority {
+        if let Some(found) = resolve_model_path(app_handle, model_file) {
+            if is_gguf_compatible_with_llama_cli(&found) {
                 return Some(found);
             }
         }
     }
-    // Приоритет русскоязычных моделей Vikhr (от старшей 2B к быстрой 1B)
-    let russian_vikhr_priority = [
-        "Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
-        "Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
-        "Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
-    ];
-    for vikhr_file in &russian_vikhr_priority {
-        if let Some(found) = resolve_model_path(app_handle, vikhr_file) {
-            return Some(found);
-        }
-    }
-    // Если ни одна модель Vikhr ещё не скачана, используем любую лучшую доступную GGUF-модель
-    resolve_any_llm_model(app_handle, preferred)
+    resolve_any_llm_model(app_handle, None)
 }
 
 pub fn get_all_models_config() -> Vec<ModelInfo> {
@@ -491,7 +592,17 @@ pub fn get_all_models_config() -> Vec<ModelInfo> {
             "809M Q5",
         ),
 
-        // ==================== LLM (АНАЛИЗ ДИАЛОГОВ И ОТБОР ХАЙЛАЙТОВ — ДО 3B) ====================
+        // ==================== LLM (100% СОВМЕСТИМЫЕ С LLAMA-CLI МОДЕЛИ АРХИТЕКТУР QWEN2 И PHI3) ====================
+        ModelInfo::standard(
+            "vikhr-qwen-2.5-0.5b",
+            "Vikhr Qwen 2.5 0.5B Q5 (Ультрабыстрая RU)",
+            "Vikhr-Qwen-2.5-0.5B-instruct-Q5_K_M.gguf",
+            "https://huggingface.co/Vikhrmodels/Vikhr-Qwen-2.5-0.5b-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-0.5B-instruct-Q5_K_M.gguf",
+            400.0,
+            "Сверхбыстрая русскоязычная модель Vikhr 0.5B (Q5_K_M): обучена на живой русской речи, сленге и панчлайнах (400 МБ)",
+            "llm",
+            "0.5B RU Q5",
+        ),
         ModelInfo::standard(
             "qwen-0.5b-chat",
             "Qwen 2.5 0.5B Instruct (Ультралегкая)",
@@ -500,87 +611,77 @@ pub fn get_all_models_config() -> Vec<ModelInfo> {
             469.0,
             "Мгновенный анализ реплик на любых ПК и ноутбуках даже без дискретной видеокарты (469 МБ)",
             "llm",
-            "0.5B",
-        ),
-        ModelInfo::standard(
-            "llama-3.2-1b",
-            "Llama 3.2 1B Instruct (Быстрая)",
-            "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-            "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
-            770.0,
-            "Легкая открытая модель Meta Llama 3.2 для быстрой оценки динамики диалогов (770 МБ)",
-            "llm",
-            "1B",
-        ),
-        ModelInfo::standard(
-            "vikhr-llama-3.2-1b",
-            "Vikhr Llama 3.2 1B (RU Сленг и Юмор)",
-            "Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
-            "https://huggingface.co/Vikhrmodels/Vikhr-Llama-3.2-1B-instruct-GGUF/resolve/main/Vikhr-Llama-3.2-1B-Q4_K_M.gguf",
-            808.0,
-            "Русскоязычная модель Vikhr 1B: специально обучена на живой русской речи, сленге, иронии и панчлайнах (808 МБ)",
-            "llm",
-            "1B RU",
+            "0.5B Q4",
         ),
         ModelInfo::standard(
             "vikhr-qwen-2.5-1.5b",
-            "Vikhr Qwen 2.5 1.5B (RU Диалоги и Юмор)",
+            "Vikhr Qwen 2.5 1.5B Q4 (RU Диалоги и Юмор)",
             "Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
             "https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q4_K_M.gguf",
-            986.0,
-            "Русскоязычная дообученная Qwen 2.5 1.5B от проекта Vikhr: отличное чувство юмора, сарказма и сюжетного накала (986 МБ)",
+            1065.0,
+            "Русскоязычная дообученная Qwen 2.5 1.5B от проекта Vikhr: отличное чувство юмора, сарказма и сюжетного накала (1.06 ГБ)",
             "llm",
-            "1.5B RU",
+            "1.5B RU Q4",
         ),
         ModelInfo::standard(
             "qwen-1.5b-chat",
-            "Qwen 2.5 1.5B Instruct (Рекомендуется)",
+            "Qwen 2.5 1.5B Instruct Q4 (Рекомендуется)",
             "qwen-1.5b-chat.gguf",
             "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
-            1065.0,
-            "Оптимальный выбор: отличное понимание русского контекста, юмора и эмоций (1.06 ГБ)",
+            1066.0,
+            "Оптимальный выбор для первичной оценки: стабильная JSON-разметка, понимание русского контекста и эмоций (1.06 ГБ)",
             "llm",
-            "1.5B",
+            "1.5B Q4",
         ),
         ModelInfo::standard(
-            "gemma-2-2b",
-            "Google Gemma 2 2B Instruct",
-            "gemma-2-2b-it-Q4_K_M.gguf",
-            "https://huggingface.co/bartowski/gemma-2-2b-it-GGUF/resolve/main/gemma-2-2b-it-Q4_K_M.gguf",
-            1629.0,
-            "Модель от Google (2B): точное выделение смысловых панчлайнов и ярких реплик (1.63 ГБ)",
+            "vikhr-qwen-2.5-1.5b-q5",
+            "Vikhr Qwen 2.5 1.5B Q5_K_M (RU Высокая точность)",
+            "Vikhr-Qwen-2.5-1.5B-Instruct.Q5_K_M.gguf",
+            "https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q5_K_M.gguf",
+            1225.0,
+            "Усиленное 5-битное квантование Q5_K_M русской модели Vikhr 1.5B: минимум потерь на сложных шутках и иронии (1.23 ГБ)",
             "llm",
-            "2B",
+            "1.5B RU Q5",
         ),
         ModelInfo::standard(
-            "vikhr-gemma-2b",
-            "Vikhr Gemma 2B Instruct (RU Профи)",
-            "Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
-            "https://huggingface.co/Vikhrmodels/Vikhr-Gemma-2B-instruct-GGUF/resolve/main/Vikhr-Gemma-2B-instruct-Q4_K_M.gguf",
-            1630.0,
-            "Усиленная русскоязычная модель Vikhr 2B (на базе Gemma 2): глубокое понимание русских идиом, шуток и кульминаций (1.63 ГБ)",
+            "vikhr-qwen-2.5-1.5b-q8",
+            "Vikhr Qwen 2.5 1.5B Q8_0 (RU Эталон 8-бит)",
+            "Vikhr-Qwen-2.5-1.5B-Instruct.Q8_0.gguf",
+            "https://huggingface.co/QuantFactory/Vikhr-Qwen-2.5-1.5B-Instruct-GGUF/resolve/main/Vikhr-Qwen-2.5-1.5B-Instruct.Q8_0.gguf",
+            1806.0,
+            "Максимальная 8-битная точность весов русской модели Vikhr (качество на уровне FP16): идеальна для 2-й ревизии и SMM (1.81 ГБ)",
             "llm",
-            "2B RU",
-        ),
-        ModelInfo::standard(
-            "llama-3.2-3b",
-            "Llama 3.2 3B Instruct (Продвинутая)",
-            "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-            "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
-            1926.0,
-            "Продвинутая 3B модель с глубоким анализом драматургии и сюжетных поворотов (1.93 ГБ)",
-            "llm",
-            "3B",
+            "1.5B RU Q8",
         ),
         ModelInfo::standard(
             "qwen-3b-chat",
-            "Qwen 2.5 3B Instruct (Максимум 3B)",
+            "Qwen 2.5 3B Instruct Q4 (Продвинутая 3B)",
             "qwen2.5-3b-instruct-q4_k_m.gguf",
             "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
             2007.0,
-            "Максимальное качество анализа русскоязычных диалогов и сленга в пределах 3B (2.0 ГБ)",
+            "Глубокий анализ русскоязычных диалогов, связности мысли и генерация креативных SMM-описаний (2.0 ГБ)",
             "llm",
-            "3B",
+            "3B Q4",
+        ),
+        ModelInfo::standard(
+            "phi-3-mini-4k",
+            "Microsoft Phi-3 Mini 4K Instruct Q4 (Логика 3.8B)",
+            "Phi-3-mini-4k-instruct-q4.gguf",
+            "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf",
+            2282.0,
+            "Мощная модель от Microsoft (архитектура Phi-3, 3.8B): строгая логическая проверка связности сцен и отсев смыслового брака (2.28 ГБ)",
+            "llm",
+            "3.8B Q4",
+        ),
+        ModelInfo::standard(
+            "qwen-3b-q5",
+            "Qwen 2.5 3B Instruct Q5_K_M (Флагман Pro 3B)",
+            "qwen2.5-3b-instruct-q5_k_m.gguf",
+            "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q5_k_m.gguf",
+            2326.0,
+            "Флагманская 3B модель в повышенном качестве Q5_K_M: лучшая креативность для вирусных названий, ироничных описаний и хештегов (2.33 ГБ)",
+            "llm",
+            "3B Q5",
         ),
 
         // ==================== VISION AI (ВИЗУАЛЬНЫЙ АНАЛИЗ КАДРОВ — МОДЕЛЬ + ПРОЕКТОР MMPROJ) ====================

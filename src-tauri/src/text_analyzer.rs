@@ -4,29 +4,17 @@ use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
 use tauri_plugin_shell::ShellExt;
 use tokio::sync::broadcast::Receiver;
 
-static BROKEN_GGUF_MODELS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
 fn is_model_marked_broken(path_str: &str) -> bool {
-    BROKEN_GGUF_MODELS
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-        .map(|set| set.contains(path_str))
-        .unwrap_or(false)
+    crate::models::is_model_marked_broken(path_str)
 }
 
 fn mark_model_broken(path_str: &str) {
-    if let Ok(mut set) = BROKEN_GGUF_MODELS
-        .get_or_init(|| Mutex::new(HashSet::new()))
-        .lock()
-    {
-        set.insert(path_str.to_string());
-    }
+    crate::models::mark_model_broken(path_str);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1096,16 +1084,17 @@ pub async fn analyze_with_llama_cli(
 
     if let Some(ref primary_path) = resolved_model {
         let primary_str = primary_path.to_string_lossy().to_string();
-        if is_model_marked_broken(&primary_str) {
+        if !crate::models::is_gguf_compatible_with_llama_cli(primary_path) || is_model_marked_broken(&primary_str) {
+            mark_model_broken(&primary_str);
             if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
                 let alt_str = alt_path.to_string_lossy().to_string();
                 if !is_model_marked_broken(&alt_str) && alt_str != primary_str {
                     crate::logger::emit_log(
                         app_handle,
                         "LLM",
-                        "info",
+                        "warn",
                         &format!(
-                            "Переключение с проблемной модели '{}' на исправную локальную GGUF-модель '{}'",
+                            "Модель '{}' не поддерживается текущей сборкой llama-cli (или повреждена). Автоматическое переключение на совместимую локальную GGUF-модель '{}'",
                             primary_path.display(),
                             alt_path.display()
                         ),
@@ -1138,9 +1127,21 @@ pub async fn analyze_with_llama_cli(
     }
 
     if is_model_marked_broken(&model_path_str) {
-        let err_msg = format!("Модель '{}' ранее показала ошибку токенизатора в этой сессии.", model_path.display());
-        crate::logger::emit_log(app_handle, "LLM", "warn", &err_msg);
-        return Err(AppError::Pipeline(err_msg));
+        if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
+            let alt_str = alt_path.to_string_lossy().to_string();
+            if !is_model_marked_broken(&alt_str) {
+                model_path = alt_path;
+                model_path_str = alt_str;
+            } else {
+                let err_msg = format!("Модель '{}' несовместима с llama-cli.", model_path.display());
+                crate::logger::emit_log(app_handle, "LLM", "warn", &err_msg);
+                return Err(AppError::Pipeline(err_msg));
+            }
+        } else {
+            let err_msg = format!("Модель '{}' ранее показала ошибку загрузки в этой сессии.", model_path.display());
+            crate::logger::emit_log(app_handle, "LLM", "warn", &err_msg);
+            return Err(AppError::Pipeline(err_msg));
+        }
     }
 
     crate::logger::emit_log(
@@ -2028,17 +2029,29 @@ async fn run_llama_cli(
     };
 
     let app_handle_clone = app_handle.clone();
+    let model_path_owned = model_path.to_string();
     let run_future = async move {
         let mut stdout_accum = String::new();
+        let mut stderr_accum = String::new();
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(bytes) => {
                     stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
                 }
                 CommandEvent::Stderr(bytes) => {
+                    let line_str = String::from_utf8_lossy(&bytes);
+                    stderr_accum.push_str(&line_str);
                     crate::logger::emit_stream_lines(&app_handle_clone, "LLM", "debug", &bytes);
                 }
                 CommandEvent::Terminated(payload) => {
+                    let lower_err = stderr_accum.to_lowercase();
+                    if lower_err.contains("unknown model architecture")
+                        || lower_err.contains("error loading model")
+                        || lower_err.contains("failed to load model")
+                        || lower_err.contains("unable to load model")
+                    {
+                        crate::models::mark_model_broken(&model_path_owned);
+                    }
                     if payload.code == Some(0) || !stdout_accum.trim().is_empty() {
                         crate::logger::emit_log(
                             &app_handle_clone,
@@ -3396,39 +3409,191 @@ pub struct SmmGenerationInput {
     pub characters: Vec<String>,
 }
 
-/// Очищает техническое имя видеофайла от мусорных тегов релиза, сохраняя красивое название видео/серии
+/// Очищает техническое имя видеофайла от мусорных тегов релиза (`[Окане]`, `TV1`, `1080p`),
+/// сохраняя чистое художественное название видео и номер серии (например: `[1 Серия]Маска вермильона, TV1[Окане]` -> `Маска вермильона (1 серия)`)
 pub fn clean_video_title_for_smm(raw_stem: &str) -> String {
-    let mut s = raw_stem
-        .replace('_', " ")
-        .replace('.', " ");
+    let normalized = raw_stem.replace('_', " ");
+    let mut episode_tag: Option<String> = None;
+    let mut outside = String::new();
+    let mut inside_bracket = String::new();
+    let mut bracket_depth = 0usize;
 
-    // Удаляем квадратные и круглые скобки с техническими метками (1080p, WEB-DL, x264 и т.д.)
-    let tech_markers = [
-        "1080p", "720p", "2160p", "4k", "web-dl", "webrip", "bdrip", "bluray",
-        "x264", "x265", "hevc", "h264", "aac", "flac", "rus", "sub", "dub",
-    ];
-    for marker in &tech_markers {
-        let lower = s.to_lowercase();
-        if let Some(pos) = lower.find(marker) {
-            // Заменяем технический маркер пробелом
-            s.replace_range(pos..(pos + marker.len()), " ");
+    for ch in normalized.chars() {
+        if ch == '[' || ch == '(' || ch == '【' {
+            if bracket_depth == 0 {
+                inside_bracket.clear();
+            } else {
+                inside_bracket.push(ch);
+            }
+            bracket_depth += 1;
+        } else if ch == ']' || ch == ')' || ch == '】' {
+            if bracket_depth > 0 {
+                bracket_depth -= 1;
+                if bracket_depth == 0 {
+                    let block = inside_bracket.trim();
+                    let lower_block = block.to_lowercase().replace('ё', "е");
+                    let has_digit = lower_block.chars().any(|c| c.is_ascii_digit());
+                    if has_digit
+                        && (lower_block.contains("сери")
+                            || lower_block.contains("эпизод")
+                            || lower_block.contains("выпуск")
+                            || lower_block.contains("часть")
+                            || lower_block.starts_with("ep"))
+                    {
+                        let ep_clean = block
+                            .split_whitespace()
+                            .collect::<Vec<&str>>()
+                            .join(" ")
+                            .to_lowercase();
+                        episode_tag = Some(ep_clean);
+                    }
+                    outside.push(' ');
+                } else {
+                    inside_bracket.push(ch);
+                }
+            }
+        } else if bracket_depth > 0 {
+            inside_bracket.push(ch);
+        } else {
+            outside.push(ch);
         }
     }
 
-    let cleaned: String = s
-        .split_whitespace()
-        .filter(|w| {
-            let trimmed = w.trim_matches(['[', ']', '(', ')', '-', '_']);
-            !trimmed.is_empty()
-        })
-        .map(|w| w.trim_matches(['[', ']', '(', ')']))
-        .collect::<Vec<&str>>()
-        .join(" ");
+    // Удаляем технические маркеры (TV1, TV2, 1080p, WEB-DL, BDRip, x264 и т.д.)
+    let mut words: Vec<String> = Vec::new();
+    for raw_w in outside.split_whitespace() {
+        let w_clean = raw_w
+            .trim_matches(|c: char| matches!(c, ',' | ';' | ':' | '[' | ']' | '(' | ')' | '-' | '.'))
+            .trim();
+        if w_clean.is_empty() {
+            continue;
+        }
+        let lower_w = w_clean.to_lowercase();
+        let is_tv_marker = (lower_w.starts_with("tv") && lower_w.len() <= 5 && lower_w[2..].chars().all(|c| c.is_ascii_digit() || c == '-'))
+            || matches!(
+                lower_w.as_str(),
+                "1080p"
+                    | "720p"
+                    | "2160p"
+                    | "4k"
+                    | "web-dl"
+                    | "webrip"
+                    | "bdrip"
+                    | "bluray"
+                    | "x264"
+                    | "x265"
+                    | "hevc"
+                    | "h264"
+                    | "aac"
+                    | "flac"
+                    | "rus"
+                    | "sub"
+                    | "dub"
+                    | "raw"
+            );
+        if !is_tv_marker {
+            words.push(w_clean.to_string());
+        }
+    }
 
-    if cleaned.trim().is_empty() {
-        raw_stem.to_string()
+    let base_title = words.join(" ").trim().trim_matches([',', '-', ' ']).to_string();
+    let final_base = if base_title.is_empty() {
+        raw_stem
+            .replace(['[', ']', '(', ')'], " ")
+            .split_whitespace()
+            .collect::<Vec<&str>>()
+            .join(" ")
     } else {
-        cleaned.trim().to_string()
+        base_title
+    };
+
+    if let Some(ep) = episode_tag {
+        if !final_base.to_lowercase().contains(&ep) {
+            return format!("{} ({})", final_base, ep);
+        }
+    }
+
+    final_base
+}
+
+/// Очищает реплику субтитров от префикса диктора/актера дубляжа (например: `Хипстер: Вашему вниманию...` -> `Вашему вниманию...`,
+/// `7pies ф: Они хранят...` -> `Они хранят...`) и лишних технических тегов
+fn strip_speaker_prefix(line: &str) -> String {
+    let mut s = line.trim();
+    // Убираем ведущие дефисы диалога
+    s = s.trim_start_matches(['-', '—', '•', ' ']);
+
+    if let Some((prefix, rest)) = s.split_once(':') {
+        let p_trim = prefix.trim();
+        let word_cnt = p_trim.split_whitespace().count();
+        // Если перед двоеточием 1–3 коротких слова (имя персонажа или ник актера озвучки до 26 символов без знаков препинания)
+        let has_sentence_punct = p_trim.contains(['.', '!', '?', ',', ';']);
+        if !p_trim.is_empty() && p_trim.chars().count() <= 26 && word_cnt <= 3 && !has_sentence_punct {
+            let cleaned_rest = rest.trim().trim_start_matches(['-', '—', ' ']);
+            if !cleaned_rest.is_empty() {
+                return cleaned_rest.to_string();
+            }
+        }
+    }
+
+    s.to_string()
+}
+
+/// Переводит англоязычные описания кадров от Vision-модели (Moondream2 / LLaVA) в живой русский визуальный контекст
+fn localize_visual_description_to_ru(raw_vis: &str) -> String {
+    let trimmed = raw_vis.trim();
+    if trimmed.is_empty() {
+        return "выразительный крупный план и резкая смена эмоций в кадре".to_string();
+    }
+
+    // Если описание уже на русском языке — возвращаем как есть
+    let has_cyrillic = trimmed.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    if has_cyrillic {
+        return trimmed.to_string();
+    }
+
+    let lower = trimmed.to_lowercase();
+    let mut details: Vec<&str> = Vec::new();
+
+    if lower.contains("mask") {
+        details.push("таинственная маска крупным планом");
+    }
+    if lower.contains("glowing") || lower.contains("yellow eyes") || lower.contains("red eyes") {
+        details.push("горящий взгляд");
+    }
+    if lower.contains("sword") || lower.contains("blade") || lower.contains("weapon") || lower.contains("knife") {
+        details.push("холодное оружие наготове");
+    }
+    if lower.contains("fire") || lower.contains("flame") || lower.contains("explosion") || lower.contains("smoke") {
+        details.push("всполохи огня и дыма");
+    }
+    if lower.contains("blood") || lower.contains("wound") {
+        details.push("следы жесткой схватки");
+    }
+    if lower.contains("fight") || lower.contains("battle") || lower.contains("attack") || lower.contains("action") {
+        details.push("динамичная боевая стойка");
+    }
+    if lower.contains("night") || lower.contains("dark") || lower.contains("shadow") {
+        details.push("мрачная ночная атмосфера");
+    }
+    if lower.contains("roof") || lower.contains("city") || lower.contains("street") || lower.contains("building") {
+        details.push("городские крыши и улицы");
+    }
+    if lower.contains("shrine") || lower.contains("temple") || lower.contains("room") || lower.contains("workshop") {
+        details.push("атмосферный интерьер мастерской или святилища");
+    }
+    if lower.contains("scream") || lower.contains("angry") || lower.contains("shock") || lower.contains("intense") {
+        details.push("предельный накал эмоций на лице героя");
+    }
+    if lower.contains("smile") || lower.contains("smirk") || lower.contains("laugh") {
+        details.push("ироничная ухмылка персонажа");
+    }
+
+    if details.is_empty() {
+        "напряженная мимика персонажей и выразительная смена ракурсов".to_string()
+    } else {
+        details.truncate(3);
+        details.join(", ")
     }
 }
 
@@ -3454,48 +3619,65 @@ pub fn build_smm_input_for_clip(
             if crate::whisper::is_whisper_hallucination(&f.text) {
                 continue;
             }
-            let t = f.text.trim();
-            if t.is_empty() {
+            let clean_line = strip_speaker_prefix(&f.text);
+            if clean_line.is_empty() {
                 continue;
             }
             if f.end > start_sec + 0.08 && f.start < end_sec - 0.08 {
-                inside_lines.push(t.to_string());
+                inside_lines.push(clean_line);
             } else if f.end <= start_sec + 0.08 && f.end >= (start_sec - 25.0).max(0.0) {
-                before_lines.push(t.to_string());
+                before_lines.push(clean_line);
             } else if f.start >= end_sec - 0.08 && f.start <= end_sec + 18.0 {
-                after_lines.push(t.to_string());
+                after_lines.push(clean_line);
             }
         }
     } else if clip_type == "highlights" {
-        // Для сборника хайлайтов берем самые яркие эмоциональные реплики со всего видео
-        for f in all_subtitles.iter().filter(|f| {
-            !crate::whisper::is_whisper_hallucination(&f.text)
-                && (f.text.contains('!') || f.text.contains('?'))
-        }).take(14) {
-            inside_lines.push(f.text.trim().to_string());
+        for f in all_subtitles
+            .iter()
+            .filter(|f| {
+                !crate::whisper::is_whisper_hallucination(&f.text)
+                    && (f.text.contains('!') || f.text.contains('?'))
+            })
+            .take(14)
+        {
+            let clean_line = strip_speaker_prefix(&f.text);
+            if !clean_line.is_empty() {
+                inside_lines.push(clean_line);
+            }
         }
         if inside_lines.is_empty() {
             for f in all_subtitles.iter().take(10) {
-                inside_lines.push(f.text.trim().to_string());
+                let clean_line = strip_speaker_prefix(&f.text);
+                if !clean_line.is_empty() {
+                    inside_lines.push(clean_line);
+                }
             }
         }
         before_lines.push(format!(
-            "Концентрированная выжимка из {} самых эмоциональных и смешных сцен выпуска «{}».",
-            total_clips.max(1),
+            "Концентрированная нарезка лучших кульминаций и сюжетных поворотов выпуска «{}»",
             video_title
         ));
     } else {
-        // Для разговорного видео / демки
-        for f in all_subtitles.iter().filter(|f| !crate::whisper::is_whisper_hallucination(&f.text)).take(12) {
-            inside_lines.push(f.text.trim().to_string());
+        for f in all_subtitles
+            .iter()
+            .filter(|f| !crate::whisper::is_whisper_hallucination(&f.text))
+            .take(12)
+        {
+            let clean_line = strip_speaker_prefix(&f.text);
+            if !clean_line.is_empty() {
+                inside_lines.push(clean_line);
+            }
         }
         if all_subtitles.len() > 14 {
             for f in all_subtitles.iter().rev().take(5).rev() {
-                after_lines.push(f.text.trim().to_string());
+                let clean_line = strip_speaker_prefix(&f.text);
+                if !clean_line.is_empty() {
+                    after_lines.push(clean_line);
+                }
             }
         }
         before_lines.push(format!(
-            "Динамичный монтаж разговорного видео «{}» без пауз, вдохов и воды.",
+            "Динамичный монтаж разговорного видео «{}» без пауз и воды",
             video_title
         ));
     }
@@ -3508,12 +3690,12 @@ pub fn build_smm_input_for_clip(
 
     let mut context_parts = Vec::new();
     if !before_lines.is_empty() {
-        let b_str: String = before_lines.join(" ").chars().take(220).collect();
-        context_parts.push(format!("До момента: {}", b_str));
+        let b_str: String = before_lines.join(" ").chars().take(200).collect();
+        context_parts.push(format!("Завязка до сцены: {}", b_str));
     }
     if !after_lines.is_empty() {
-        let a_str: String = after_lines.join(" ").chars().take(180).collect();
-        context_parts.push(format!("После момента: {}", a_str));
+        let a_str: String = after_lines.join(" ").chars().take(160).collect();
+        context_parts.push(format!("Развитие дальше: {}", a_str));
     }
     let surrounding_context = if context_parts.is_empty() {
         format!("Ключевой эпизод из видео «{}»", video_title)
@@ -3521,20 +3703,23 @@ pub fn build_smm_input_for_clip(
         context_parts.join(" | ")
     };
 
-    // Визуальные действия из анализатора сцен
+    // Визуальные действия из анализатора сцен (с автоматической локализацией на русский язык)
     let mut vis_parts = Vec::new();
     for sc in scenes {
         if (clip_type != "shorts" || (sc.timestamp_sec >= start_sec - 4.0 && sc.timestamp_sec <= end_sec + 4.0))
             && !sc.description.trim().is_empty()
         {
-            vis_parts.push(sc.description.trim().to_string());
-            if vis_parts.len() >= 3 {
+            let ru_vis = localize_visual_description_to_ru(&sc.description);
+            if !vis_parts.contains(&ru_vis) {
+                vis_parts.push(ru_vis);
+            }
+            if vis_parts.len() >= 2 {
                 break;
             }
         }
     }
     let visual_actions = if vis_parts.is_empty() {
-        "Активная мимика, смена планов и эмоциональная подача".to_string()
+        "выразительный крупный план, живая мимика и резкая смена динамики кадра".to_string()
     } else {
         vis_parts.join("; ")
     };
@@ -3542,8 +3727,9 @@ pub fn build_smm_input_for_clip(
     let mut characters = Vec::new();
     if let Some(sel) = selected_characters {
         for c in sel {
-            if !c.trim().is_empty() && c != "Все персонажи" && c.to_lowercase() != "all" {
-                characters.push(c.trim().to_string());
+            let trimmed_c = c.trim();
+            if !trimmed_c.is_empty() && trimmed_c != "Все персонажи" && trimmed_c.to_lowercase() != "all" {
+                characters.push(trimmed_c.to_string());
             }
         }
     }
@@ -3570,35 +3756,33 @@ fn build_smm_copywriter_prompt(input: &SmmGenerationInput) -> String {
         _ => "Вертикальный ролик (Shorts / Reels / TikTok)",
     };
 
-    let dialogue_clipped: String = input.inside_dialogue.chars().take(480).collect();
-    let context_clipped: String = input.surrounding_context.chars().take(320).collect();
+    let dialogue_clipped: String = input.inside_dialogue.chars().take(420).collect();
+    let context_clipped: String = input.surrounding_context.chars().take(280).collect();
     let visual_clipped: String = input.visual_actions.chars().take(180).collect();
-    let chars_note = if input.characters.is_empty() {
-        String::new()
-    } else {
-        format!("Персонажи/спикеры: {}\n", input.characters.join(", "))
-    };
 
     format!(
-        "Ты остроумный русскоязычный SMM-редактор и автор вирусных роликов.\n\
-Напиши цепляющее название ролика, живое описание и хештеги для выкладки.\n\
-Обязательно учитывай:\n\
-1) Название самого видео: «{}»\n\
+        "Ты креативный русскоязычный SMM-автор и шеф-редактор вирусных роликов (Shorts, Reels, TikTok, YouTube).\n\
+Твоя задача — придумать ОРИГИНАЛЬНОЕ, интригующее название ролика, живое авторское описание и хештеги.\n\
+ВАЖНОЕ ПРАВИЛО: КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО просто копировать фразы из субтитров в название или описание! Не цитируй реплики дословно — переосмысли суть сцены креативно, цепляюще и с юмором.\n\n\
+Исходные данные:\n\
+1) Название видео: «{}»\n\
 2) Формат: {} (ролик #{})\n\
-{}3) Что происходит внутри ролика (реплики): «{}»\n\
-4) Визуал в кадре: {}\n\
-5) Контекст происходящего вокруг: {}\n\
-6) В конце описания ОБЯЗАТЕЛЬНО добавь остроумную ироничную шутку или саркастичный комментарий по поводу этой ситуации!\n\n\
-Выведи ответ СТРОГО в следующем формате (на русском языке, без лишних пояснений):\n\
-НАЗВАНИЕ: [яркий заголовок до 70 символов]\n\
-ОПИСАНИЕ: [2-4 предложения: суть момента из видео «{}», контекст происходящего и ироничная шутка в конце]\n\
-ХЕШТЕГИ: [#хештег1 #хештег2 #хештег3 ... 8-12 тегов]\n\
+3) Смысл диалога внутри сцены (для понимания сути, НЕ цитировать дословно!): {}\n\
+4) Что происходит визуально в кадре: {}\n\
+5) Контекст вокруг сцены: {}\n\n\
+Требования к результату:\n\
+- НАЗВАНИЕ: кликабельный, креативный заголовок с интригой или иронией (до 75 символов, БЕЗ прямых цитат из субтитров!).\n\
+- ОПИСАНИЕ: 2–3 живых предложения своими словами: обыграй название видео «{}», расскажи что происходит в моменте и вокруг него, а в самом конце ОБЯЗАТЕЛЬНО добавь остроумную ироничную шутку по поводу этой ситуации.\n\
+- ХЕШТЕГИ: 8–12 тематических тегов через пробел.\n\n\
+Выведи ответ СТРОГО по шаблону:\n\
+НАЗВАНИЕ: [креативный заголовок своими словами]\n\
+ОПИСАНИЕ: [авторское описание сути + контекст + ироничная шутка в финале]\n\
+ХЕШТЕГИ: [#хештег1 #хештег2 #хештег3]\n\
 </SMM>\n\n\
 НАЗВАНИЕ:",
         input.video_title,
         format_name,
         input.clip_index + 1,
-        chars_note,
         dialogue_clipped,
         visual_clipped,
         context_clipped,
@@ -3610,7 +3794,7 @@ async fn run_openai_smm(
     client: &Client,
     config: &TextAnalysisConfig,
     prompt: &str,
-    app_handle: &AppHandle,
+    _app_handle: &AppHandle,
 ) -> AppResult<String> {
     let url = build_openai_chat_url(&config.openai_base_url);
     let model = if config.model_name.trim().is_empty() || config.model_name.ends_with(".gguf") {
@@ -3624,14 +3808,14 @@ async fn run_openai_smm(
         messages: vec![
             OpenAiMessage {
                 role: "system".to_string(),
-                content: "Ты остроумный русскоязычный SMM-копирайтер для Shorts, Reels и YouTube. Пиши живо, с тонкой иронией, строго соблюдая поля НАЗВАНИЕ:, ОПИСАНИЕ: и ХЕШТЕГИ:.".to_string(),
+                content: "Ты креативный русскоязычный SMM-копирайтер для Shorts, Reels и YouTube. Никогда не копируй субтитры дословно — пиши авторские кликабельные заголовки и остроумные описания с ироничной шуткой в конце. Строго соблюдай поля НАЗВАНИЕ:, ОПИСАНИЕ: и ХЕШТЕГИ:.".to_string(),
             },
             OpenAiMessage {
                 role: "user".to_string(),
                 content: prompt.to_string(),
             },
         ],
-        temperature: 0.65,
+        temperature: 0.72,
         stream: false,
     };
 
@@ -3709,13 +3893,13 @@ async fn run_llama_cli_smm(
         "-t",
         &threads,
         "-n",
-        "280",
+        "320",
         "-r",
         "</SMM>",
         "--temp",
-        "0.65",
+        "0.70",
         "--repeat-penalty",
-        "1.15",
+        "1.18",
         "--no-display-prompt",
     ]);
 
@@ -3727,17 +3911,37 @@ async fn run_llama_cli_smm(
         }
     };
 
+    let model_path_owned = model_path.to_string();
     let run_future = async move {
         let mut stdout_accum = String::new();
+        let mut stderr_accum = String::new();
         while let Some(event) = rx.recv().await {
-            if let CommandEvent::Stdout(bytes) = event {
-                stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
-            } else if let CommandEvent::Terminated(payload) = event {
-                if payload.code == Some(0) || !stdout_accum.trim().is_empty() {
-                    return Ok(stdout_accum);
-                } else {
-                    return Err(AppError::Pipeline(format!("llama-cli (SMM) завершился с кодом {:?}", payload.code)));
+            match event {
+                CommandEvent::Stdout(bytes) => {
+                    stdout_accum.push_str(&String::from_utf8_lossy(&bytes));
                 }
+                CommandEvent::Stderr(bytes) => {
+                    stderr_accum.push_str(&String::from_utf8_lossy(&bytes));
+                }
+                CommandEvent::Terminated(payload) => {
+                    let lower_err = stderr_accum.to_lowercase();
+                    if lower_err.contains("unknown model architecture")
+                        || lower_err.contains("error loading model")
+                        || lower_err.contains("failed to load model")
+                        || lower_err.contains("unable to load model")
+                    {
+                        crate::models::mark_model_broken(&model_path_owned);
+                    }
+                    if payload.code == Some(0) || !stdout_accum.trim().is_empty() {
+                        return Ok(stdout_accum);
+                    } else {
+                        return Err(AppError::Pipeline(format!(
+                            "llama-cli (SMM) завершился с кодом {:?}",
+                            payload.code
+                        )));
+                    }
+                }
+                _ => {}
             }
         }
         if !stdout_accum.trim().is_empty() {
@@ -3767,192 +3971,301 @@ async fn run_llama_cli_smm(
     res
 }
 
-/// Умный детерминированный SMM-генератор с контекстом, анализом реплик и ироничными шутками
-/// (используется как надежная основа и для обогащения неполных ответов легковесных LLM)
+/// Извлекает ключевой смысловой объект/тему из текста диалога, чтобы заголовки и описания
+/// были предметными, но без дословного копирования фраз субтитров
+fn extract_scene_topic_label(lower_dlg: &str) -> &'static str {
+    if lower_dlg.contains("маск") {
+        "древних масок и скрытой силы"
+    } else if lower_dlg.contains("святилищ") || lower_dlg.contains("храм") || lower_dlg.contains("алтар") {
+        "тайны закрытого святилища"
+    } else if lower_dlg.contains("уничтож") || lower_dlg.contains("разруш") || lower_dlg.contains("работ") || lower_dlg.contains("наставник") {
+        "бунта против наследия наставника"
+    } else if lower_dlg.contains("сдохн") || lower_dlg.contains("умр") || lower_dlg.contains("подожд") || lower_dlg.contains("гад") {
+        "коварного плана и холодного расчёта"
+    } else if lower_dlg.contains("монстр") || lower_dlg.contains("чудовищ") || lower_dlg.contains("демон") || lower_dlg.contains("проклят") {
+        "пробуждения опасного проклятия"
+    } else if lower_dlg.contains("оружи") || lower_dlg.contains("меч") || lower_dlg.contains("клин") || lower_dlg.contains("удар") || lower_dlg.contains("бой") || lower_dlg.contains("атак") {
+        "решающей схватки на пределе возможностей"
+    } else if lower_dlg.contains("секрет") || lower_dlg.contains("тайн") || lower_dlg.contains("правд") || lower_dlg.contains("скры") {
+        "раскрытия неудобной правды"
+    } else if lower_dlg.contains("план") || lower_dlg.contains("ловушк") || lower_dlg.contains("хитр") {
+        "многоходовки, которая пошла не по плану"
+    } else if lower_dlg.contains("деньг") || lower_dlg.contains("цен") || lower_dlg.contains("плат") || lower_dlg.contains("сделк") {
+        "сделки с очень высокими ставками"
+    } else if lower_dlg.contains("друг") || lower_dlg.contains("преда") || lower_dlg.contains("вер") {
+        "проверки союзников на прочность"
+    } else {
+        "неожиданного сюжетного поворота"
+    }
+}
+
+/// Креативный редакторский SMM-генератор (без сырых цитат из субтитров!):
+/// синтезирует кликабельное название, живое описание (название видео + что происходит внутри + контекст + ироничная шутка) и хештеги
 pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, String, String) {
     let lower_dlg = input.inside_dialogue.to_lowercase().replace('ё', "е");
+    let lower_ctx = input.surrounding_context.to_lowercase().replace('ё', "е");
     let has_exclam = input.inside_dialogue.contains('!');
     let has_question = input.inside_dialogue.contains('?');
 
-    // 1. Выделяем самую яркую цитату-панчлайн из реплик внутри ролика
-    let cues: Vec<&str> = input
-        .inside_dialogue
-        .split(" — ")
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let best_quote = cues
-        .iter()
-        .copied()
-        .max_by_key(|c| {
-            let mut weight = c.chars().count().min(55);
-            if c.contains('!') {
-                weight += 35;
-            }
-            if c.contains('?') {
-                weight += 20;
-            }
-            weight
-        })
-        .unwrap_or("Когда всё пошло не по плану");
-
-    let short_quote: String = best_quote
-        .trim_matches(['"', '«', '»', '-', '—', ' '])
-        .chars()
-        .take(54)
-        .collect();
-
-    // 2. Подбираем контекстную ироничную шутку по настроению и содержанию сцены
-    let ironic_jokes_action = [
-        "План был надежный, как швейцарские часы, но реальность снова забыла прочитать сценарий.",
-        "Уровень спокойствия в кадре: «всё под контролем», правда, никто не уточнил — под чьим именно.",
-        "Когда пытаешься решить вопрос дипломатично, но харизма работает исключительно в режиме спецэффектов.",
-        "Тот самый случай, когда инструкцию по технике безопасности решили прочитать уже после взрыва.",
-    ];
-    let ironic_jokes_dialogue = [
-        "Переговоры вышли на такой уровень искренности, что даже субтитры слегка покраснели.",
-        "Искусство тонкой дипломатии: сказать одну фразу так, чтобы у всех вокруг начался внеплановый мозговой штурм.",
-        "Когда аргументы в споре настолько весомые, что законы логики нервно вышли покурить.",
-        "Если бы за самообладание в неловких ситуациях давали «Оскар», этот момент забрал бы всю полку наград.",
-    ];
-    let ironic_jokes_highlights = [
-        "Собрали всю концентрацию эпика в одном месте — осторожно, при просмотре возможен передоз харизмой и сарказмом.",
-        "Все моменты, ради которых вообще стоило включать это видео, без лишних предисловий и долгих пауз.",
-    ];
-    let ironic_jokes_talk = [
-        "Вырезали все паузы и раздумья — теперь плотность мыслей в секунду выше, чем на защите диплома за пять минут до дедлайна.",
-        "Чистый концентрат речи без воды: идеально для тех, кто ценит своё время и хорошее чувство иронии.",
-    ];
-
-    let joke_seed = (input.clip_index
-        + (input.start_sec.round() as usize)
-        + input.inside_dialogue.len())
+    let seed = (input.clip_index * 7
+        + (input.start_sec.round() as usize) * 3
+        + input.inside_dialogue.chars().count())
         .max(1);
 
-    let ironic_joke = match input.clip_type.as_str() {
-        "highlights" => ironic_jokes_highlights[joke_seed % ironic_jokes_highlights.len()],
-        "talk_video" => ironic_jokes_talk[joke_seed % ironic_jokes_talk.len()],
-        _ => {
-            if has_exclam
-                || lower_dlg.contains("атак")
-                || lower_dlg.contains("бой")
-                || lower_dlg.contains("огонь")
-                || lower_dlg.contains("взрыв")
-                || lower_dlg.contains("бежим")
-                || lower_dlg.contains("черт")
-            {
-                ironic_jokes_action[joke_seed % ironic_jokes_action.len()]
-            } else {
-                ironic_jokes_dialogue[joke_seed % ironic_jokes_dialogue.len()]
-            }
-        }
-    };
+    let topic_label = extract_scene_topic_label(&lower_dlg);
 
-    // 3. Формируем Название ролика
-    let char_tag = if !input.characters.is_empty() {
-        format!(" ({})", input.characters.join(", "))
+    // Определяем доминирующий драматический/комедийный архетип сцены
+    let is_revenge_or_destruction = lower_dlg.contains("уничтож")
+        || lower_dlg.contains("разруш")
+        || lower_dlg.contains("своими руками")
+        || lower_dlg.contains("сожг")
+        || lower_dlg.contains("слома");
+    let is_cunning_wait_or_trap = lower_dlg.contains("подожд")
+        || lower_dlg.contains("сдохн")
+        || lower_dlg.contains("ловушк")
+        || lower_dlg.contains("план")
+        || lower_dlg.contains("хитр");
+    let is_mystery_or_artifact = lower_dlg.contains("маск")
+        || lower_dlg.contains("святилищ")
+        || lower_dlg.contains("необычн")
+        || lower_dlg.contains("древн")
+        || lower_dlg.contains("тайн")
+        || lower_dlg.contains("проклят");
+    let is_combat_or_danger = lower_dlg.contains("атак")
+        || lower_dlg.contains("бой")
+        || lower_dlg.contains("огонь")
+        || lower_dlg.contains("взрыв")
+        || lower_dlg.contains("бежим")
+        || lower_dlg.contains("монстр")
+        || lower_dlg.contains("берегис");
+
+    // 1. Креативный заголовок ролика (БЕЗ дословных цитат из сабов и БЕЗ длинных списков актеров)
+    let char_badge = if input.characters.len() == 1 {
+        format!(" ({})", input.characters[0])
+    } else if input.characters.len() == 2 {
+        format!(" ({} и {})", input.characters[0], input.characters[1])
     } else {
         String::new()
     };
 
     let title = match input.clip_type.as_str() {
-        "highlights" => format!(
-            "🔥 Все лучшие моменты: {} | Нарезка хайлайтов{}",
-            input.video_title, char_tag
-        ),
+        "highlights" => {
+            let hl_titles = [
+                format!("🔥 Концентрат эпика и сарказма: лучшие моменты «{}»{}", input.video_title, char_badge),
+                format!("⚡ Вся суть «{}» без воды: главные кульминации и панчлайны{}", input.video_title, char_badge),
+                format!("🎬 Топ-сцены «{}»: когда сюжет выкрутили на максимум{}", input.video_title, char_badge),
+            ];
+            hl_titles[seed % hl_titles.len()].clone()
+        }
         "talk_video" => {
-            if !input.characters.is_empty() {
-                format!(
-                    "🎙️ Демка и лучшие реплики: {} — {}",
-                    input.characters.join(", "),
-                    input.video_title
-                )
+            if !char_badge.is_empty() {
+                format!("🎙️ Харизма у микрофона{}: лучшая выжимка из «{}»", char_badge, input.video_title)
             } else {
-                format!(
-                    "🎙️ {} — Полная выжимка без пауз и воды",
-                    input.video_title
-                )
+                format!("🎙️ «{}» на максималках: чистый драйв без пауз и воды", input.video_title)
             }
         }
         _ => {
-            if !short_quote.is_empty() && short_quote.chars().count() >= 6 {
-                let end_punct = if has_exclam && !short_quote.ends_with('!') && !short_quote.ends_with('?') {
-                    "!"
-                } else {
-                    ""
-                };
-                format!("«{}{}» | {}{}", short_quote, end_punct, input.video_title, char_tag)
+            let hook_headline = if is_revenge_or_destruction {
+                let variants = [
+                    "Радикальный подход к чужим шедеврам: когда терпение лопнуло",
+                    "Личный план по сносу всего вокруг: конфликт вышел из берегов",
+                    "Когда решил закрыть гештальт максимально разрушительным способом",
+                ];
+                variants[seed % variants.len()]
+            } else if is_cunning_wait_or_trap {
+                let variants = [
+                    "Стратегия уровня «подождём, пока всё решится само»",
+                    "Дипломатия отменяется: когда включил режим циничного тактика",
+                    "План надежный, как швейцарские часы, но есть один нюанс",
+                ];
+                variants[seed % variants.len()]
+            } else if is_mystery_or_artifact {
+                let variants = [
+                    "Экскурсия с подвохом: почему эти артефакты лучше не трогать",
+                    "За кулисами древнего святилища: коллекция, от которой мурашки",
+                    "Когда за красивой витриной скрывается совсем не сувенирная лавка",
+                ];
+                variants[seed % variants.len()]
+            } else if is_combat_or_danger {
+                let variants = [
+                    "Секунда до бури: когда переговоры официально зашли в тупик",
+                    "Никаких прелюдий — сразу в эпицентр замеса",
+                    "Момент, когда инстинкт самосохранения взял выходной",
+                ];
+                variants[seed % variants.len()]
+            } else if has_question && has_exclam {
+                let variants = [
+                    "Неудобный вопрос и ответ, после которого повисла тишина",
+                    "Словесная дуэль на повышенных тонах: кто кого переиграет?",
+                    "Когда одна реплика переворачивает расстановку сил в сцене",
+                ];
+                variants[seed % variants.len()]
+            } else if has_exclam {
+                let variants = [
+                    "Эмоции через край: сцена, где маски окончательно сброшены",
+                    "Когда спокойный разговор за секунду превратился в ультиматум",
+                    "Точка кипения: момент, который меняет правила игры",
+                ];
+                variants[seed % variants.len()]
             } else {
-                format!(
-                    "Момент #{}: Когда ситуация вышла из-под контроля | {}",
-                    input.clip_index + 1,
-                    input.video_title
-                )
+                let variants = [
+                    "Затишье перед бурей: деталь, которую легко упустить с первого раза",
+                    "Тонкий расчёт и двойное дно: о чём на самом деле эта сцена",
+                    "Когда в каждой паузе читается больше, чем в громких криках",
+                ];
+                variants[seed % variants.len()]
+            };
+
+            format!("{} | {}", hook_headline, input.video_title)
+        }
+    };
+
+    // 2. Ироничная шутка по теме конкретной ситуации
+    let ironic_joke = match input.clip_type.as_str() {
+        "highlights" => {
+            let jokes = [
+                "Собрали всю концентрацию эпика в одном ролике — осторожно, при просмотре возможен передоз харизмой и сарказмом.",
+                "Идеальный формат для тех, кто хочет получить весь эмоциональный спектр выпуска быстрее, чем остынет чай.",
+            ];
+            jokes[seed % jokes.len()]
+        }
+        "talk_video" => {
+            let jokes = [
+                "Вырезали все паузы и вздохи — теперь плотность мыслей в секунду выше, чем на защите диплома за пять минут до дедлайна.",
+                "Чистый концентрат живой речи без воды: хронометраж похудел, а харизма осталась в полном объёме.",
+            ];
+            jokes[seed % jokes.len()]
+        }
+        _ => {
+            if is_revenge_or_destruction {
+                let jokes = [
+                    "Творческий кризис — это когда вместо создания нового шедевра хочется с огоньком аннулировать все предыдущие.",
+                    "Уровень благодарности учителю: пять звёзд за науку и ноль шансов на уцелевший инвентарь.",
+                    "Когда фразу «я сделаю всё своими руками» окружающие поняли слишком буквально — и зря не спрятали ценные вещи.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_cunning_wait_or_trap {
+                let jokes = [
+                    "Терпение и труд всё перетрут, особенно если просто сидеть в засаде и ждать, пока проблема ликвидируется сама.",
+                    "Мастер-класс по тайм-менеджменту: зачем тратить силы на бой, если можно делегировать работу естественному отбору.",
+                    "Уровень дружелюбия в коллективе: «желаю крепкого здоровья, но секундомер на всякий случай уже запустил».",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_mystery_or_artifact {
+                let jokes = [
+                    "Маркетинг уровня древних храмов: «товар штучный, ручная работа, побочные эффекты узнаете после примерки».",
+                    "Главное правило любого мистического артефакта: если вам говорят, что других таких нет, лучше уточнить, куда делись предыдущие владельцы.",
+                    "Идеальный питч для ценителей эксклюзива — звучит заманчиво ровно до того момента, пока экспонаты не начинают смотреть в ответ.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_combat_or_danger {
+                let jokes = [
+                    "План был надежный, как швейцарские часы, но реальность снова забыла прочитать сценарий.",
+                    "Уровень спокойствия в кадре: «всё под контролем», правда, никто так и не уточнил — под чьим именно.",
+                    "Тот самый случай, когда инструкцию по технике безопасности решили прочитать уже в разгар спецэффектов.",
+                ];
+                jokes[seed % jokes.len()]
+            } else {
+                let jokes = [
+                    "Переговоры вышли на такой уровень искренности, что даже фоновая музыка нервно притихла.",
+                    "Искусство тонкой дипломатии: сказать пару фраз так, чтобы у всех вокруг начался внеплановый мозговой штурм.",
+                    "Когда аргументы в сцене настолько весомые, что законы логики вежливо уступили им дорогу.",
+                ];
+                jokes[seed % jokes.len()]
             }
         }
     };
 
-    // 4. Формируем Описание (название видео + что внутри + контекст + ироничная шутка)
+    // 3. Авторское описание (Название видео + Что внутри + Контекст + Ироничная шутка — БЕЗ сырых цитат из субтитров!)
     let start_m = (input.start_sec / 60.0) as u32;
     let start_s = (input.start_sec % 60.0) as u32;
     let end_m = (input.end_sec / 60.0) as u32;
     let end_s = (input.end_sec % 60.0) as u32;
 
-    let description = match input.clip_type.as_str() {
-        "highlights" => {
-            let sample_quotes: String = cues.iter().take(3).copied().collect::<Vec<&str>>().join(" / ");
-            format!(
-                "Сборка самых ярких и эмоциональных сцен из видео «{}»{}. Внутри — главные кульминации, острые диалоги («{}») и переломные моменты сюжета в динамичном монтаже. Контекст: {}. {}",
-                input.video_title,
-                char_tag,
-                if sample_quotes.is_empty() { "лучшие моменты выпуска" } else { &sample_quotes },
-                input.surrounding_context,
-                ironic_joke
-            )
-        }
-        "talk_video" => {
-            let sample_quotes: String = cues.iter().take(2).copied().collect::<Vec<&str>>().join(" — ");
-            format!(
-                "Чистовой разговорный монтаж видео «{}»{} без заминок и тишины. В центре внимания ключевые мысли и реплики: «{}». {}. {}",
-                input.video_title,
-                char_tag,
-                if sample_quotes.is_empty() { "главные тезисы и живая подача" } else { &sample_quotes },
-                input.surrounding_context,
-                ironic_joke
-            )
-        }
-        _ => {
-            let dialogue_summary: String = input.inside_dialogue.chars().take(190).collect();
-            let context_summary = if has_question && has_exclam {
-                "Острый диалог с неожиданным вопросом и мгновенной эмоциональной развязкой"
-            } else if has_exclam {
-                "Эмоциональная кульминация сцены на пике накала страстей"
-            } else {
-                "Показательный диалог, раскрывающий характеры и скрытый подтекст ситуации"
-            };
-            format!(
-                "Яркий фрагмент [{:02}:{:02}–{:02}:{:02}] из видео «{}»{}. В кадре: «{}». Контекст момента: {} ({}). {}",
-                start_m,
-                start_s,
-                end_m,
-                end_s,
-                input.video_title,
-                char_tag,
-                dialogue_summary,
-                context_summary,
-                input.surrounding_context.chars().take(140).collect::<String>(),
-                ironic_joke
-            )
-        }
+    let inside_action_narrative = if is_revenge_or_destruction {
+        format!(
+            "Внутри сцены разворачивается жесткий конфликт вокруг {}: герой открыто идет на обострение и готов собственноручно разрушить прежние порядки",
+            topic_label
+        )
+    } else if is_cunning_wait_or_trap {
+        format!(
+            "Внутри момента — холодный тактический расчёт и циничный взгляд на ситуацию вокруг {}, где вместо прямой атаки выбирается выжидательная позиция",
+            topic_label
+        )
+    } else if is_mystery_or_artifact {
+        format!(
+            "В центре внимания — атмосфера загадочности вокруг {}: за внешней демонстрацией уникальных реликвий скрывается напряжённый мистический подтекст",
+            topic_label
+        )
+    } else if is_combat_or_danger {
+        format!(
+            "Внутри ролика — резкий скачок динамики вокруг {}, где словесное напряжение мгновенно уступает место прямому столкновению",
+            topic_label
+        )
+    } else if has_question && has_exclam {
+        format!(
+            "Внутри фрагмента — острая словесная перепалка вокруг {}, где интригующий вопрос мгновенно перерастает в эмоциональную развязку",
+            topic_label
+        )
+    } else {
+        format!(
+            "Внутри сцены раскрывается ключевой эпизод вокруг {}, задающий тон и характер всему дальнейшему развитию истории",
+            topic_label
+        )
     };
 
-    // 5. Формируем Хештеги (из названия видео, персонажей и формата)
+    let context_narrative = if lower_ctx.contains("завязка до сцены") && lower_ctx.contains("развитие дальше") {
+        format!(
+            "Контекст эпизода: от настороженной завязки разговор стремительно доходит до точки кипения (в кадре — {}), меняя расстановку сил между героями",
+            input.visual_actions
+        )
+    } else {
+        format!(
+            "Контекст происходящего: сцена на стыке сюжетных линий (визуальный ряд: {}), где за коротким диалогом читается назревающая буря",
+            input.visual_actions
+        )
+    };
+
+    let description = match input.clip_type.as_str() {
+        "highlights" => format!(
+            "Динамичный сборник самых ярких сцен из выпуска «{}»{}. {} и собраны главные эмоциональные пики истории без проходных диалогов. {}. {}",
+            input.video_title,
+            char_badge,
+            inside_action_narrative,
+            context_narrative,
+            ironic_joke
+        ),
+        "talk_video" => format!(
+            "Концентрированный разговорный монтаж видео «{}»{} без заминок, тишины и воды. {} с акцентом на живую интонацию и актёрскую подачу. {}. {}",
+            input.video_title,
+            char_badge,
+            inside_action_narrative,
+            context_narrative,
+            ironic_joke
+        ),
+        _ => format!(
+            "Колоритный момент [{:02}:{:02}–{:02}:{:02}] из выпуска «{}»{}. {}. {}. {}",
+            start_m,
+            start_s,
+            end_m,
+            end_s,
+            input.video_title,
+            char_badge,
+            inside_action_narrative,
+            context_narrative,
+            ironic_joke
+        ),
+    };
+
+    // 4. Хештеги (чистые слова из названия видео + тематика + формат)
     let mut tags: Vec<String> = Vec::new();
     for word in input
         .video_title
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.chars().count() >= 3)
+        .filter(|w| {
+            let l = w.to_lowercase();
+            w.chars().count() >= 3 && !matches!(l.as_str(), "серия" | "эпизод" | "выпуск" | "часть")
+        })
         .take(4)
     {
         let capitalized: String = word
@@ -3961,27 +4274,29 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             .map(|(i, c)| if i == 0 { c.to_uppercase().next().unwrap_or(c) } else { c })
             .collect();
         let tag = format!("#{}", capitalized);
-        if !tags.contains(&tag) {
+        if !tags.iter().any(|t| t.eq_ignore_ascii_case(&tag)) {
             tags.push(tag);
         }
     }
 
-    for ch in &input.characters {
-        let clean_ch: String = ch.chars().filter(|c| c.is_alphanumeric()).collect();
-        if clean_ch.chars().count() >= 2 {
-            let tag = format!("#{}", clean_ch);
-            if !tags.contains(&tag) {
-                tags.push(tag);
+    if input.characters.len() <= 2 {
+        for ch in &input.characters {
+            let clean_ch: String = ch.chars().filter(|c| c.is_alphanumeric()).collect();
+            if clean_ch.chars().count() >= 2 {
+                let tag = format!("#{}", clean_ch);
+                if !tags.iter().any(|t| t.eq_ignore_ascii_case(&tag)) {
+                    tags.push(tag);
+                }
             }
         }
     }
 
     let base_tags = match input.clip_type.as_str() {
         "highlights" => vec![
-            "#хайлайты", "#лучшиемоменты", "#нарезка", "#топмоменты", "#юмор", "#эпик", "#видео", "#рек",
+            "#хайлайты", "#лучшиемоменты", "#нарезка", "#топмоменты", "#юмор", "#эпик", "#аниме", "#рек",
         ],
         "talk_video" => vec![
-            "#разговорноевидео", "#озвучка", "#демка", "#подкаст", "#безводы", "#диалоги", "#рек",
+            "#разговорноевидео", "#озвучка", "#демка", "#дубляж", "#безводы", "#диалоги", "#рек",
         ],
         _ => vec![
             "#shorts", "#шортс", "#reels", "#рилс", "#рек", "#лучшиемоменты", "#юмор", "#ирония", "#нарезка",
@@ -3998,7 +4313,32 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     (title, description, hashtags)
 }
 
-/// Парсит ответ LLM для SMM-задачи и дополняет недостающие поля умным контекстным генератором
+/// Проверяет, не скопировала ли малая LLM в заголовок или описание дословную фразу из субтитров
+fn is_verbatim_subtitle_copy(candidate_text: &str, inside_dialogue: &str) -> bool {
+    let norm_cand: String = candidate_text
+        .to_lowercase()
+        .replace('ё', "е")
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect();
+
+    for cue in inside_dialogue.split(" — ") {
+        let norm_cue: String = cue
+            .to_lowercase()
+            .replace('ё', "е")
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect();
+        let trimmed_cue = norm_cue.trim();
+        // Если фраза из сабов длиннее 16 символов и дословно вставлена в заголовок/описание
+        if trimmed_cue.chars().count() >= 16 && norm_cand.contains(trimmed_cue) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Парсит ответ LLM для SMM-задачи, проверяет его на отсутствие прямых цитат из сабов и дополняет креативным генератором
 fn parse_smm_llm_output(
     raw_output: &str,
     input: &SmmGenerationInput,
@@ -4089,20 +4429,28 @@ fn parse_smm_llm_output(
         }
     }
 
-    let final_title = if parsed_title.chars().count() >= 5 && parsed_title.chars().count() <= 140 {
-        parsed_title
+    let final_title = if parsed_title.chars().count() >= 6
+        && parsed_title.chars().count() <= 140
+        && !is_verbatim_subtitle_copy(&parsed_title, &input.inside_dialogue)
+    {
+        if !parsed_title.to_lowercase().contains(&input.video_title.to_lowercase()) && parsed_title.chars().count() <= 85 {
+            format!("{} | {}", parsed_title, input.video_title)
+        } else {
+            parsed_title
+        }
     } else {
         fallback_title
     };
 
-    let final_desc = if parsed_desc.chars().count() >= 25 {
+    let final_desc = if parsed_desc.chars().count() >= 35
+        && !is_verbatim_subtitle_copy(&parsed_desc, &input.inside_dialogue)
+    {
         parsed_desc
     } else {
         fallback_desc
     };
 
     let final_tags = if parsed_tags.contains('#') && parsed_tags.chars().count() >= 6 {
-        // Гарантируем, что все слова в хештегах начинаются с #
         parsed_tags
             .split_whitespace()
             .map(|w| {
@@ -4213,29 +4561,46 @@ pub async fn generate_smm_for_single_clip(
         }
 
         if llm_raw_opt.is_none() {
-            if let Some(gguf_path) = crate::models::resolve_russian_verifier_llm_model(
+            // Пробуем выбранную GGUF-модель, а если она не скачана или несовместима — автоматически переключаемся на рабочую локальную модель
+            let mut candidate_paths: Vec<std::path::PathBuf> = Vec::new();
+            if let Some(p1) = crate::models::resolve_russian_verifier_llm_model(
                 app_handle,
                 Some(&smm_config.model_name),
             ) {
+                candidate_paths.push(p1);
+            }
+            if let Some(p2) = crate::models::resolve_any_llm_model(app_handle, None) {
+                if !candidate_paths.iter().any(|p| p == &p2) {
+                    candidate_paths.push(p2);
+                }
+            }
+
+            for gguf_path in candidate_paths {
                 let gguf_str = gguf_path.to_string_lossy().to_string();
+                if is_model_marked_broken(&gguf_str) {
+                    continue;
+                }
                 let fname = gguf_path
                     .file_name()
                     .and_then(|s| s.to_str())
-                    .unwrap_or("Vikhr-GGUF")
+                    .unwrap_or("Local-GGUF")
                     .to_string();
-                if !is_model_marked_broken(&gguf_str) {
-                    if let Ok(out) = run_llama_cli_smm(
-                        app_handle,
-                        &gguf_str,
-                        &prompt,
-                        true,
-                        cancel_rx.resubscribe(),
-                    )
-                    .await
-                    {
-                        llm_raw_opt = Some(out);
-                        model_label = fname;
-                    } else if let Ok(cpu_out) = run_llama_cli_smm(
+
+                if let Ok(out) = run_llama_cli_smm(
+                    app_handle,
+                    &gguf_str,
+                    &prompt,
+                    true,
+                    cancel_rx.resubscribe(),
+                )
+                .await
+                {
+                    llm_raw_opt = Some(out);
+                    model_label = fname;
+                    break;
+                } else if !is_model_marked_broken(&gguf_str) {
+                    // Повтор на CPU только если модель совместима по архитектуре, но произошел сбой GPU
+                    if let Ok(cpu_out) = run_llama_cli_smm(
                         app_handle,
                         &gguf_str,
                         &prompt,
@@ -4246,6 +4611,7 @@ pub async fn generate_smm_for_single_clip(
                     {
                         llm_raw_opt = Some(cpu_out);
                         model_label = format!("{} (CPU)", fname);
+                        break;
                     }
                 }
             }
