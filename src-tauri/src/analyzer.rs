@@ -557,32 +557,48 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
     let valid_visual_vocab = [
         "image", "scene", "frame", "shot", "person", "people", "character", "characters",
         "man", "men", "woman", "women", "girl", "boy", "soldier", "soldiers", "officer",
-        "face", "eyes", "hair", "mouth", "hand", "hands", "uniform", "suit", "shirt",
-        "coat", "jacket", "hat", "helmet", "cap", "glasses", "goggles", "room", "wall",
-        "table", "desk", "chair", "window", "door", "map", "sky", "cloud", "clouds",
-        "field", "tree", "trees", "forest", "building", "street", "train", "car", "plane",
-        "aircraft", "weapon", "gun", "rifle", "sword", "fire", "smoke", "explosion",
-        "light", "dark", "background", "foreground", "standing", "stands", "sitting",
-        "sits", "looking", "looks", "wearing", "wears", "holding", "holds", "walking",
-        "walks", "running", "runs", "marching", "march", "talking", "speaks", "speaking",
-        "smiling", "smiles", "smile", "smoking", "saluting", "leaps", "jumping", "flying",
-        "anime", "cartoon", "animated", "illustration", "creature", "creatures", "orb",
-        "glowing", "glow", "landscape", "circle", "circles", "figure", "figures", "bird",
+        "face", "eyes", "hair", "mouth", "hand", "hands", "arm", "arms", "leg", "legs",
+        "uniform", "suit", "shirt", "coat", "jacket", "hoodie", "sleeve", "hat", "helmet",
+        "cap", "glasses", "sunglasses", "goggles", "visor", "mask", "armor", "room", "wall",
+        "table", "desk", "chair", "couch", "bed", "window", "door", "corridor", "hallway",
+        "map", "sky", "cloud", "clouds", "field", "tree", "trees", "forest", "building",
+        "city", "cityscape", "street", "alley", "roof", "rooftop", "bridge", "tower",
+        "train", "car", "vehicle", "motorcycle", "plane", "aircraft", "spaceship", "moon",
+        "earth", "space", "astronaut", "spacesuit", "robot", "robotic", "cyber", "cyborg",
+        "implant", "camera", "screen", "monitor", "hologram", "neon", "weapon", "gun",
+        "pistol", "rifle", "sword", "blade", "knife", "fire", "smoke", "explosion", "blood",
+        "wound", "light", "dark", "night", "rain", "shadow", "red", "blue", "green", "black",
+        "white", "yellow", "silver", "gold", "purple", "pink", "background", "foreground",
+        "standing", "stands", "sitting", "sits", "kneels", "kneeling", "crouching", "looking",
+        "looks", "wearing", "wears", "holding", "holds", "reaching", "suspended", "pointing",
+        "aiming", "walking", "walks", "running", "runs", "marching", "march", "talking",
+        "speaks", "speaking", "screaming", "smiling", "smiles", "smile", "smoking", "saluting",
+        "leaps", "jumping", "flying", "fighting", "anime", "cartoon", "animated",
+        "illustration", "creature", "creatures", "orb", "glowing", "glow", "landscape",
+        "circle", "circles", "figure", "figures", "bird", "water",
     ];
     if !all_words.iter().any(|w| valid_visual_vocab.contains(w)) {
         return None;
     }
+
+    let lower_clean = clean.to_lowercase();
+    let is_op_ed_or_credits = lower_clean.contains("opening song")
+        || lower_clean.contains("ending song")
+        || lower_clean.contains("opening credits")
+        || lower_clean.contains("end credits")
+        || lower_clean.contains("title screen");
 
     // Строго дифференцированная оценка визуального накала кадра:
     // только настоящий экшен/взрывы/крик дают ощутимый прирост, а спокойные кабинетные/разговорные кадры получают 0 или легкое снижение
     let extreme_action_terms = [
         "fight", "fighting", "battle", "attack", "explosion", "fire", "blood", "monster",
         "kaiju", "skull", "scream", "screaming", "angry", "shock", "shocked", "intense",
-        "dramatic", "laser", "lightning", "leaps",
+        "dramatic", "laser", "lightning", "leaps", "cyber", "robot",
     ];
     let moderate_action_terms = [
-        "weapon", "sword", "gun", "rifle", "glow", "glowing", "energy", "running", "runs",
-        "jumping", "flying", "smoke", "marching", "aircraft", "plane",
+        "weapon", "sword", "gun", "pistol", "rifle", "glow", "glowing", "neon", "energy",
+        "running", "runs", "jumping", "flying", "smoke", "marching", "aircraft", "plane",
+        "reaching", "kneels", "kneeling",
     ];
     let calm_static_terms = [
         "sitting", "sits", "table", "desk", "chair", "map", "room", "office", "smiling",
@@ -603,18 +619,22 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         .count();
 
     let mut bonus: f64 = 0.0;
-    if extreme_hits >= 2 {
-        bonus += 0.07;
-    } else if extreme_hits == 1 {
-        bonus += 0.04;
-    }
-    if mod_hits >= 2 {
-        bonus += 0.03;
-    } else if mod_hits == 1 {
-        bonus += 0.015;
-    }
-    if extreme_hits == 0 && mod_hits == 0 && calm_hits >= 1 {
-        bonus -= 0.03;
+    if is_op_ed_or_credits {
+        bonus = -0.25;
+    } else {
+        if extreme_hits >= 2 {
+            bonus += 0.07;
+        } else if extreme_hits == 1 {
+            bonus += 0.04;
+        }
+        if mod_hits >= 2 {
+            bonus += 0.03;
+        } else if mod_hits == 1 {
+            bonus += 0.015;
+        }
+        if extreme_hits == 0 && mod_hits == 0 && calm_hits >= 1 {
+            bonus -= 0.03;
+        }
     }
 
     // Аккуратное усечение описания без обрыва слов посередине ("in the backgr", "Two other me", "as if in a s"):
@@ -625,7 +645,7 @@ fn parse_vision_description_and_bonus(raw_out: &str) -> Option<(String, f64)> {
         return None;
     }
 
-    Some((short_desc, bonus.clamp(-0.04, 0.07)))
+    Some((short_desc, bonus.clamp(-0.25, 0.07)))
 }
 
 /// Форматирует описание кадра от Vision AI без обрыва слов на полуслове и без висячих артиклей/предлогов

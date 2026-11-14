@@ -498,6 +498,8 @@ pub fn starts_with_dialogue_response(text: &str) -> bool {
         "верно,", "верно ", "точно,", "точно ", "правда,", "правда?",
         "вы уверены", "ты уверен", "ты уверена",
         "серьезно?", "неужели?", "вот как", "в смысле", "то есть как",
+        "как именно", "а как именно", "тут даже линка нет", "тут даже",
+        "во все нет", "вовсе нет", "я пыталась ее", "я пытался ее", "я пыталась его",
         "это еще почему", "с чего бы", "и что дальше", "и что теперь",
         "и что с того", "и что же ", "и все же", "что это значит",
         "о чем ты", "о чем вы", "ты о чем", "вы о чем", "к чему ты",
@@ -645,8 +647,17 @@ pub fn is_weak_clip_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
         "я понял",
         "вылетаем",
         "стоять",
+        "подожди",
+        "погоди",
+        "черт",
         "какого",
         "что это",
+        "как именно",
+        "а как именно",
+        "в смысле",
+        "тут даже линка нет",
+        "во все нет",
+        "вовсе нет",
         "вау",
         "срочно",
         "ой",
@@ -743,7 +754,8 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
         "ничего страшного", "принято", "совершенно верно", "вы совершенно правы",
         "например", "к примеру", "какой еще сюрприз",
         "это срочно", "странное дело", "понимаете",
-        "вы уверены", "ты уверен",
+        "вы уверены", "ты уверен", "ты уверена",
+        "я уверена", "я уверен", "да? - я уверена", "да? я уверена", "да, я уверена", "да, я уверен",
         "простите, вы хотите сказать", "простите",
         "не нужно", "ненужно", "я понял", "ясно", "понял",
         "сами ведь знаете", "вы же знаете", "ты же знаешь", "сама же знаешь",
@@ -1172,7 +1184,7 @@ pub async fn analyze_with_llama_cli(
         );
 
         let (sys_prompt, user_prompt) = build_stage1_prompt_parts(chunk);
-        let mut prompt = format_prompt_for_gguf_model(&model_path_str, &sys_prompt, &user_prompt, "JSON:[");
+        let mut prompt = format_prompt_for_gguf_model(&model_path_str, &sys_prompt, &user_prompt, "[");
         let mut batch_res = run_llama_cli(
             app_handle,
             &model_path_str,
@@ -1182,20 +1194,25 @@ pub async fn analyze_with_llama_cli(
             cancel_rx.resubscribe(),
         ).await;
 
-        let gpu_output_corrupted = match &batch_res {
-            Ok(out) => parse_json_array(out, chunk.len()).is_none(),
-            Err(_) => true,
+        let (gpu_output_corrupted, needs_cpu_nan_retry) = match &batch_res {
+            Ok(out) => {
+                let parsed_ok = parse_json_array(out, chunk.len()).is_some();
+                let has_nan_garbage = is_corrupted_llm_output(out);
+                (!parsed_ok, !parsed_ok && has_nan_garbage)
+            }
+            Err(_) => (true, true),
         };
 
         if gpu_output_corrupted && use_gpu && !gpu_succeeded_once {
-            // 1. Сначала пробуем выбранную пользователем модель на чистом CPU (исключаем сбой CUDA/FP16), если она не сломана архитектурно
-            if !is_model_marked_broken(&model_path_str) {
+            // 1. Повторяем ту же модель на CPU ТОЛЬКО если произошел аппаратный сбой CUDA/FP16 (пустой вывод, GGGGG или краш процесса).
+            // Если модель на GPU отработала штатно, но не справилась с форматом — не тратим 45с на CPU, а сразу переключаемся на резервную GGUF-модель!
+            if needs_cpu_nan_retry && !is_model_marked_broken(&model_path_str) {
                 crate::logger::emit_log(
                     app_handle,
                     "LLM",
                     "warn",
                     &format!(
-                        "Модель '{}' не выдала валидный JSON на GPU в первом пакете. Повтор на чистом CPU с той же моделью...",
+                        "Модель '{}' показала сбой CUDA/FP16 на GPU в первом пакете. Быстрая проверка на чистом CPU...",
                         model_path.display()
                     ),
                 );
@@ -1216,7 +1233,7 @@ pub async fn analyze_with_llama_cli(
                 Err(_) => true,
             };
 
-            // 2. Только если выбранная модель не смогла даже на CPU (или не загрузилась), переключаемся на резервную модель
+            // 2. Если выбранная модель не выдала валидный массив — мгновенно переключаемся на резервную GGUF-модель на GPU
             if still_corrupted_primary {
                 mark_model_broken(&model_path_str);
                 if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
@@ -1227,7 +1244,7 @@ pub async fn analyze_with_llama_cli(
                             "LLM",
                             "warn",
                             &format!(
-                                "Модель '{}' выдала невалидный ответ. Автоматическое переключение на резервную GGUF-модель '{}'...",
+                                "Модель '{}' не подошла для пакетной разметки. Автоматическое переключение на резервную GGUF-модель '{}' (GPU)...",
                                 model_path.display(),
                                 alt_path.display()
                             ),
@@ -1235,7 +1252,7 @@ pub async fn analyze_with_llama_cli(
                         model_path = alt_path;
                         model_path_str = alt_str;
                         use_gpu = true;
-                        prompt = format_prompt_for_gguf_model(&model_path_str, &sys_prompt, &user_prompt, "JSON:[");
+                        prompt = format_prompt_for_gguf_model(&model_path_str, &sys_prompt, &user_prompt, "[");
                         batch_res = run_llama_cli(
                             app_handle,
                             &model_path_str,
@@ -1245,23 +1262,6 @@ pub async fn analyze_with_llama_cli(
                             cancel_rx.resubscribe(),
                         )
                         .await;
-
-                        let alt_gpu_bad = match &batch_res {
-                            Ok(out) => parse_json_array(out, chunk.len()).is_none(),
-                            Err(_) => true,
-                        };
-                        if alt_gpu_bad {
-                            use_gpu = false;
-                            batch_res = run_llama_cli(
-                                app_handle,
-                                &model_path_str,
-                                &prompt,
-                                chunk.len(),
-                                false,
-                                cancel_rx.resubscribe(),
-                            )
-                            .await;
-                        }
                     }
                 }
             }
@@ -1858,22 +1858,21 @@ fn format_preview_text_68(txt: &str) -> String {
 fn build_stage1_prompt_parts(fragments: &[SubtitleFragment]) -> (String, String) {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
-        let clean_txt = frag.text.replace(['\n', '\r', '"'], " ");
-        let start_tag = if is_sentence_start(fragments, i) { "[START]" } else { "[CONT]" };
-        let end_tag = if is_sentence_end(fragments, i) { "[END]" } else { "[INCOMPLETE]" };
-        lines.push(format!("{}. {} {} \"{}\"", i + 1, start_tag, end_tag, clean_txt.trim()));
+        let clean_txt = frag.text.replace(['\n', '\r', '"', '[', ']'], " ");
+        let start_tag = if is_sentence_start(fragments, i) { "(начало)" } else { "(продолж.)" };
+        let end_tag = if is_sentence_end(fragments, i) { "(конец)" } else { "(незаверш.)" };
+        lines.push(format!("{}) {} {} \"{}\"", i + 1, start_tag, end_tag, clean_txt.trim()));
     }
     let input_list = lines.join("\n");
     let sys = "Ты строгий профессиональный режиссер монтажа вирусных роликов (Shorts, Reels, TikTok, Хайлайты 16:9). \
-        Возвращай ТОЛЬКО валидный JSON-массив чисел в диапазоне от 0.0 до 1.0 без пояснений и лишнего текста.";
+        Возвращай ТОЛЬКО один JSON-массив десятичных чисел от 0.05 до 0.98 через запятую (например: [0.42, 0.89, 0.25]) без текста и без нумерации.";
     let usr = format!(
-        "Оцени потенциал каждой из {} русских реплик от 0.0 до 1.0 по шкале (штрафуй «воду» и высоко цени хуки, юмор и кульминации!):\n\
-1. 0.12-0.38: «вода», слова-паразиты («эээ», «ну короче»), обрывки ([CONT]/[INCOMPLETE]), бытовые реплики, сухие доклады.\n\
-2. 0.42-0.65: обычные сюжетные диалоги, стандартные вопросы и спокойные пояснения.\n\
-3. 0.70-0.85: сильные интригующие хуки, острый разговорный юмор, сарказм, живой сленг, напряженные споры, угрозы и драматические повороты.\n\
-4. 0.88-0.97: ЯРКИЙ ПАНЧЛАЙН / ИСКЛЮЧИТЕЛЬНАЯ КУЛЬМИНАЦИЯ (взрывная шутка, развязка, яростный крик, шок, эпичная схватка — 1-2 реплики на пакет!).\n\
-Выведи ТОЛЬКО валидный JSON-массив ровно из {} чисел в диапазоне 0.0-1.0.\n\
-Пример формата: [0.42, 0.89]\n\n\
+        "Оцени потенциал каждой из {} русских реплик числом от 0.05 до 0.98 (штрафуй «воду» и высоко цени хуки, юмор и кульминации!):\n\
+- 0.12..0.38: «вода», слова-паразиты, обрывки (продолж./незаверш.), бытовые реплики.\n\
+- 0.42..0.65: обычные сюжетные диалоги и спокойные вопросы.\n\
+- 0.70..0.85: сильные интригующие хуки, острый разговорный юмор, сарказм, сленг, споры и угрозы.\n\
+- 0.88..0.97: ЯРКИЙ ПАНЧЛАЙН / КУЛЬМИНАЦИЯ (взрывная шутка, развязка, крик, шок — 1-2 реплики на пакет!).\n\
+Выведи ТОЛЬКО JSON-массив ровно из {} десятичных чисел через запятую и закрой скобкой ].\n\n\
 Реплики:\n{}",
         fragments.len(),
         fragments.len(),
@@ -1884,7 +1883,7 @@ fn build_stage1_prompt_parts(fragments: &[SubtitleFragment]) -> (String, String)
 
 fn build_prompt(fragments: &[SubtitleFragment]) -> String {
     let (sys, usr) = build_stage1_prompt_parts(fragments);
-    format!("{}\n\n{}\n\nJSON:[", sys, usr)
+    format!("{}\n\n{}\n\n[", sys, usr)
 }
 
 async fn run_ollama(client: &Client, config: &TextAnalysisConfig, prompt: &str, app_handle: &AppHandle) -> AppResult<String> {
@@ -2063,8 +2062,10 @@ async fn run_llama_cli(
         .unwrap_or(4)
         .to_string();
 
-    // Динамический лимит токенов пропорционально размеру пакета + стоп-токены `]`, `<|im_end|>`, `<|end|>`
-    let max_tokens = (expected_count * 12 + 48).clamp(80, 420).to_string();
+    // Динамический лимит токенов пропорционально размеру пакета + стоп-токены `<|im_end|>`, `<|end|>`
+    // ВАЖНО: НЕ используем `-r "]"` в качестве стоп-токена CLI, чтобы модель не обрывалась на первой же скобке
+    // если она выводит `[0.45], [0.80]` или `[1]`. Парсер `parse_json_array` сам аккуратно извлекает массив!
+    let max_tokens = (expected_count * 9 + 40).clamp(64, 320).to_string();
 
     let mut cmd = sidecar_command
         .env("PATH", crate::logger::build_sidecar_env_path(app_handle));
@@ -2086,10 +2087,11 @@ async fn run_llama_cli(
         "-ngl", ngl_val,
         "-t", &threads,
         "-n", &max_tokens,
-        "-r", "]",
         "-r", "<|im_end|>",
         "-r", "<|end|>",
-        "--temp", "0.1",
+        "-r", "<|eot_id|>",
+        "-r", "\n\n",
+        "--temp", "0.22",
         "--repeat-penalty", "1.15",
         "--no-display-prompt",
     ]);
@@ -2174,7 +2176,7 @@ async fn run_llama_cli(
     res
 }
 
-/// Проверяет, содержит ли ответ LLM признаки сбоя токенизатора / FP16 переполнения («GGGG...», иероглифы, битые байты)
+/// Проверяет, содержит ли ответ LLM признаки аппаратного сбоя токенизатора / FP16 переполнения («GGGG...», иероглифы, битые байты)
 fn is_corrupted_llm_output(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -2184,9 +2186,7 @@ fn is_corrupted_llm_output(text: &str) -> bool {
         return true;
     }
 
-    // Подсчитываем иероглифы CJK / арабские / индийские символы и обычные буквы
     let mut exotic_count = 0usize;
-    let mut alpha_count = 0usize;
     let mut digit_count = 0usize;
 
     for c in trimmed.chars() {
@@ -2195,27 +2195,26 @@ fn is_corrupted_llm_output(text: &str) -> bool {
             || ('\u{0900}'..='\u{097F}').contains(&c)
         {
             exotic_count += 1;
-        } else if c.is_alphabetic() {
-            alpha_count += 1;
         } else if c.is_ascii_digit() {
             digit_count += 1;
         }
     }
 
-    // В ответе должен быть JSON-массив чисел `[0.85, 0.40, ...]`. Если там иероглифы или сотни букв — это мусор!
-    if exotic_count >= 2 || digit_count == 0 || alpha_count > digit_count + 25 {
+    if exotic_count >= 2 || digit_count == 0 {
         return true;
     }
 
     false
 }
 
-/// Строгий парсер JSON-массива оценок от LLM.
-/// Сначала отсекает любой лишний текст/комментарии модели после закрывающей скобки `]`,
-/// затем проверяет массив на отсутствие мусора и требует не менее 50% валидных чисел в диапазоне [0.0, 1.0].
+/// Строгий и устойчивый парсер JSON-массива оценок от LLM.
+/// Корректно разбирает:
+/// 1) Стандартный JSON-массив `[0.45, 0.82, ...]`
+/// 2) Продолжение после префилла `[` (`0.45, 0.82, ...]`)
+/// 3) Дробные числа `0.XX` / `1.0` из нумерованных списков или отдельных скобок (`[0.45], [0.80]`), не путая их с номерами строк `1.`, `2.`
 fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
     let raw_trimmed = text.trim();
-    if raw_trimmed.is_empty() || raw_trimmed.contains("GGGGGGGG") || raw_trimmed.contains('\u{FFFD}') {
+    if is_corrupted_llm_output(raw_trimmed) {
         return None;
     }
 
@@ -2230,7 +2229,8 @@ fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
         .replace("<|im_end|>", "")
         .replace("<|end|>", "")
         .replace("<|assistant|>", "")
-        .replace("<|endoftext|>", "");
+        .replace("<|endoftext|>", "")
+        .replace("<|eot_id|>", "");
 
     let cleaned = no_chat_tokens
         .trim()
@@ -2245,13 +2245,11 @@ fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
         if nums.len() < min_required {
             return None;
         }
-        // Все оценки должны быть осмысленными числами в пределах [0.0, 1.0] (допускаем 0.0..=1.05)
-        let valid_range_count = nums.iter().filter(|&&x| x >= 0.0 && x <= 1.05).count();
+        let valid_range_count = nums.iter().filter(|&&x| (0.0..=1.05).contains(&x)).count();
         if valid_range_count < min_required {
             return None;
         }
-        // Проверяем, что модель не выдала один и тот же токен (например [0.5, 0.5, 0.5, ...])
-        if nums.len() >= 4 {
+        if nums.len() >= 5 {
             let first = nums[0];
             if nums.iter().all(|&x| (x - first).abs() < 1e-4) {
                 return None;
@@ -2265,82 +2263,49 @@ fn parse_json_array(text: &str, expected_len: usize) -> Option<Vec<f64>> {
         )
     };
 
-    // 1. Полноценный JSON-массив в квадратных скобках (берем ПЕРВУЮ закрывающую скобку `]` после `[`,
-    // чтобы отбросить любые пояснения, которые LLM могла дописать после завершения массива на коротком последнем пакете!)
+    // 1. Если ответ является продолжением открытой в промпте скобки `[` (например `0.42, 0.85, ...]`),
+    // сначала пробуем закрыть именно этот массив до первой `]`
+    if !cleaned.starts_with('[') {
+        if let Some(end) = cleaned.find(']') {
+            let slice_to_bracket = &cleaned[..=end];
+            let with_opening = format!("[{}", slice_to_bracket);
+            if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_opening) {
+                if let Some(valid) = validate_vec(nums) {
+                    return Some(valid);
+                }
+            }
+        }
+    }
+
+    // 2. Полноценный JSON-массив в квадратных скобках `[...]`
     if let Some(start) = cleaned.find('[') {
         let after_start = &cleaned[start..];
         if let Some(rel_end) = after_start.find(']') {
             let json_str = &after_start[..=rel_end];
-            if !is_corrupted_llm_output(json_str) {
-                if let Ok(nums) = serde_json::from_str::<Vec<f64>>(json_str) {
-                    if let Some(valid) = validate_vec(nums) {
-                        return Some(valid);
-                    }
+            if let Ok(nums) = serde_json::from_str::<Vec<f64>>(json_str) {
+                if let Some(valid) = validate_vec(nums) {
+                    return Some(valid);
                 }
             }
         }
     }
 
-    // 2. Если ответ начинается с продолжения массива (т.к. промпт заканчивается на `[`), добавляем открывающую скобку до первой `]`
-    if !cleaned.starts_with('[') {
-        if let Some(end) = cleaned.find(']') {
-            let slice_to_bracket = &cleaned[..=end];
-            if !is_corrupted_llm_output(slice_to_bracket) {
-                let with_opening = format!("[{}", slice_to_bracket);
-                if let Ok(nums) = serde_json::from_str::<Vec<f64>>(&with_opening) {
-                    if let Some(valid) = validate_vec(nums) {
-                        return Some(valid);
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Извлекаем числа напрямую из префикса ответа (включая нумерованные списки вроде `1. 0.45`, `1) 0.80`)
-    let prefix_region = if let Some(start) = cleaned.find('[') {
-        let after = &cleaned[start + 1..];
-        if let Some(end) = after.find(']') {
-            &after[..end]
-        } else {
-            after
-        }
-    } else if let Some(end) = cleaned.find(']') {
-        &cleaned[..end]
-    } else {
-        cleaned
-    };
-
-    if is_corrupted_llm_output(prefix_region) {
-        return None;
-    }
-
-    let extract_score_token = |raw: &str| -> Option<f64> {
-        let s = raw.trim().trim_matches(|c: char| matches!(c, '[' | ']' | '"' | '\''));
-        if s.is_empty() {
-            return None;
-        }
-        if let Ok(v) = s.parse::<f64>() {
-            if (0.0..=1.05).contains(&v) {
-                return Some(v);
-            }
-        }
-        if let Some((_, tail)) = s.rsplit_once(|c: char| c.is_whitespace() || c == ':' || c == ')' || c == '-') {
-            let tail_trim = tail.trim().trim_matches(|c: char| matches!(c, '[' | ']' | '"' | '\''));
-            if let Ok(v) = tail_trim.parse::<f64>() {
+    // 3. Извлекаем все десятичные числа с плавающей точкой (`0.XX` / `1.0` / `.XX`) по порядку:
+    // это надежно обрабатывает обрезанный по лимиту токенов массив без закрывающей `]`,
+    // а также ответы вида `[0.45], [0.80]` или `1) 0.45, 2) 0.80`, игнорируя целые номера строк `1`, `2`, `25`!
+    let mut decimal_scores: Vec<f64> = Vec::with_capacity(expected_len);
+    for token in cleaned.split(|c: char| !(c.is_ascii_digit() || c == '.')) {
+        let t = token.trim_matches('.');
+        if t.contains('.') {
+            if let Ok(v) = t.parse::<f64>() {
                 if (0.0..=1.05).contains(&v) {
-                    return Some(v);
+                    decimal_scores.push(v);
                 }
             }
         }
-        None
-    };
+    }
 
-    let nums: Vec<f64> = prefix_region
-        .split(|c: char| c == ',' || c == '\n' || c == ';')
-        .filter_map(extract_score_token)
-        .collect();
-
-    if let Some(valid) = validate_vec(nums) {
+    if let Some(valid) = validate_vec(decimal_scores) {
         return Some(valid);
     }
 
@@ -2754,26 +2719,25 @@ fn build_clip_verification_parts(candidates: &[AssembledClipCandidate]) -> (Stri
             .take(540)
             .collect();
         items.push(format!(
-            "{}. [Длит: {:.1}с | Реплик: {}] \"{}\"",
+            "{}) (длит {:.1}с, реплик {}) \"{}\"",
             i + 1,
             dur,
             cand.cue_count,
-            clean_dialogue.trim()
+            clean_dialogue.replace(['[', ']'], " ").trim()
         ));
     }
 
     let list_block = items.join("\n");
     let sys = "Ты главный шеф-редактор вирусных шортсов и хайлайтов. Выполняешь строгую вторую проверку уже собранных клипов. \
-        Возвращай ТОЛЬКО валидный JSON-массив чисел от 0.0 до 1.0 без текста и комментариев.";
+        Возвращай ТОЛЬКО один JSON-массив десятичных чисел от 0.05 до 0.98 через запятую без текста и комментариев.";
     let usr = format!(
         "Выполни СТРОГУЮ ВТОРУЮ ПРОВЕРКУ {} УЖЕ СОБРАННЫХ видеофрагментов (ниже приведен полный диалог каждого готового ролика целиком).\n\
-Оцени каждый готовый фрагмент от 0.0 до 1.0 по 4 жестким правилам:\n\
-1. СВЯЗНОСТЬ И ЗАКОНЧЕННОСТЬ МЫСЛИ: реплики внутри клипа должны образовывать единую понятную мысль с логичным началом и четкой финальной точкой/панчлайном. Если склеены куски разных тем или финал оборван на полуслове — ставь 0.10-0.28!\n\
-2. ОТСЕВ ПОЛНОГО БРЕДА: если текст бессвязный, похож на словесный мусор, галлюцинацию распознавания или набор несвязанных выкриков — ставь 0.05-0.20!\n\
-3. ОТСЕВ СКУКОТЫ И «ВОДЫ»: если в отрывке унылая бытовуха, сухие технические фразы, затянутая «вода» без интриги и эмоций — ставь 0.15-0.34!\n\
-4. ЮМОР, САРКАЗМ И КУЛЬМИНАЦИЯ: высоко оценивай (0.72-0.98) живой русский юмор, иронию, сленг, острую перепалку (вопрос -> хлесткий ответ) и яркую развязку в конце ролика.\n\
-Выведи ТОЛЬКО валидный JSON-массив ровно из {} чисел от 0.0 до 1.0.\n\
-Пример: [0.86, 0.18]\n\n\
+Оцени каждый готовый фрагмент числом от 0.05 до 0.98 по 4 жестким правилам:\n\
+1. СВЯЗНОСТЬ И ЗАКОНЧЕННОСТЬ МЫСЛИ: реплики внутри клипа должны образовывать единую понятную мысль с логичным началом и четкой финальной точкой/панчлайном. Если склеены куски разных тем или финал оборван на полуслове — ставь 0.10..0.28!\n\
+2. ОТСЕВ ПОЛНОГО БРЕДА: если текст бессвязный, похож на словесный мусор, галлюцинацию распознавания или набор несвязанных выкриков — ставь 0.05..0.20!\n\
+3. ОТСЕВ СКУКОТЫ И «ВОДЫ»: если в отрывке унылая бытовуха, сухие технические фразы, затянутая «вода» без интриги и эмоций — ставь 0.15..0.34!\n\
+4. ЮМОР, САРКАЗМ И КУЛЬМИНАЦИЯ: высоко оценивай (0.72..0.98) живой русский юмор, иронию, сленг, острую перепалку (вопрос -> хлесткий ответ) и яркую развязку в конце ролика.\n\
+Выведи ТОЛЬКО JSON-массив ровно из {} десятичных чисел через запятую и закрой скобкой ].\n\n\
 Готовые фрагменты для 2-й проверки:\n{}",
         candidates.len(),
         candidates.len(),
@@ -2784,7 +2748,7 @@ fn build_clip_verification_parts(candidates: &[AssembledClipCandidate]) -> (Stri
 
 fn build_clip_verification_prompt(candidates: &[AssembledClipCandidate]) -> String {
     let (sys, usr) = build_clip_verification_parts(candidates);
-    format!("{}\n\n{}\n\nJSON:[", sys, usr)
+    format!("{}\n\n{}\n\n[", sys, usr)
 }
 
 /// Детерминированный аудит собранного диалога клипа на:
@@ -3151,7 +3115,7 @@ pub async fn verify_assembled_clips_coherence(
                                 chunk.len()
                             ),
                         );
-                        let gguf_prompt = format_prompt_for_gguf_model(&gguf_str, &sys_p, &usr_p, "JSON:[");
+                        let gguf_prompt = format_prompt_for_gguf_model(&gguf_str, &sys_p, &usr_p, "[");
                         match run_llama_cli(
                             app_handle,
                             &gguf_str,
@@ -3178,41 +3142,43 @@ pub async fn verify_assembled_clips_coherence(
                                         ),
                                     );
                                 } else {
-                                    crate::logger::emit_log(
-                                        app_handle,
-                                        "LLM",
-                                        "warn",
-                                        &format!(
-                                            "⟳ [2-я проверка ИИ] Пакет {}/{}: модель '{}' не дала валидный JSON на GPU, повтор на CPU...",
-                                            b_idx + 1,
-                                            total_batches,
-                                            gguf_name
-                                        ),
-                                    );
-                                    if let Ok(cpu_out) = run_llama_cli(
-                                        app_handle,
-                                        &gguf_str,
-                                        &gguf_prompt,
-                                        chunk.len(),
-                                        false,
-                                        cancel_rx.resubscribe(),
-                                    )
-                                    .await
-                                    {
-                                        parsed_batch = parse_json_array(&cpu_out, chunk.len());
-                                        if let Some(ref scores) = parsed_batch {
-                                            crate::logger::emit_log(
-                                                app_handle,
-                                                "LLM",
-                                                "info",
-                                                &format!(
-                                                    "✓ [2-я проверка ИИ] Пакет {}/{}: получено {} оценок от '{}' (CPU)",
-                                                    b_idx + 1,
-                                                    total_batches,
-                                                    scores.len(),
-                                                    gguf_name
-                                                ),
-                                            );
+                                    if is_corrupted_llm_output(&out) {
+                                        crate::logger::emit_log(
+                                            app_handle,
+                                            "LLM",
+                                            "warn",
+                                            &format!(
+                                                "⟳ [2-я проверка ИИ] Пакет {}/{}: сбой CUDA/FP16 у '{}', быстрая проверка на CPU...",
+                                                b_idx + 1,
+                                                total_batches,
+                                                gguf_name
+                                            ),
+                                        );
+                                        if let Ok(cpu_out) = run_llama_cli(
+                                            app_handle,
+                                            &gguf_str,
+                                            &gguf_prompt,
+                                            chunk.len(),
+                                            false,
+                                            cancel_rx.resubscribe(),
+                                        )
+                                        .await
+                                        {
+                                            parsed_batch = parse_json_array(&cpu_out, chunk.len());
+                                            if let Some(ref scores) = parsed_batch {
+                                                crate::logger::emit_log(
+                                                    app_handle,
+                                                    "LLM",
+                                                    "info",
+                                                    &format!(
+                                                        "✓ [2-я проверка ИИ] Пакет {}/{}: получено {} оценок от '{}' (CPU)",
+                                                        b_idx + 1,
+                                                        total_batches,
+                                                        scores.len(),
+                                                        gguf_name
+                                                    ),
+                                                );
+                                            }
                                         }
                                     }
                                     if parsed_batch.is_none() {
@@ -3385,27 +3351,53 @@ fn find_clean_peak_window_near(
     if let Some((anchor_i, peak_sc)) = best_anchor {
         if peak_sc >= 0.40 {
             let mut start_i = anchor_i;
-            while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 4 {
+            while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 5 {
                 start_i -= 1;
             }
+            // Если стартовая реплика является зависимым ответом/реакцией или местоименным продолжением («Я пыталась её установить...», «Как именно?»),
+            // подтягиваем предыдущее предложение-сетап (если пауза <= 2.2с)
+            while start_i > 0
+                && (is_weak_clip_start(fragments, start_i)
+                    || starts_with_dialogue_response(&fragments[start_i].text)
+                    || starts_with_discourse_continuation(&fragments[start_i].text))
+                && (fragments[start_i].start - fragments[start_i - 1].end).max(0.0) <= 2.2
+            {
+                start_i -= 1;
+                while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 6 {
+                    start_i -= 1;
+                }
+            }
+
+            let desired_dur = ((min_dur + max_dur) * 0.52).clamp(min_dur + 3.5, max_dur - 1.5);
             let mut end_i = anchor_i;
             while end_i + 1 < fragments.len()
                 && (fragments[end_i].end - fragments[start_i].start) < min_dur
             {
                 end_i += 1;
             }
+            // Доводим окно до целевой длительности (~15-16с) и захватываем панчлайн текущей сцены (например «Прошлый раз она себе челюсть поменяла.»),
+            // пока реплики идут непрерывно (gap <= 1.8с) и укладываются в max_dur
             while end_i + 1 < fragments.len()
-                && (fragments[end_i + 1].end - fragments[start_i].start) <= max_dur + 4.0
-                && (!is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i))
+                && (fragments[end_i + 1].end - fragments[start_i].start) <= max_dur
             {
-                end_i += 1;
+                let gap_next = (fragments[end_i + 1].start - fragments[end_i].end).max(0.0);
+                let curr_dur = fragments[end_i].end - fragments[start_i].start;
+                let need_sentence_closure = !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i);
+                let can_include_punchline = curr_dur < desired_dur
+                    && gap_next <= 1.8
+                    && !is_new_scene_opener(&fragments[end_i + 1].text);
+                if need_sentence_closure || can_include_punchline {
+                    end_i += 1;
+                } else {
+                    break;
+                }
             }
 
             if !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i) {
                 for back_e in ((start_i + 1)..=end_i).rev() {
                     if is_sentence_end(fragments, back_e)
                         && !is_weak_clip_ending(fragments, back_e)
-                        && (fragments[back_e].end - fragments[start_i].start) >= min_dur * 0.72
+                        && (fragments[back_e].end - fragments[start_i].start) >= min_dur - 0.35
                     {
                         end_i = back_e;
                         break;
@@ -3419,9 +3411,10 @@ fn find_clean_peak_window_near(
 
             let new_start = (fragments[start_i].start - 0.25).max(intro_skip).max(0.0);
             let new_end = (fragments[end_i].end + 0.35).min(outro_limit).min(video_duration);
+            let new_dur = new_end - new_start;
 
             let shift = (new_start - cand.start).abs() + (new_end - cand.end).abs();
-            if shift >= 2.5 && (new_end - new_start) >= min_dur * 0.72 {
+            if shift >= 2.5 && new_dur >= min_dur - 0.15 && new_dur <= max_dur + 1.0 {
                 let mut dialogue_parts: Vec<String> = Vec::new();
                 for f in &fragments[start_i..=end_i] {
                     let trimmed = f.text.trim();
@@ -3497,9 +3490,9 @@ pub fn repair_clip_candidate(
                 }
             }
 
-            // Б. Проверяем финал: сканируем вперед до точки/восклицания/панчлайна в пределах эластичного лимита
+            // Б. Проверяем финал: сканируем вперед до точки/восклицания/панчлайна в пределах допустимого лимита max_dur
             let mut repaired_last_idx = last_idx;
-            let max_repaired_dur = (max_dur + 7.0).min(65.0);
+            let max_repaired_dur = (max_dur + 1.0).min(video_duration);
             let forward_bound = (last_idx + 10).min(fragments.len().saturating_sub(1));
             for fwd_i in (last_idx + 1)..=forward_bound {
                 let dur = fragments[fwd_i].end - fragments[repaired_first_idx].start;
@@ -3528,7 +3521,7 @@ pub fn repair_clip_candidate(
                         if dur > max_repaired_dur {
                             break;
                         }
-                        if dur >= min_dur * 0.72
+                        if dur >= min_dur - 0.35
                             && is_sentence_end(fragments, fwd_i)
                             && !is_weak_clip_ending(fragments, fwd_i)
                         {
@@ -3548,7 +3541,7 @@ pub fn repair_clip_candidate(
             if !is_sentence_end(fragments, repaired_last_idx) || is_weak_clip_ending(fragments, repaired_last_idx) {
                 for back_e in ((repaired_first_idx + 1)..last_idx).rev() {
                     let dur = fragments[back_e].end - fragments[repaired_first_idx].start;
-                    if dur < min_dur * 0.72 {
+                    if dur < min_dur - 0.35 {
                         break;
                     }
                     if is_sentence_end(fragments, back_e) && !is_weak_clip_ending(fragments, back_e) {
@@ -3577,9 +3570,20 @@ pub fn repair_clip_candidate(
 
             let new_start = (fragments[repaired_first_idx].start - 0.25).max(intro_skip).max(0.0);
             let new_end = (fragments[repaired_last_idx].end + 0.35).min(outro_limit).min(video_duration);
+            let new_dur = new_end - new_start;
 
-            if new_end - new_start < min_dur * 0.72 {
-                return None;
+            if new_dur < min_dur - 0.15 || new_dur > max_dur + 1.2 {
+                return find_clean_peak_window_near(
+                    cand,
+                    fragments,
+                    text_scores,
+                    audio_profile,
+                    min_dur,
+                    max_dur,
+                    intro_skip,
+                    outro_limit,
+                    video_duration,
+                );
             }
 
             let mut dialogue_parts: Vec<String> = Vec::new();
@@ -3851,8 +3855,18 @@ fn localize_visual_description_to_ru(raw_vis: &str) -> String {
         details.push("ироничная ухмылка персонажа");
     }
 
+    if lower.contains("robot") || lower.contains("cyber") || lower.contains("implant") {
+        details.push("кибер-импланты и технологичные детали крупным планом");
+    }
+    if lower.contains("neon") || lower.contains("purple") || lower.contains("pink") {
+        details.push("неоновое свечение мегаполиса");
+    }
+    if lower.contains("moon") || lower.contains("space") || lower.contains("astronaut") {
+        details.push("космический пейзаж и вид на Луну");
+    }
+
     if details.is_empty() {
-        "напряженная мимика персонажей и выразительная смена ракурсов".to_string()
+        "крупный план героев и острая эмоциональная реакция в кадре".to_string()
     } else {
         details.truncate(3);
         details.join(", ")
@@ -3981,7 +3995,7 @@ pub fn build_smm_input_for_clip(
         }
     }
     let visual_actions = if vis_parts.is_empty() {
-        "выразительный крупный план, живая мимика и резкая смена динамики кадра".to_string()
+        "крупный план героев и стремительное развитие сцены".to_string()
     } else {
         vis_parts.join("; ")
     };
@@ -4022,27 +4036,27 @@ fn build_smm_copywriter_parts(input: &SmmGenerationInput) -> (String, String) {
     let context_clipped: String = input.surrounding_context.chars().take(340).collect();
     let visual_clipped: String = input.visual_actions.chars().take(200).collect();
 
-    let sys = "Ты опытный русскоязычный SMM-редактор и автор сценариев для Shorts, Reels и YouTube. \
-        Пишешь строго на грамотном живом русском языке без выдуманных слов-гибридов и без дословного копирования субтитров. \
+    let sys = "Ты топовый русскоязычный SMM-копирайтер для Shorts, Reels и YouTube. \
+        Пишешь яркие, интригующие заголовки из 5–9 слов и остроумные описания на живом русском языке без дословного копирования субтитров. \
         Всегда выдаешь ровно 3 строки с префиксами НАЗВАНИЕ:, ОПИСАНИЕ:, ХЕШТЕГИ: и завершаешь ответ тегом </SMM>.";
 
     let usr = format!(
-        "Напиши пост для публикации готового ролика #{}.\n\n\
-ВХОДНЫЕ ДАННЫЕ:\n\
-- Источник (тайтл и серия): «{}»\n\
-- Формат: {}\n\
-- Что происходит и о чём спорят герои внутри клипа:\n{}\n\
-- Что происходит в кадре: {}\n\
-- Контекст вокруг сцены: {}\n\n\
-ПРАВИЛА:\n\
-1) НАЗВАНИЕ: короткий цепляющий заголовок (4–9 слов, до 70 символов) О СУТИ КОНФЛИКТА ИЛИ ШУТКИ В ЭТОЙ СЦЕНЕ. \
-НЕ переписывай название тайтла «{}» и НЕ придумывай от него искажённых прилагательных; НЕ копируй реплики субтитров дословно.\n\
-2) ОПИСАНИЕ: 2–3 живых предложения на хорошем русском языке: органично вплети название «{}», кратко объясни, что происходит в моменте и почему это важно по контексту, а в конце добавь одну точную ироничную шутку про ситуацию в сцене.\n\
-3) ХЕШТЕГИ: 8–10 релевантных русских тегов через пробел с символом #.\n\n\
-Выведи ТОЛЬКО 3 заполненных поля без квадратных скобок и без шаблонных фраз:\n\
-НАЗВАНИЕ: ...\n\
-ОПИСАНИЕ: ...\n\
-ХЕШТЕГИ: ...\n\
+        "Напиши цепляющий пост для публикации ролика #{}.\n\n\
+ФАКТЫ О СЦЕНЕ:\n\
+- Источник: «{}» ({})\n\
+- Суть разговора героев в клипе:\n{}\n\
+- Визуальный ряд: {}\n\
+- Контекст вокруг момента: {}\n\n\
+ЖЕСТКИЕ ПРАВИЛА:\n\
+1) НАЗВАНИЕ: напиши развернутую, интригующую фразу из 5–9 слов (30–75 символов), передающую конфликт, поворот или юмор конкретно этой сцены \
+(например: «Поменяла себе челюсть и даже не спросила врача» или «Как отключить маячок слежки без визита в клинику»). \
+ЗАПРЕЩЕНО писать короткие ярлыки из 1–2 слов и ЗАПРЕЩЕНО просто повторять название тайтла «{}»!\n\
+2) ОПИСАНИЕ: 2–3 живых предложения своими словами: упомяни тайтл «{}», раскрой суть происходящего в сцене и её контекст, а в последнем предложении пошути над абсурдностью или напряжением этой ситуации.\n\
+3) ХЕШТЕГИ: 8–10 тематических русских тегов через пробел с символом #.\n\n\
+Выведи ТОЛЬКО 3 заполненных поля:\n\
+НАЗВАНИЕ: \n\
+ОПИСАНИЕ: \n\
+ХЕШТЕГИ: \n\
 </SMM>",
         input.clip_index + 1,
         input.video_title,
@@ -4252,7 +4266,15 @@ async fn run_llama_cli_smm(
 /// Извлекает ключевой смысловой объект/тему из текста диалога, чтобы заголовки и описания
 /// были предметными, но без дословного копирования фраз субтитров
 fn extract_scene_topic_label(lower_dlg: &str) -> &'static str {
-    if lower_dlg.contains("доктор") || lower_dlg.contains("обезбол") || lower_dlg.contains("боль") || lower_dlg.contains("больно") || lower_dlg.contains("ран") {
+    if lower_dlg.contains("челюст") || lower_dlg.contains("зуб") || lower_dlg.contains("имплант") || lower_dlg.contains("хром") || lower_dlg.contains("риппер") {
+        "опасного апгрейда имплантов без тормозов"
+    } else if lower_dlg.contains("gps") || lower_dlg.contains("слежк") || lower_dlg.contains("чип") || lower_dlg.contains("линк") || lower_dlg.contains("отключ") {
+        "отключения чипа слежки и цифрового поводка"
+    } else if lower_dlg.contains("киберпсих") || lower_dlg.contains("псих") || lower_dlg.contains("галлюцин") || lower_dlg.contains("крыша едет") {
+        "грани киберпсихоза и потери контроля над телом"
+    } else if lower_dlg.contains("полиц") || lower_dlg.contains("коп") || lower_dlg.contains("арест") || lower_dlg.contains("допрос") || lower_dlg.contains("корпорац") || lower_dlg.contains("арасак") {
+        "жесткого прессинга со стороны корпораций и закона"
+    } else if lower_dlg.contains("доктор") || lower_dlg.contains("обезбол") || lower_dlg.contains("боль") || lower_dlg.contains("больно") || lower_dlg.contains("ран") || lower_dlg.contains("таблетк") {
         "послебоевой перевязки и упрямого характера"
     } else if lower_dlg.contains("поеду с тобой") || lower_dlg.contains("поеду с ") || lower_dlg.contains("бывайте") || lower_dlg.contains("проща") || lower_dlg.contains("отблагодар") {
         "непростого расставания и упрямого выбора пути"
@@ -4268,18 +4290,18 @@ fn extract_scene_topic_label(lower_dlg: &str) -> &'static str {
         "рискованного расчёта и отчаянной попытки выстоять"
     } else if lower_dlg.contains("монстр") || lower_dlg.contains("чудовищ") || lower_dlg.contains("демон") || lower_dlg.contains("проклят") {
         "пробуждения опасного проклятия"
-    } else if lower_dlg.contains("оружи") || lower_dlg.contains("меч") || lower_dlg.contains("клин") || lower_dlg.contains("удар") || lower_dlg.contains("бой") || lower_dlg.contains("атак") {
+    } else if lower_dlg.contains("оружи") || lower_dlg.contains("меч") || lower_dlg.contains("клин") || lower_dlg.contains("удар") || lower_dlg.contains("бой") || lower_dlg.contains("атак") || lower_dlg.contains("стрел") {
         "решающей схватки на пределе возможностей"
     } else if lower_dlg.contains("секрет") || lower_dlg.contains("тайн") || lower_dlg.contains("правд") || lower_dlg.contains("скры") {
         "раскрытия неудобной правды"
-    } else if lower_dlg.contains("план") || lower_dlg.contains("ловушк") || lower_dlg.contains("хитр") {
+    } else if lower_dlg.contains("план") || lower_dlg.contains("ловушк") || lower_dlg.contains("хитр") || lower_dlg.contains("взлом") {
         "многоходовки, которая пошла не по плану"
-    } else if lower_dlg.contains("деньг") || lower_dlg.contains("цен") || lower_dlg.contains("плат") || lower_dlg.contains("сделк") {
+    } else if lower_dlg.contains("деньг") || lower_dlg.contains("цен") || lower_dlg.contains("плат") || lower_dlg.contains("сделк") || lower_dlg.contains("заказ") {
         "сделки с очень высокими ставками"
-    } else if lower_dlg.contains("друг") || lower_dlg.contains("преда") || lower_dlg.contains("вер") {
+    } else if lower_dlg.contains("друг") || lower_dlg.contains("преда") || lower_dlg.contains("вер") || lower_dlg.contains("довер") {
         "проверки союзников на прочность"
     } else {
-        "неожиданного сюжетного поворота"
+        "неожиданного сюжетного поворота и спора героев"
     }
 }
 
@@ -4299,12 +4321,26 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     let topic_label = extract_scene_topic_label(&lower_dlg);
 
     // Определяем доминирующий драматический/комедийный архетип сцены
+    let is_cyber_implants = lower_dlg.contains("имплант")
+        || lower_dlg.contains("челюст")
+        || lower_dlg.contains("хром")
+        || lower_dlg.contains("киберпсих")
+        || lower_dlg.contains("апгрейд")
+        || lower_dlg.contains("модификац");
+    let is_gps_or_hacking = lower_dlg.contains("gps")
+        || lower_dlg.contains("чип")
+        || lower_dlg.contains("линк")
+        || lower_dlg.contains("слежк")
+        || lower_dlg.contains("отключ")
+        || lower_dlg.contains("взлом")
+        || lower_dlg.contains("сеть");
     let is_doctor_or_pain = lower_dlg.contains("доктор")
         || lower_dlg.contains("обезбол")
         || lower_dlg.contains("невыносимо больн")
         || lower_dlg.contains("больно")
         || lower_dlg.contains("жутко")
-        || lower_dlg.contains("аж смешно");
+        || lower_dlg.contains("аж смешно")
+        || lower_dlg.contains("таблетк");
     let is_farewell_or_join = lower_dlg.contains("поеду с тобой")
         || lower_dlg.contains("поеду с ")
         || lower_dlg.contains("бывайте")
@@ -4315,7 +4351,8 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         || lower_dlg.contains("разруш")
         || lower_dlg.contains("своими руками")
         || lower_dlg.contains("сожг")
-        || lower_dlg.contains("слома");
+        || lower_dlg.contains("слома")
+        || lower_dlg.contains("мстит");
     let is_cunning_wait_or_trap = lower_dlg.contains("подожд")
         || lower_dlg.contains("выиграть время")
         || lower_dlg.contains("ловушк")
@@ -4333,7 +4370,8 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         || lower_dlg.contains("взрыв")
         || lower_dlg.contains("бежим")
         || lower_dlg.contains("монстр")
-        || lower_dlg.contains("берегис");
+        || lower_dlg.contains("берегис")
+        || lower_dlg.contains("осторожн");
 
     // 1. Креативный заголовок ролика (БЕЗ дословных цитат из сабов и БЕЗ длинных списков актеров)
     let char_badge = if input.characters.len() == 1 {
@@ -4342,6 +4380,85 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         format!(" ({} и {})", input.characters[0], input.characters[1])
     } else {
         String::new()
+    };
+
+    let hook_headline = if is_cyber_implants {
+        let variants = [
+            "Когда тюнинг собственного тела окончательно вышел из-под контроля",
+            "Поменяла себе челюсть без наркоза и считает это нормой",
+            "Опасная тяга к хрому: почему от имплантов невозможно отказаться",
+        ];
+        variants[seed % variants.len()]
+    } else if is_gps_or_hacking {
+        let variants = [
+            "Как отключить корпоративный маячок слежки и исчезнуть с радаров",
+            "Цифровой поводок дал сбой: когда решил перехитрить систему слежения",
+            "Никакого линка и лишних глаз: мастер-класс по уходу в тень",
+        ];
+        variants[seed % variants.len()]
+    } else if is_doctor_or_pain {
+        let variants = [
+            "Медицина бессильна, когда на анестезии решили сэкономить",
+            "Сквозь боль и чёрный юмор: цена победы оказалась кусачей",
+            "Когда вместо сочувствия от врача досталась суровая реальность",
+        ];
+        variants[seed % variants.len()]
+    } else if is_farewell_or_join {
+        let variants = [
+            "Упрямство сильнее прощаний: попутчика никто не спрашивал",
+            "Когда «нет» не принимается и в путь идут вопреки всему",
+            "Трогательный ультиматум вместо тихого прощания",
+        ];
+        variants[seed % variants.len()]
+    } else if is_revenge_or_destruction {
+        let variants = [
+            "Радикальный подход к чужим правилам: когда терпение лопнуло",
+            "Личный план по сносу всего вокруг: конфликт вышел из берегов",
+            "Когда решил закрыть гештальт максимально разрушительным способом",
+        ];
+        variants[seed % variants.len()]
+    } else if is_cunning_wait_or_trap {
+        let variants = [
+            "Стратегия отступления с двойным дном: время играло на него",
+            "Холодный расчёт под прикрытием: зачем он тянул паузу до последнего",
+            "План на грани фола, но сработал точнее швейцарских часов",
+        ];
+        variants[seed % variants.len()]
+    } else if is_mystery_or_artifact {
+        let variants = [
+            "Цена чужой маски: почему этот подарок пугает больше врагов",
+            "Очнулся не там и с опасным трофеем на лице",
+            "Когда реликвия выбирает носителя раньше, чем он успел подумать",
+        ];
+        variants[seed % variants.len()]
+    } else if is_combat_or_danger {
+        let variants = [
+            "Секунда до бури: когда переговоры официально зашли в тупик",
+            "Никаких прелюдий — сразу в эпицентр замеса",
+            "Момент, когда инстинкт самосохранения взял выходной",
+        ];
+        variants[seed % variants.len()]
+    } else if has_question && has_exclam {
+        let variants = [
+            "Неудобный вопрос и ответ, после которого повисла тишина",
+            "Словесная дуэль на повышенных тонах: кто кого переиграет?",
+            "Когда одна реплика переворачивает расстановку сил в сцене",
+        ];
+        variants[seed % variants.len()]
+    } else if has_exclam {
+        let variants = [
+            "Эмоции через край: момент, когда сдерживаться уже невозможно",
+            "Когда спокойный разговор за секунду превратился в ультиматум",
+            "Точка кипения: сцена, которая меняет правила игры",
+        ];
+        variants[seed % variants.len()]
+    } else {
+        let variants = [
+            "Тишина после бури: диалог, в котором каждое слово весит тонну",
+            "Тонкий расчёт и двойное дно: о чём на самом деле эта сцена",
+            "Когда в короткой паузе читается больше, чем в громких криках",
+        ];
+        variants[seed % variants.len()]
     };
 
     let title = match input.clip_type.as_str() {
@@ -4360,74 +4477,7 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
                 format!("🎙️ «{}» на максималках: чистый драйв без пауз и воды", input.video_title)
             }
         }
-        _ => {
-            let hook_headline = if is_doctor_or_pain {
-                let variants = [
-                    "Медицина бессильна, когда на анестезии решили сэкономить",
-                    "Сквозь боль и чёрный юмор: цена победы оказалась кусачей",
-                    "Когда вместо сочувствия от врача досталась суровая реальность",
-                ];
-                variants[seed % variants.len()]
-            } else if is_farewell_or_join {
-                let variants = [
-                    "Упрямство сильнее прощаний: попутчика никто не спрашивал",
-                    "Когда «нет» не принимается и в путь идут вопреки всему",
-                    "Трогательный ультиматум вместо тихого прощания",
-                ];
-                variants[seed % variants.len()]
-            } else if is_revenge_or_destruction {
-                let variants = [
-                    "Радикальный подход к чужим шедеврам: когда терпение лопнуло",
-                    "Личный план по сносу всего вокруг: конфликт вышел из берегов",
-                    "Когда решил закрыть гештальт максимально разрушительным способом",
-                ];
-                variants[seed % variants.len()]
-            } else if is_cunning_wait_or_trap {
-                let variants = [
-                    "Стратегия отступления с двойным дном: время играло на него",
-                    "Холодный расчёт под прикрытием: зачем он тянул паузу до последнего",
-                    "План на грани фола, но сработал точнее швейцарских часов",
-                ];
-                variants[seed % variants.len()]
-            } else if is_mystery_or_artifact {
-                let variants = [
-                    "Цена чужой маски: почему этот подарок пугает больше врагов",
-                    "Очнулся не там и с опасным трофеем на лице",
-                    "Когда реликвия выбирает носителя раньше, чем он успел подумать",
-                ];
-                variants[seed % variants.len()]
-            } else if is_combat_or_danger {
-                let variants = [
-                    "Секунда до бури: когда переговоры официально зашли в тупик",
-                    "Никаких прелюдий — сразу в эпицентр замеса",
-                    "Момент, когда инстинкт самосохранения взял выходной",
-                ];
-                variants[seed % variants.len()]
-            } else if has_question && has_exclam {
-                let variants = [
-                    "Неудобный вопрос и ответ, после которого повисла тишина",
-                    "Словесная дуэль на повышенных тонах: кто кого переиграет?",
-                    "Когда одна реплика переворачивает расстановку сил в сцене",
-                ];
-                variants[seed % variants.len()]
-            } else if has_exclam {
-                let variants = [
-                    "Эмоции через край: момент, когда сдерживаться уже невозможно",
-                    "Когда спокойный разговор за секунду превратился в ультиматум",
-                    "Точка кипения: сцена, которая меняет правила игры",
-                ];
-                variants[seed % variants.len()]
-            } else {
-                let variants = [
-                    "Тишина после бури: диалог, в котором каждое слово весит тонну",
-                    "Тонкий расчёт и двойное дно: о чём на самом деле эта сцена",
-                    "Когда в короткой паузе читается больше, чем в громких криках",
-                ];
-                variants[seed % variants.len()]
-            };
-
-            format!("{} | {}", hook_headline, input.video_title)
-        }
+        _ => format!("{} | {}", hook_headline, input.video_title),
     };
 
     // 2. Ироничная шутка по теме конкретной ситуации
@@ -4447,9 +4497,21 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             jokes[seed % jokes.len()]
         }
         _ => {
-            if is_doctor_or_pain {
+            if is_cyber_implants {
                 let jokes = [
-                    "Бесплатная медицина в аниме-реалиях: бинты по талонам, сочувствие за отдельную доплату.",
+                    "Обычные люди ходят к стоматологу со страхом, а в Найт-Сити меняют челюсть в обеденный перерыв ради настроения.",
+                    "Когда гарантия на нервную систему давно истекла, но в каталоге как раз появилась скидка на новый хром.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_gps_or_hacking {
+                let jokes = [
+                    "Лучший антивирус в мире киберпанка — вовремя выдернуть штекер до того, как корпорация выставит счёт за роуминг.",
+                    "Режим инкогнито 2077 уровня: если нет встроенного порта, то и взламывать официально нечего.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_doctor_or_pain {
+                let jokes = [
+                    "Бесплатная медицина в действии: бинты по талонам, а сочувствие только по премиум-подписке.",
                     "Уровень сервиса в лазарете: «терпи, герой, обезболивающее в бюджет этой серии не завезли».",
                 ];
                 jokes[seed % jokes.len()]
@@ -4462,7 +4524,7 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             } else if is_revenge_or_destruction {
                 let jokes = [
                     "Творческий кризис — это когда вместо создания нового шедевра хочется с огоньком аннулировать все предыдущие.",
-                    "Уровень благодарности учителю: пять звёзд за науку и ноль шансов на уцелевший инвентарь.",
+                    "Уровень дипломатии: пять звёзд за прямоту и ноль шансов на уцелевший инвентарь.",
                 ];
                 jokes[seed % jokes.len()]
             } else if is_cunning_wait_or_trap {
@@ -4474,7 +4536,7 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             } else if is_mystery_or_artifact {
                 let jokes = [
                     "Главное правило любого артефакта: перед примеркой уточните, прилагается ли к нему инструкция по снятию.",
-                    "Эксклюзивная бижутерия с характером — носится легко, зато расплачиваться приходится нервами.",
+                    "Эксклюзивная экипировка с характером — носится легко, зато расплачиваться приходится нервами.",
                 ];
                 jokes[seed % jokes.len()]
             } else if is_combat_or_danger {
@@ -4499,7 +4561,17 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     let end_m = (input.end_sec / 60.0) as u32;
     let end_s = (input.end_sec % 60.0) as u32;
 
-    let inside_action_narrative = if is_doctor_or_pain {
+    let inside_action_narrative = if is_cyber_implants {
+        format!(
+            "Внутри сцены — жаркий спор вокруг {}, где за кажущейся бравадой скрывается тревога за предел человеческих возможностей",
+            topic_label
+        )
+    } else if is_gps_or_hacking {
+        format!(
+            "Внутри момента — напряжённая разборка вокруг {}, где герои ищут способ обойти корпоративный контроль",
+            topic_label
+        )
+    } else if is_doctor_or_pain {
         format!(
             "Внутри сцены — напряжённый разговор вокруг {}, где герой пытается держаться с сарказмом, несмотря на жесткие последствия схватки",
             topic_label
@@ -4521,7 +4593,7 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         )
     } else if is_mystery_or_artifact {
         format!(
-            "В центре внимания — атмосфера загадочности вокруг {}: тревожный диалог открывает опасную сторону необычной маски",
+            "В центре внимания — атмосфера загадочности вокруг {}: тревожный диалог открывает опасную сторону находки",
             topic_label
         )
     } else if is_combat_or_danger {
@@ -4678,6 +4750,8 @@ fn has_leaked_smm_template(text: &str) -> bool {
         "выходные данные",
         "входные данные",
         "требования к результату",
+        "жесткие правила",
+        "факты о сцене",
         "...",
     ];
     if FORBIDDEN_LEAKS.iter().any(|m| {
@@ -4695,6 +4769,58 @@ fn has_leaked_smm_template(text: &str) -> bool {
             || ('\u{0600}'..='\u{06FF}').contains(&c)
             || ('\u{0900}'..='\u{097F}').contains(&c)
     })
+}
+
+/// Проверяет, является ли сгенерированный LLM заголовок полноценным осмысленным хуком (минимум 3 собственных слова без учета названия тайтла),
+/// а не повтором названия видео («Киберпанк Бегущие по краю (2 серия)») или робо-ярлыком из промпта («Киберпанк Мимика», «Киберпанк Ирония»)
+fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str) -> bool {
+    let lower_cand = candidate.to_lowercase().replace('ё', "е");
+    let lower_video = video_title.to_lowercase().replace('ё', "е");
+
+    // 1. Запрещаем эхо-слова из промпта в заголовке («Мимика», «Ирония», «Разлад», «Размышления», «Ракурс»)
+    const BANNED_TITLE_ECHO_WORDS: &[&str] = &[
+        "мимика",
+        "мимики",
+        "ирония",
+        "иронии",
+        "разлад",
+        "размышления",
+        "ракурс",
+        "ракурсов",
+        "динамика кадра",
+        "крупный план",
+        "заголовок",
+        "описание",
+        "хештеги",
+        "субтитр",
+    ];
+    if BANNED_TITLE_ECHO_WORDS.iter().any(|&w| lower_cand.contains(w)) {
+        return false;
+    }
+
+    // 2. Вычисляем слова, которые НЕ входят в само название исходного видео (`video_title`)
+    let video_words: Vec<String> = lower_video
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| w.chars().count() >= 3)
+        .map(|w| w.to_string())
+        .collect();
+
+    let own_hook_words: Vec<&str> = lower_cand
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| {
+            let char_cnt = w.chars().count();
+            if char_cnt < 2 {
+                return false;
+            }
+            if matches!(*w, "серия" | "эпизод" | "выпуск" | "часть" | "аниме" | "ролик" | "видео" | "шортс" | "клип") {
+                return false;
+            }
+            !video_words.iter().any(|vw| vw == w)
+        })
+        .collect();
+
+    // Настоящий цепляющий заголовок обязан содержать минимум 3 собственных смысловых слова (помимо слов из названия тайтла)!
+    own_hook_words.len() >= 3
 }
 
 /// Отсекает выдуманные малой LLM несуществующие слова-гибриды вроде «Вермильоновый эскалатор» или «Маскеры вермильоновские»
@@ -4842,9 +4968,10 @@ fn parse_smm_llm_output(
         }
     }
 
-    let title_valid = parsed_title.chars().count() >= 10
+    let title_valid = parsed_title.chars().count() >= 18
         && parsed_title.chars().count() <= 130
-        && cyrillic_word_count(&parsed_title) >= 2
+        && cyrillic_word_count(&parsed_title) >= 4
+        && is_meaningful_smm_hook_title(&parsed_title, &input.video_title)
         && !has_leaked_smm_template(&parsed_title)
         && !has_hallucinated_title_stem(&parsed_title, &input.video_title, &input.inside_dialogue)
         && !is_verbatim_subtitle_copy(&parsed_title, &input.inside_dialogue);
@@ -4861,8 +4988,8 @@ fn parse_smm_llm_output(
         fallback_title
     };
 
-    let desc_valid = parsed_desc.chars().count() >= 45
-        && cyrillic_word_count(&parsed_desc) >= 6
+    let desc_valid = parsed_desc.chars().count() >= 55
+        && cyrillic_word_count(&parsed_desc) >= 8
         && !has_leaked_smm_template(&parsed_desc)
         && !has_hallucinated_title_stem(&parsed_desc, &input.video_title, &input.inside_dialogue)
         && !is_verbatim_subtitle_copy(&parsed_desc, &input.inside_dialogue);

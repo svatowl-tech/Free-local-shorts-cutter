@@ -1815,18 +1815,18 @@ fn build_complete_phrase_window(
             }
 
             let dur = post_roll - pre_roll;
-            // Эластичный потолок (+3.5с..+5.5с сверх max_dur для эмоциональных восклицаний и реакций стримера)
-            // для гарантированного закрытия начатой мысли, ответа на вопрос или панчлайна
+            // Контролируем потолок длительности в пределах эластичного диапазона max_dur (+1.2с на завершение последнего слова),
+            // чтобы ролики не выходили за верхнюю границу (например 22с -> не превращались в 25–27с)
             let has_high_energy = curr_is_pure_exclam
                 || exclamations_seen > 0
                 || (end_idx + 1 < fragments.len() && (fragments[end_idx + 1].text.contains('!') || fragments[end_idx + 1].text.contains("?!")));
-            let ceiling_extra = if has_high_energy { 5.5 } else { 3.5 };
+            let ceiling_extra = if has_high_energy { 1.2 } else { 0.6 };
             let max_ceiling = (max_dur + ceiling_extra).min(video_duration);
             if dur > max_ceiling {
                 break;
             }
 
-            if dur >= min_dur * 0.88 {
+            if dur >= min_dur {
                 let is_sent_end = crate::text_analyzer::is_sentence_end(fragments, end_idx);
                 let is_weak_end = crate::text_analyzer::is_weak_clip_ending(fragments, end_idx);
                 let has_punct = crate::text_analyzer::has_terminal_punctuation(curr_txt);
@@ -2053,7 +2053,7 @@ fn build_complete_phrase_window(
 
     let (end_idx, clip_start, clip_end, is_clean_end, _, _) = chosen?;
     let clip_dur = clip_end - clip_start;
-    if clip_dur < min_dur * 0.85 || clip_dur > max_dur + 3.8 {
+    if clip_dur < min_dur - 0.15 || clip_dur > max_dur + 1.2 {
         return None;
     }
 

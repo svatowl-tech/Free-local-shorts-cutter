@@ -1700,13 +1700,19 @@ fn resolve_multiface_shot_segments(
 
     let primary_cluster_x = clusters[0].0;
 
-    // 3. Если в ракурсе есть 2 конкурирующих разнесенных лица (например левый собеседник ~28% и правый ~72%)
-    // и ракурс длится >= 3.5с (7+ сэмплов), проверяем, нет ли устойчивой смены говорящего между первой и второй половиной ракурса
+    // 3. Если в ракурсе есть 2 конкурирующих разнесенных лица (например левый собеседник ~30% и правый ~70%)
+    // и ракурс длится >= 3.5с (7+ сэмплов), проверяем, нет ли устойчивой смены говорящего между первой и второй половиной ракурса.
+    // ВАЖНО: отсекаем краевые ложные кластеры (< 24% или > 76%), чтобы камера никогда не улетала в край стены/фона!
     if clusters.len() >= 2 && slice.len() >= 7 {
         let secondary_cluster_x = clusters[1].0;
+        let secondary_is_valid_zone = (0.24..=0.76).contains(&secondary_cluster_x);
         let cluster_dist = (primary_cluster_x - secondary_cluster_x).abs();
 
-        if cluster_dist >= 0.20 && clusters[1].1 >= clusters[0].1 * 0.45 && clusters[1].2 >= 3 {
+        if secondary_is_valid_zone
+            && cluster_dist >= 0.20
+            && clusters[1].1 >= clusters[0].1 * 0.48
+            && clusters[1].2 >= 3
+        {
             // Для каждого кадра ракурса определяем, кто из двух персонажей доминирует/говорит (0 = первый, 1 = второй)
             let mut frame_winner: Vec<usize> = Vec::with_capacity(slice.len());
             let mut current_speaker = 0_usize;
@@ -1769,14 +1775,14 @@ fn resolve_multiface_shot_segments(
                     CameraSegment {
                         start_t,
                         end_t: split_t,
-                        start_ratio: target_a.clamp(0.19, 0.81),
-                        end_ratio: target_a.clamp(0.19, 0.81),
+                        start_ratio: target_a.clamp(0.24, 0.76),
+                        end_ratio: target_a.clamp(0.24, 0.76),
                     },
                     CameraSegment {
                         start_t: split_t,
                         end_t,
-                        start_ratio: target_b.clamp(0.19, 0.81),
-                        end_ratio: target_b.clamp(0.19, 0.81),
+                        start_ratio: target_b.clamp(0.24, 0.76),
+                        end_ratio: target_b.clamp(0.24, 0.76),
                     },
                 ];
             }
