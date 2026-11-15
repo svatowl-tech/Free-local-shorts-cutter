@@ -243,11 +243,11 @@ const createPipelineStore = () => {
     addLog(`Запущен демонстрационный симулятор пайплайна для: ${videoName}`);
 
     if (state.config.mode !== 'manual') {
-      // Шаг 1: Извлечение аудио через FFmpeg
+      // Шаг 1: Подготовка аудио
       await new Promise(resolve => setTimeout(resolve, 1500));
       update(s => ({
         ...s,
-        currentStage: 'Извлечение аудио дорожки (FFmpeg)',
+        currentStage: 'Подготовка аудиодорожки',
         percentage: 10,
         stageDetails: { ...s.stageDetails, ffmpeg: { currentTime: 0, duration: 180, percent: 0 } }
       }));
@@ -266,13 +266,13 @@ const createPipelineStore = () => {
 
       addLog('Аудио дорожка успешно извлечена во временный файл: temp_audio.wav');
 
-      // Шаг 2: Whisper ASR
+      // Шаг 2: Распознавание речи
       await new Promise(resolve => setTimeout(resolve, 500));
       update(s => ({
         ...s,
-        currentStage: 'Распознавание речи и транскрипция (Whisper ASR)',
+        currentStage: 'Распознавание речи и субтитры',
         percentage: 40,
-        stageDetails: { ...s.stageDetails, whisper: { percent: 0, stage: 'Загрузка нейросети' } }
+        stageDetails: { ...s.stageDetails, whisper: { percent: 0, stage: 'Загрузка модели' } }
       }));
       addLog('Запуск whisper.cpp-модели. Загрузка параметров весов модели...');
 
@@ -294,11 +294,11 @@ const createPipelineStore = () => {
       }
       addLog(`Whisper ASR успешно завершено. Сгенерирован srt файл субтитров.`);
 
-      // Шаг 3: Qwen3-VL Мультимодальный анализ
+      // Шаг 3: Поиск ярких моментов
       await new Promise(resolve => setTimeout(resolve, 500));
       update(s => ({
         ...s,
-        currentStage: 'Интеллектуальный анализ кадров (Qwen3-VL AI)',
+        currentStage: 'Поиск лучших моментов',
         percentage: 60,
         stageDetails: { ...s.stageDetails, analyzer: { percent: 0, stage: 'Поиск интересных моментов', currentFrame: 0, totalFrames: 5400 } }
       }));
@@ -339,15 +339,15 @@ const createPipelineStore = () => {
       }
     }
 
-    // Шаг 4: Рендеринг клипов BMF
+    // Шаг 4: Сборка роликов
     await new Promise(resolve => setTimeout(resolve, 1000));
     update(s => ({
       ...s,
-      currentStage: 'Экспорт и рендеринг клипов (BMF Engine)',
+      currentStage: 'Сборка и сохранение роликов',
       percentage: 85,
-      stageDetails: { ...s.stageDetails, renderer: { percent: 0, stage: 'Инициализация кодеков' } }
+      stageDetails: { ...s.stageDetails, renderer: { percent: 0, stage: 'Подготовка' } }
     }));
-    addLog('Запуск Babit Multimedia Framework (BMF) с аппаратным ускорением...');
+    addLog('Запуск медиаконвейера сборки с аппаратным ускорением...');
 
     for (let clipNo = 1; clipNo <= 3; clipNo++) {
       await new Promise(resolve => setTimeout(resolve, 800));
@@ -550,34 +550,34 @@ const createPipelineStore = () => {
       addLog(`Запуск экспорта ${fragments.length} клипов в формате ${config.vertical_format ? '9:16' : '16:9'} с синхронизированными субтитрами...`);
 
       if (!isTauri) {
-        // Этап 1: Извлечение аудио
+        // Этап 1: Подготовка аудио
         update(s => ({
           ...s,
-          currentStage: 'Извлечение аудиодорожки (FFmpeg)...',
+          currentStage: 'Подготовка аудиодорожки...',
           percentage: 20,
           stageDetails: { ...s.stageDetails, ffmpeg: { currentTime: 60, duration: 180, percent: 100 } }
         }));
         addLog('FFmpeg: Аудио успешно извлечено в WAV 16kHz mono');
         await new Promise(resolve => setTimeout(resolve, 600));
 
-        // Этап 2: Транскрипция Whisper для субтитров
+        // Этап 2: Распознавание речи
         update(s => ({
           ...s,
-          currentStage: 'Whisper ASR: распознавание речи и создание субтитров...',
+          currentStage: 'Распознавание речи и субтитры...',
           percentage: 45,
           stageDetails: { ...s.stageDetails, whisper: { percent: 100, stage: 'Генерация SRT субтитров' } }
         }));
         addLog('Whisper: Субтитры успешно сформированы для выделенных диапазонов');
         await new Promise(resolve => setTimeout(resolve, 800));
 
-        // Этап 3: Нарезка и 9:16 кроппинг каждого клипа
+        // Этап 3: Сборка клипов
         const count = fragments.length || 1;
         for (let clipNo = 1; clipNo <= count; clipNo++) {
           const frag = fragments[clipNo - 1] || { start: 0, end: 15 };
           const dur = (frag.end - frag.start).toFixed(1);
           update(s => ({
             ...s,
-            currentStage: `Рендеринг Reels ${clipNo} из ${count} (9:16 Vertical + Субтитры)...`,
+            currentStage: `Сборка клипа ${clipNo} из ${count}...`,
             percentage: 50 + Math.floor((clipNo / count) * 45),
             stageDetails: { ...s.stageDetails, renderer: { percent: Math.round((clipNo / count) * 100), stage: `Клип #${clipNo} (${dur}с)` } }
           }));
@@ -632,7 +632,7 @@ const createPipelineStore = () => {
           () => onFfmpegProgress((payload) => {
             update(s => ({
               ...s,
-              currentStage: 'Извлечение аудио (FFmpeg)',
+              currentStage: 'Подготовка аудиодорожки',
               percentage: Math.round(payload.percent * 0.3),
               stageDetails: {
                 ...s.stageDetails,
@@ -655,13 +655,13 @@ const createPipelineStore = () => {
         const unlistenWhisper = await safeListen(
           () => onWhisperProgress((payload) => {
             const stageLabel = payload.stage === 'cached'
-              ? 'Используются готовые субтитры из кэша проекта'
+              ? 'Используются готовые субтитры проекта'
               : payload.stage === 'loading_model'
-                ? 'Загрузка модели'
+                ? 'Загрузка модели распознавания речи'
                 : 'Распознавание речи';
             update(s => ({
               ...s,
-              currentStage: `Whisper ASR: ${stageLabel}`,
+              currentStage: stageLabel,
               percentage: 30 + Math.round(payload.percent * 0.3),
               stageDetails: {
                 ...s.stageDetails,
@@ -684,7 +684,7 @@ const createPipelineStore = () => {
           () => onRenderProgress((payload) => {
             update(s => ({
               ...s,
-              currentStage: `Рендеринг Reels 9:16: ${payload.stage}`,
+              currentStage: `Сборка роликов: ${payload.stage}`,
               percentage: 60 + Math.round(payload.percent * 0.4),
               stageDetails: {
                 ...s.stageDetails,
@@ -749,7 +749,7 @@ const createPipelineStore = () => {
         update(s => ({
           ...s,
           status: 'completed',
-          currentStage: 'Экспорт клипов и SMM-текстов успешно завершен!',
+          currentStage: 'Экспорт клипов и описаний успешно завершен!',
           percentage: 100,
           clips: clipPaths
         }));
@@ -761,7 +761,7 @@ const createPipelineStore = () => {
         update(s => ({
           ...s,
           status: 'failed',
-          currentStage: 'Ошибка при экспорте фрагментов',
+          currentStage: 'Ошибка при экспорте клипов',
           error: errorMsg
         }));
         addLog(`ОШИБКА ЭКСПОРТА: ${errorMsg}`, 'Pipeline', 'error');
@@ -807,7 +807,7 @@ const createPipelineStore = () => {
       update(s => ({
         ...s,
         status: 'running',
-        currentStage: 'Инициализация...',
+        currentStage: 'Подготовка к обработке...',
         percentage: 1,
         error: null,
         clips: [],
@@ -833,7 +833,7 @@ const createPipelineStore = () => {
           () => onFfmpegProgress((payload) => {
             update(s => ({
               ...s,
-              currentStage: 'Извлечение аудио (FFmpeg)',
+              currentStage: 'Подготовка аудиодорожки',
               percentage: Math.max(2, Math.round(payload.percent * 0.20)), // 2 - 20%
               stageDetails: {
                 ...s.stageDetails,
@@ -857,7 +857,7 @@ const createPipelineStore = () => {
           () => onWhisperProgress((payload) => {
             update(s => ({
               ...s,
-              currentStage: `Whisper ASR: ${payload.stage === 'loading_model' ? 'Загрузка модели' : 'Распознавание'}`,
+              currentStage: payload.stage === 'loading_model' ? 'Загрузка модели распознавания речи' : 'Распознавание речи',
               percentage: 20 + Math.round(payload.percent * 0.30), // 20% - 50%
               stageDetails: {
                 ...s.stageDetails,
@@ -932,7 +932,7 @@ const createPipelineStore = () => {
           () => onRenderProgress((payload) => {
             update(s => ({
               ...s,
-              currentStage: `Рендеринг (FFmpeg): ${payload.stage}`,
+              currentStage: `Сборка роликов: ${payload.stage}`,
               percentage: 75 + Math.round(payload.percent * 0.25), // 75% - 100%
               stageDetails: {
                 ...s.stageDetails,
@@ -1029,7 +1029,7 @@ const createPipelineStore = () => {
           update(s => ({
             ...s,
             status: 'idle',
-            currentStage: 'Кандидаты загружены. Ожидание подтверждения экспорта',
+            currentStage: 'Фрагменты готовы. Проверьте их на таймлайне и сохраните клипы',
             percentage: 100
           }));
           addLog('ИИ завершил анализ. Фрагменты перенесены на таймлайн для подтверждения. Нажмите "Экспортировать клипы" после редактирования.');
@@ -1049,7 +1049,7 @@ const createPipelineStore = () => {
         update(s => ({
           ...s,
           status: 'failed',
-          currentStage: 'Ошибка выполнения пайплайна',
+          currentStage: 'Ошибка обработки видео',
           error: errorMsg
         }));
         addLog(`КРИТИЧЕСКАЯ ОШИБКА: ${errorMsg}`, 'Pipeline', 'error');
@@ -1069,7 +1069,7 @@ const createPipelineStore = () => {
       if (safeConfig.openai_api_key) {
         safeConfig.openai_api_key = '***';
       }
-      const header = `=== Video Cutter Pro - Журнал логирования ===\nДата: ${new Date().toLocaleString()}\nВидео: ${currentState.video ? currentState.video.path : 'Не выбрано'}\nКонфигурация: ${JSON.stringify(safeConfig, null, 2)}\n===========================================\n\n`;
+      const header = `=== Video Cutter Pro v2.3 — Журнал выполнения ===\nДата: ${new Date().toLocaleString()}\nВидео: ${currentState.video ? currentState.video.path : 'Не выбрано'}\nКонфигурация: ${JSON.stringify(safeConfig, null, 2)}\n===========================================\n\n`;
       const text = header + currentState.logs.join('\n');
       const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
       const url = URL.createObjectURL(blob);

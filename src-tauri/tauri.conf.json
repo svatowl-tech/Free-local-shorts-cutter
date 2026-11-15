@@ -1,6 +1,6 @@
 {
   "productName": "VideoCutterPro",
-  "version": "2.1.0",
+  "version": "2.3.0",
   "identifier": "com.developer.videocutter",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "Video Cutter Pro - AI Smart Editor",
+        "title": "Video Cutter Pro v2.3",
         "width": 1280,
         "height": 800,
         "resizable": true,

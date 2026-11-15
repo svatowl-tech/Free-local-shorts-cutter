@@ -405,9 +405,8 @@
         Поддерживаются MP4, MOV, MKV, AVI, WEBM. Обработка локально.
       </p>
 
-      <div class="label-mono px-3 py-1.5 bg-[#16161a] border border-[rgba(226,226,224,0.1)] rounded text-[rgba(226,226,224,0.7)] text-xs flex items-center gap-1.5">
-        <span>📁</span>
-        <span>Нажмите или перетащите файл для монтажа</span>
+      <div class="text-xs text-[rgba(226,226,224,0.7)] flex items-center gap-1.5">
+        <span>Нажмите для выбора или перетащите видеофайл</span>
       </div>
     </div>
   {:else}
@@ -421,22 +420,19 @@
           </svg>
         </div>
         <div class="flex-1 min-w-0">
-          <div class="label-mono mb-0.5">ВЫБРАН ФАЙЛ</div>
-          <h3 class="text-sm font-semibold text-[#e2e2e4] truncate font-mono mb-1" title={$pipelineStore.video.name}>
+          <div class="label-mono mb-0.5">Выбранное видео</div>
+          <h3 class="text-sm font-semibold text-[#e2e2e4] truncate mb-1" title={$pipelineStore.video.path}>
             {$pipelineStore.video.name}
           </h3>
-          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[rgba(226,226,224,0.5)] font-mono tabular-nums">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[rgba(226,226,224,0.6)] font-mono tabular-nums">
             <span class="flex items-center gap-1">
               <HardDrive class="h-3 w-3" />
               {formatBytes($pipelineStore.video.size)}
             </span>
             {#if $pipelineStore.video.duration && $pipelineStore.video.duration > 0}
-              <span>• Длительность: {Math.round($pipelineStore.video.duration)} сек</span>
+              <span>· Длительность: {formatDurationSec($pipelineStore.video.duration)}</span>
             {/if}
           </div>
-          <p class="text-[10px] text-[rgba(226,226,224,0.4)] truncate font-mono mt-1.5 p-1 bg-[#16161a] border border-[rgba(226,226,224,0.08)] rounded-[2px]">
-            {$pipelineStore.video.path}
-          </p>
         </div>
       </div>
 
@@ -460,8 +456,8 @@
             <path d="M8 10h8"/>
             <path d="M8 14h6"/>
           </svg>
-          <span class="label-mono text-xs text-[#e2e2e4] font-medium normal-case">
-            Загрузить субтитры (ASS / SSA / SRT / VTT / SUB)
+          <span class="text-xs text-[#e2e2e4] font-medium">
+            Готовые субтитры (необязательно)
           </span>
         </div>
 
@@ -502,8 +498,8 @@
             </div>
           {/if}
         </div>
-        <p class="text-[11px] text-emerald-400/90 font-mono">
-          ⚡ Готовые субтитры подключены — сканирование речи через Whisper пропущено, таймкоды и персонажи загружены напрямую.
+        <p class="text-[11px] text-emerald-400/90">
+          Субтитры подключены — распознавание речи пропущено, реплики и роли загружены из файла.
         </p>
 
         {#if customSubtitlesParseResult && customSubtitlesParseResult.characters.length > 0}
@@ -588,8 +584,8 @@
               {/each}
             </div>
 
-            <div class="text-[10px] text-[rgba(226,226,224,0.45)] font-mono leading-relaxed">
-              💡 При выборе конкретных персонажей автоматически захватываются короткие вопросы собеседников (≤2.5с перед репликой) для сохранения живого контекста диалога.
+            <div class="text-[11px] text-[rgba(226,226,224,0.5)] leading-relaxed">
+              При выборе отдельных персонажей программа автоматически захватит короткие реплики собеседников перед ответом, чтобы не терялся контекст диалога.
             </div>
           </div>
         {/if}
@@ -601,10 +597,10 @@
           class="btn border border-[#5865f2]/40 bg-[#5865f2]/10 hover:bg-[#5865f2]/20 text-[#e2e2e4] py-2.5 px-4 rounded-[4px] text-xs font-mono font-medium flex items-center justify-center gap-2 cursor-pointer transition-colors"
         >
           <span>💬</span>
-          <span>{isParsingSubtitles ? 'Разбор файла субтитров и персонажей...' : 'Загрузить субтитры (ASS / SSA / SRT / VTT)'}</span>
+          <span>{isParsingSubtitles ? 'Загрузка файла субтитров...' : 'Загрузить свои субтитры (ASS, SRT, VTT)'}</span>
         </button>
-        <p class="text-[10px] text-[rgba(226,226,224,0.45)] font-mono">
-          Позволяет мгновенно пропустить распознавание Whisper и собрать шортсы, хайлайты или актёрскую демку по конкретным персонажам из файла субтитров.
+        <p class="text-[11px] text-[rgba(226,226,224,0.5)] leading-relaxed">
+          Если у вас уже есть файл субтитров, загрузите его — программа пропустит распознавание речи и сможет нарезать сцены по выбранным персонажам.
         </p>
       {/if}
     </div>

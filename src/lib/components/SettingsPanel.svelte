@@ -503,8 +503,7 @@
   <div>
     <!-- Panel Header -->
     <div class="panel-title flex items-center justify-between pb-4 mb-6 border-b border-[rgba(226,226,224,0.1)]">
-      <span>Параметры обработки</span>
-      <span class="label-mono font-mono">tokio-engine v2.0</span>
+      <span>Настройки нарезки</span>
     </div>
 
     <!-- Controls Stack -->
@@ -513,9 +512,9 @@
       <!-- Control 1: Emotion Intensity -->
       <div class="flex flex-col gap-2">
         <div class="flex justify-between items-baseline">
-          <span class="label-mono text-[#e2e2e4]">Интенсивность эмоций</span>
-          <span class="font-mono text-[#5865f2] text-xs font-semibold">
-            {$pipelineStore.config.min_intensity_threshold}
+          <span class="label-mono text-[#e2e2e4]">Порог отбора моментов</span>
+          <span class="font-mono text-[#5865f2] text-xs font-semibold tabular-nums">
+            {Math.round($pipelineStore.config.min_intensity_threshold * 100)}%
           </span>
         </div>
         <input 
@@ -527,17 +526,17 @@
           on:input={handleIntensityChange}
           disabled={$pipelineStore.status === 'running'}
         />
-        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-          <span>0.0 (Все подряд)</span>
-          <span>1.0 (Пики)</span>
+        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.45)] font-mono">
+          <span>Больше клипов</span>
+          <span>Только лучшие пики</span>
         </div>
       </div>
 
       <!-- Control 2: Dynamic Complete-Phrase Clip Duration -->
       <div class="flex flex-col gap-2">
         <div class="flex justify-between items-baseline">
-          <span class="label-mono text-[#e2e2e4]">Длительность (по фразам)</span>
-          <span class="font-mono text-[#5865f2] text-xs font-semibold">
+          <span class="label-mono text-[#e2e2e4]">Целевая длительность</span>
+          <span class="font-mono text-[#5865f2] text-xs font-semibold tabular-nums">
             {Math.max(5, $pipelineStore.config.max_clip_duration_sec - 5)}–{$pipelineStore.config.max_clip_duration_sec + 5} сек (цель {$pipelineStore.config.max_clip_duration_sec}с)
           </span>
         </div>
@@ -550,8 +549,8 @@
           on:input={handleDurationChange}
           disabled={$pipelineStore.status === 'running'}
         />
-        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-          <span>10–20 с (Цельные фразы)</span>
+        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.45)] font-mono">
+          <span>10–20 сек</span>
           <span>50–60 сек</span>
         </div>
       </div>
@@ -560,7 +559,7 @@
       <div class="flex flex-col gap-2">
         <div class="flex justify-between items-baseline">
           <span class="label-mono text-[#e2e2e4]">Количество клипов</span>
-          <span class="font-mono text-[#5865f2] text-xs font-semibold">
+          <span class="font-mono text-[#5865f2] text-xs font-semibold tabular-nums">
             {($pipelineStore.config.max_clips_count ?? 10) === 0 ? 'Авто (все яркие моменты)' : `до ${$pipelineStore.config.max_clips_count ?? 10} шт.`}
           </span>
         </div>
@@ -573,9 +572,9 @@
           on:input={handleMaxClipsChange}
           disabled={$pipelineStore.status === 'running'}
         />
-        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-          <span>0 (Авто / без лимита)</span>
-          <span>50 (Максимум)</span>
+        <div class="flex justify-between items-center text-[10px] text-[rgba(226,226,224,0.45)] font-mono">
+          <span>Без лимита</span>
+          <span>до 50 шт.</span>
         </div>
       </div>
 
@@ -590,7 +589,7 @@
         />
         <div>
           <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Вертикальный формат (9:16)</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">AI-фокусировка по лицам в папку <span class="font-mono text-[#e2e2e4]">Шортсы/</span> (при снятой галочке — горизонтальные 16:9)</div>
+          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Автоматический фокус на лицах для Shorts, Reels и TikTok (без галочки — 16:9)</div>
         </div>
       </label>
 
@@ -604,8 +603,8 @@
           class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
         />
         <div>
-          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Сборка хайлайтов (с субтитрами и переходами)</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Сборник лучших моментов с вшитыми субтитрами в единый ролик (Crossfade 0.4с) в папку <span class="font-mono text-[#e2e2e4]">Хайлайты/</span></div>
+          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Сборник лучших моментов (Хайлайты)</div>
+          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Склеивает лучшие сцены с субтитрами и плавными переходами в один ролик 16:9</div>
         </div>
       </label>
 
@@ -619,31 +618,31 @@
             class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
         />
         <div>
-          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Монтаж разговорного видео / Демки</div>
-          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Чистовой монтаж без пауз и дублей с вшитыми субтитрами и сменой плана (1.0x / 1.15x) в папку <span class="font-mono text-[#e2e2e4]">Ток-видео/</span></div>
+          <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Разговорный монтаж (без пауз)</div>
+          <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Удаляет тишину и заминки, добавляет субтитры и легкую смену крупности плана</div>
         </div>
       </label>
 
       <!-- Checkbox 4: Preroll & Postroll (Bumpers) -->
-      <div class="flex items-center justify-between p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] bg-[#0c0c0e]/60 transition-colors select-none">
-        <label class="flex items-center gap-3.5 cursor-pointer flex-1">
+      <div class="flex items-center justify-between p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] bg-[#0c0c0e]/60 transition-colors select-none gap-2">
+        <label class="flex items-center gap-3.5 cursor-pointer flex-1 min-w-0">
           <input 
             type="checkbox" 
             checked={$pipelineStore.config.bumper_config?.enabled ?? false}
             on:change={handleBumperToggle}
             disabled={$pipelineStore.status === 'running'}
-            class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2]"
+            class="w-4 h-4 rounded-[2px] bg-[#16161a] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2] shrink-0"
           />
-          <div>
-            <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Преролл и постролл (Заставки)</div>
-            <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Авто-прикрепление заставок перед и после каждого ролика (9:16 и 16:9)</div>
+          <div class="min-w-0">
+            <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Заставки (Преролл и Постролл)</div>
+            <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans">Добавляет ваши заставки в начале и конце каждого готового ролика</div>
           </div>
         </label>
         <button
           type="button"
           on:click={() => (showBumperModal = true)}
           disabled={$pipelineStore.status === 'running'}
-          class="px-3 py-1.5 bg-[#5865f2]/20 hover:bg-[#5865f2]/40 border border-[#5865f2]/50 text-[#e2e2e4] font-mono text-xs rounded transition-colors flex items-center gap-1.5 cursor-pointer"
+          class="px-3 py-1.5 bg-[#5865f2]/20 hover:bg-[#5865f2]/40 border border-[#5865f2]/50 text-[#e2e2e4] font-mono text-xs rounded transition-colors flex items-center gap-1.5 cursor-pointer whitespace-nowrap shrink-0"
         >
           <Settings class="w-3.5 h-3.5 text-[#5865f2]" />
           <span>Настроить</span>
@@ -665,8 +664,8 @@
             </div>
           </div>
 
-          <p class="text-[11px] text-[rgba(226,226,224,0.5)] font-mono leading-relaxed">
-            Отметьте персонажей для нарезки персонажных шортсов, хайлайтов или демок озвучки (с авто-захватом коротких реплик собеседников):
+          <p class="text-[11px] text-[rgba(226,226,224,0.5)] font-sans leading-relaxed">
+            Отметьте нужных персонажей — программа нарежет моменты с их участием и сохранит короткие ответные реплики собеседников:
           </p>
 
           <div class="flex flex-wrap gap-2 max-h-[160px] overflow-y-auto pr-1">
@@ -709,13 +708,13 @@
           <button 
             type="button"
             on:click={() => handleModeChange('confirm')}
-            class="font-mono py-2.5 px-2 border-none uppercase text-xs font-bold tracking-wider cursor-pointer transition-colors rounded-[2px] {
+            class="font-mono py-2.5 px-2 border-none uppercase text-xs font-bold tracking-wider cursor-pointer transition-colors rounded-[2px] whitespace-nowrap {
               $pipelineStore.config.mode === 'confirm' 
                 ? 'bg-[#5865f2] text-white' 
                 : 'bg-[rgba(226,226,224,0.1)] text-[rgba(226,226,224,0.6)] hover:text-[#e2e2e4]'
             }"
           >
-            Подтв.
+            С проверкой
           </button>
           <button 
             type="button"
@@ -740,7 +739,7 @@
         on:click={toggleAdvanced}
         class="label-mono flex items-center justify-between w-full text-left cursor-pointer hover:text-[#e2e2e4] transition-colors"
       >
-        <span>Расширенные настройки нейросетей и SMM</span>
+        <span>Дополнительные настройки</span>
         {#if showAdvanced}
           <ChevronUp class="h-3.5 w-3.5 text-[#5865f2]" />
         {:else}
@@ -751,19 +750,19 @@
       {#if showAdvanced}
         <div class="mt-3.5 p-4 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] flex flex-col gap-3">
           <div class="flex items-center justify-between">
-            <span class="label-mono text-[#5865f2]">Менеджер весов (≤3B)</span>
+            <span class="label-mono text-[#5865f2]">Локальные модели</span>
             <button 
               type="button"
               on:click={onOpenModelManager}
-              class="label-mono text-[#5865f2] hover:underline cursor-pointer font-bold"
+              class="label-mono text-[#5865f2] hover:underline cursor-pointer font-bold whitespace-nowrap"
             >
-              [СКАЧАТЬ / УДАЛИТЬ МОДЕЛИ]
+              Управление моделями
             </button>
           </div>
 
           <!-- ASR model -->
           <div class="flex flex-col gap-1">
-            <label for="asr_model" class="label-mono">Модель распознавания речи (Whisper)</label>
+            <label for="asr_model" class="label-mono">Точность распознавания речи</label>
             <select
               id="asr_model"
               value={$pipelineStore.config.asr_model_path}
@@ -773,7 +772,7 @@
             >
               {#each whisperModels as wm}
                 <option value={joinRelativePath('models', wm.filename)}>
-                  {wm.exists ? '✓ ' : ''}{wm.name} ({wm.size_mb} МБ){wm.exists ? ' [Скачана]' : ' [Не скачана]'}
+                  {wm.exists ? '✓ ' : ''}{wm.name} ({wm.size_mb} МБ){wm.exists ? ' (Установлена)' : ' (Не скачана)'}
                 </option>
               {/each}
             </select>
@@ -781,7 +780,7 @@
 
           <!-- NLP Text Engine -->
           <div class="flex flex-col gap-1">
-            <label for="text_engine" class="label-mono">Движок анализа диалогов, проверки и SMM</label>
+            <label for="text_engine" class="label-mono">Способ анализа и подбора сцен</label>
             <select 
               id="text_engine"
               value={$pipelineStore.config.text_engine}
@@ -789,19 +788,19 @@
               disabled={$pipelineStore.status === 'running'}
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
             >
-              <option value="llama">Локальная ИИ-модель GGUF (llama-cli + авто-резерв NLP)</option>
-              <option value="builtin">Быстрый эвристический NLP-алгоритм (без LLM)</option>
-              <option value="ollama">Внешний Ollama сервер (Опционально)</option>
-              <option value="openai">OpenAI API ключ (OpenAI-совместимый сервер)</option>
+              <option value="llama">Локальная нейросеть на ПК (рекомендуется)</option>
+              <option value="builtin">Быстрый встроенный анализ (без нейросети)</option>
+              <option value="ollama">Локальный сервер Ollama</option>
+              <option value="openai">Внешний API-сервис (OpenAI / OpenRouter / DeepSeek)</option>
             </select>
           </div>
 
           {#if $pipelineStore.config.text_engine === 'llama'}
-            <!-- 3-Stage Local GGUF NLP Models Configuration -->
+            <!-- 3-Stage Local AI Pipeline Configuration -->
             <div class="p-3 bg-[#16161a]/75 border border-[rgba(226,226,224,0.14)] rounded-[3px] flex flex-col gap-3">
               <div class="flex items-center justify-between">
-                <span class="label-mono text-[#e2e2e4] normal-case text-xs font-semibold">Распределение моделей по 3 этапам ИИ-конвейера</span>
-                <span class="font-mono text-[10px] text-[#23c55e]">
+                <span class="label-mono text-[#e2e2e4] normal-case text-xs font-semibold">Этапы работы нейросети</span>
+                <span class="font-mono text-[10px] text-[#23c55e] tabular-nums">
                   Установлено: {installedLlmModels.length}/{llmModels.length}
                 </span>
               </div>
@@ -809,7 +808,7 @@
               <!-- Stage 1: Initial replica scoring -->
               <div class="flex flex-col gap-1">
                 <label for="text_model_stage1" class="label-mono text-[10px] text-[#9aa4ff]">
-                  1. Первичная оценка реплик и эмоций (Отбор кандидатов)
+                  1. Отбор ярких сцен и эмоций
                 </label>
                 <select
                   id="text_model_stage1"
@@ -819,18 +818,18 @@
                   class="w-full bg-[#0c0c0e] border border-[rgba(226,226,224,0.18)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
                 >
                   {#if installedLlmModels.length > 0}
-                    <optgroup label="✓ Установленные модели (Готовы к работе)">
+                    <optgroup label="Установленные модели">
                       {#each installedLlmModels as lm}
                         <option value={lm.filename}>
-                          ✓ {lm.name} ({lm.params}) [Установлена]
+                          ✓ {lm.name} ({lm.params})
                         </option>
                       {/each}
                     </optgroup>
                     {#if uninstalledLlmModels.length > 0}
-                      <optgroup label="Доступные для скачивания в менеджере">
+                      <optgroup label="Доступны для загрузки">
                         {#each uninstalledLlmModels as lm}
                           <option value={lm.filename}>
-                            {lm.name} ({lm.params}) [Не скачана]
+                            {lm.name} ({lm.params}) (Не скачана)
                           </option>
                         {/each}
                       </optgroup>
@@ -838,7 +837,7 @@
                   {:else}
                     {#each llmModels as lm}
                       <option value={lm.filename}>
-                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Установлена]' : '[Не скачана]'}
+                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}){lm.exists ? ' (Установлена)' : ' (Не скачана)'}
                       </option>
                     {/each}
                   {/if}
@@ -848,7 +847,7 @@
               <!-- Stage 2: Final 2nd verification & repair loop -->
               <div class="flex flex-col gap-1">
                 <label for="text_model_stage2" class="label-mono text-[10px] text-emerald-400">
-                  2. Финальная 2-я проверка (Связность, юмор, отсев бреда и 2-й круг доработки)
+                  2. Проверка смысла и целостности клипов
                 </label>
                 <select
                   id="text_model_stage2"
@@ -858,18 +857,18 @@
                   class="w-full bg-[#0c0c0e] border border-emerald-500/30 rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-emerald-400 focus:outline-none"
                 >
                   {#if installedLlmModels.length > 0}
-                    <optgroup label="✓ Установленные модели (Готовы к работе)">
+                    <optgroup label="Установленные модели">
                       {#each installedLlmModels as lm}
                         <option value={lm.filename}>
-                          ✓ {lm.name} ({lm.params}) [Установлена]
+                          ✓ {lm.name} ({lm.params})
                         </option>
                       {/each}
                     </optgroup>
                     {#if uninstalledLlmModels.length > 0}
-                      <optgroup label="Доступные для скачивания в менеджере">
+                      <optgroup label="Доступны для загрузки">
                         {#each uninstalledLlmModels as lm}
                           <option value={lm.filename}>
-                            {lm.name} ({lm.params}) [Не скачана]
+                            {lm.name} ({lm.params}) (Не скачана)
                           </option>
                         {/each}
                       </optgroup>
@@ -877,7 +876,7 @@
                   {:else}
                     {#each llmModels as lm}
                       <option value={lm.filename}>
-                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Установлена]' : '[Не скачана]'}
+                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}){lm.exists ? ' (Установлена)' : ' (Не скачана)'}
                       </option>
                     {/each}
                   {/if}
@@ -887,7 +886,7 @@
               <!-- Stage 3: Final SMM Copywriter -->
               <div class="flex flex-col gap-1">
                 <label for="text_model_stage3" class="label-mono text-[10px] text-amber-300">
-                  3. Финальный SMM-копирайтер (Название, описание с иронией, хештеги в .txt)
+                  3. Названия, описания и хештеги для публикации
                 </label>
                 <select
                   id="text_model_stage3"
@@ -897,18 +896,18 @@
                   class="w-full bg-[#0c0c0e] border border-amber-500/35 rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-amber-400 focus:outline-none"
                 >
                   {#if installedLlmModels.length > 0}
-                    <optgroup label="✓ Установленные модели (Готовы к работе)">
+                    <optgroup label="Установленные модели">
                       {#each installedLlmModels as lm}
                         <option value={lm.filename}>
-                          ✓ {lm.name} ({lm.params}) [Установлена]
+                          ✓ {lm.name} ({lm.params})
                         </option>
                       {/each}
                     </optgroup>
                     {#if uninstalledLlmModels.length > 0}
-                      <optgroup label="Доступные для скачивания в менеджере">
+                      <optgroup label="Доступны для загрузки">
                         {#each uninstalledLlmModels as lm}
                           <option value={lm.filename}>
-                            {lm.name} ({lm.params}) [Не скачана]
+                            {lm.name} ({lm.params}) (Не скачана)
                           </option>
                         {/each}
                       </optgroup>
@@ -916,18 +915,17 @@
                   {:else}
                     {#each llmModels as lm}
                       <option value={lm.filename}>
-                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}) {lm.exists ? '[Установлена]' : '[Не скачана]'}
+                        {lm.exists ? '✓ ' : ''}{lm.name} ({lm.params}){lm.exists ? ' (Установлена)' : ' (Не скачана)'}
                       </option>
                     {/each}
                   {/if}
                 </select>
               </div>
 
-              <div class="text-[10px] font-mono text-[rgba(226,226,224,0.55)] leading-relaxed bg-[#0c0c0e]/80 border border-[rgba(226,226,224,0.1)] rounded-[2px] px-2.5 py-2">
-                <div>🇷🇺 <span class="text-[#e2e2e4]">3-ступенчатый ИИ-конвейер:</span></div>
-                <div>• <span class="text-[#9aa4ff]">Этап 1:</span> Первичная оценка реплик и эмоциональных пиков.</div>
-                <div>• <span class="text-emerald-400">Этап 2:</span> Финальная ревизия клипов на связность, юмор и возврат на доработку (1 круг).</div>
-                <div>• <span class="text-amber-300">Этап 3 (SMM):</span> Генерация названия, описания (с учётом названия видео, контекста, сути внутри и ироничной шутки) + хештегов и экспорт в <span class="text-[#e2e2e4]">.txt</span> для Шортсов, Хайлайтов и Разговорного видео.</div>
+              <div class="text-[11px] font-sans text-[rgba(226,226,224,0.6)] leading-relaxed bg-[#0c0c0e]/80 border border-[rgba(226,226,224,0.1)] rounded-[2px] px-2.5 py-2 space-y-0.5">
+                <div>• <span class="text-[#9aa4ff]">Отбор:</span> находит самые эмоциональные и динамичные сцены.</div>
+                <div>• <span class="text-emerald-400">Проверка:</span> следит, чтобы фразы не обрывались и момент имел смысл.</div>
+                <div>• <span class="text-amber-300">Описания:</span> подготавливает готовый заголовок, текст с иронией и хештеги рядом с видео.</div>
               </div>
             </div>
           {:else if $pipelineStore.config.text_engine === 'ollama'}
@@ -946,7 +944,7 @@
                 />
               </div>
               <div class="flex flex-col gap-1">
-                <label for="ollama_model" class="label-mono">1. Модель первичной оценки (Ollama)</label>
+                <label for="ollama_model" class="label-mono">1. Модель отбора сцен</label>
                 <input
                   id="ollama_model"
                   type="text"
@@ -958,11 +956,11 @@
                 />
               </div>
               <div class="flex flex-col gap-1">
-                <label for="ollama_verifier_model" class="label-mono text-emerald-400">2. Модель финальной проверки (Ollama)</label>
+                <label for="ollama_verifier_model" class="label-mono text-emerald-400">2. Модель проверки смысла</label>
                 <input
                   id="ollama_verifier_model"
                   type="text"
-                  placeholder="По умолчанию = модель этапа 1"
+                  placeholder="По умолчанию = модель 1"
                   value={$pipelineStore.config.verifier_model_name || $pipelineStore.config.text_model_name}
                   on:input={handleVerifierModelChange}
                   disabled={$pipelineStore.status === 'running'}
@@ -970,11 +968,11 @@
                 />
               </div>
               <div class="flex flex-col gap-1">
-                <label for="ollama_smm_model" class="label-mono text-amber-300">3. Модель SMM-копирайтера (Название, описание, хештеги)</label>
+                <label for="ollama_smm_model" class="label-mono text-amber-300">3. Модель заголовков и описаний</label>
                 <input
                   id="ollama_smm_model"
                   type="text"
-                  placeholder="По умолчанию = модель этапа 2"
+                  placeholder="По умолчанию = модель 2"
                   value={$pipelineStore.config.smm_model_name || $pipelineStore.config.verifier_model_name || $pipelineStore.config.text_model_name}
                   on:input={handleSmmModelChange}
                   disabled={$pipelineStore.status === 'running'}
@@ -986,7 +984,7 @@
             <!-- OpenAI-Compatible API Settings & Local Multi-Key Manager -->
             <div class="p-3 bg-[#16161a]/80 border border-[#5865f2]/35 rounded-[3px] flex flex-col gap-2.5">
               <div class="flex items-center justify-between">
-                <span class="label-mono text-[#5865f2]">Настройки OpenAI-совместимого API</span>
+                <span class="label-mono text-[#5865f2]">Подключение внешнего API</span>
                 {#if saveFeedback}
                   <span class="font-mono text-[10px] text-[#23c55e]">{saveFeedback}</span>
                 {/if}
@@ -995,7 +993,7 @@
               <!-- Saved Profiles Selector -->
               <div class="flex flex-col gap-1">
                 <div class="flex items-center justify-between">
-                  <label for="openai_profile_select" class="label-mono">Сохранённые ключи / профили</label>
+                  <label for="openai_profile_select" class="label-mono">Сохранённые профили</label>
                   <div class="flex items-center gap-2">
                     <button
                       type="button"
@@ -1003,7 +1001,7 @@
                       disabled={$pipelineStore.status === 'running'}
                       class="font-mono text-[10px] text-[#5865f2] hover:underline cursor-pointer"
                     >
-                      [+ ДОБАВИТЬ ЕЩЁ КЛЮЧ]
+                      + Добавить профиль
                     </button>
                     {#if selectedProfileId && selectedProfileId !== '__new__' && savedOpenAiProfiles.length > 0}
                       <button
@@ -1012,7 +1010,7 @@
                         disabled={$pipelineStore.status === 'running'}
                         class="font-mono text-[10px] text-[#ef4444] hover:underline cursor-pointer"
                       >
-                        [УДАЛИТЬ]
+                        Удалить
                       </button>
                     {/if}
                   </div>
@@ -1107,13 +1105,13 @@
               <!-- API Key -->
               <div class="flex flex-col gap-1">
                 <div class="flex items-center justify-between">
-                  <label for="openai_api_key" class="label-mono">API-ключ (Bearer Token)</label>
+                  <label for="openai_api_key" class="label-mono">API-ключ</label>
                   <button
                     type="button"
                     on:click={() => (showApiKey = !showApiKey)}
                     class="font-mono text-[10px] text-[rgba(226,226,224,0.6)] hover:text-[#e2e2e4] cursor-pointer"
                   >
-                    {showApiKey ? '[СКРЫТЬ]' : '[ПОКАЗАТЬ]'}
+                    {showApiKey ? 'Скрыть' : 'Показать'}
                   </button>
                 </div>
                 <input
@@ -1130,18 +1128,18 @@
               <!-- Model Name & Server Model Fetcher -->
               <div class="flex flex-col gap-1.5">
                 <div class="flex items-center justify-between gap-2">
-                  <label for="openai_model" class="label-mono">Модель (Model ID)</label>
+                  <label for="openai_model" class="label-mono">Модель</label>
                   <button
                     type="button"
                     on:click={handleFetchModelsFromServer}
                     disabled={$pipelineStore.status === 'running' || isFetchingModels}
-                    class="font-mono text-[10px] px-2 py-0.5 bg-[#5865f2]/20 hover:bg-[#5865f2]/35 border border-[#5865f2]/60 text-[#e2e2e4] rounded-[2px] cursor-pointer transition-colors disabled:opacity-40 flex items-center gap-1"
+                    class="font-mono text-[10px] px-2 py-0.5 bg-[#5865f2]/20 hover:bg-[#5865f2]/35 border border-[#5865f2]/60 text-[#e2e2e4] rounded-[2px] cursor-pointer transition-colors disabled:opacity-40 flex items-center gap-1 whitespace-nowrap"
                   >
                     {#if isFetchingModels}
                       <span class="inline-block h-2.5 w-2.5 border border-white/30 border-t-white rounded-full animate-spin"></span>
-                      <span>ЗАПРОС С СЕРВЕРА...</span>
+                      <span>Обновление...</span>
                     {:else}
-                      <span>↻ ЗАПРОСИТЬ С СЕРВЕРА</span>
+                      <span>Обновить список</span>
                     {/if}
                   </button>
                 </div>
@@ -1202,7 +1200,7 @@
                     title="Запросить список доступных Model ID с указанного сервера"
                     class="px-2.5 py-1.5 bg-[#0c0c0e] hover:bg-[#5865f2]/20 border border-[rgba(226,226,224,0.2)] hover:border-[#5865f2] text-[11px] font-mono text-[#e2e2e4] rounded-[2px] cursor-pointer transition-colors disabled:opacity-40 whitespace-nowrap"
                   >
-                    {isFetchingModels ? '...' : 'Список ID'}
+                    {isFetchingModels ? '...' : 'Список'}
                   </button>
                 </div>
               </div>
@@ -1215,15 +1213,15 @@
                 class="mt-1 w-full py-2 px-3 bg-[#5865f2] hover:bg-[#4752c4] text-white font-mono text-xs font-bold uppercase tracking-wider rounded-[2px] cursor-pointer transition-colors"
               >
                 {selectedProfileId && selectedProfileId !== '__new__' && savedOpenAiProfiles.some(p => p.id === selectedProfileId)
-                  ? 'Сохранить / обновить выбранный ключ'
-                  : 'Сохранить ключ локально'}
+                  ? 'Обновить профиль'
+                  : 'Сохранить профиль'}
               </button>
             </div>
           {/if}
 
           <!-- Vision model -->
           <div class="flex flex-col gap-1">
-            <label for="vision_model" class="label-mono">Модель анализа кадров (Vision AI + mmproj)</label>
+            <label for="vision_model" class="label-mono">Визуальный анализ кадров (опционально)</label>
             <select
               id="vision_model"
               value={$pipelineStore.config.vision_model_path || ''}
@@ -1231,10 +1229,10 @@
               disabled={$pipelineStore.status === 'running'}
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
             >
-              <option value="">Авто / Двухфакторный анализ (FFmpeg сцены + аудио)</option>
+              <option value="">Автоматический (по движению и звуку)</option>
               {#each visionModels as vm}
                 <option value={joinRelativePath('models', vm.filename)}>
-                  {vm.exists ? '✓ ' : ''}{vm.name} ({vm.params}){vm.exists ? ' [Скачана]' : ' [Не скачана]'}
+                  {vm.exists ? '✓ ' : ''}{vm.name} ({vm.params}){vm.exists ? ' (Установлена)' : ' (Не скачана)'}
                 </option>
               {/each}
             </select>
@@ -1242,7 +1240,7 @@
 
           <!-- Output dir -->
           <div class="flex flex-col gap-1">
-            <label for="output_dir" class="label-mono">Папка сохранения</label>
+            <label for="output_dir" class="label-mono">Папка для готовых видео</label>
             <input 
               id="output_dir"
               type="text" 
@@ -1257,7 +1255,7 @@
     </div>
   </div>
 
-  <!-- Action Buttons Stack (Variation 2 Design) -->
+  <!-- Action Buttons Stack -->
   <div class="mt-6 flex flex-col gap-3">
     <button 
       on:click={startProcess}
@@ -1268,7 +1266,7 @@
         <div class="h-3.5 w-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin"></div>
         <span>Идет обработка...</span>
       {:else}
-        <span>Запустить ИИ-анализ</span>
+        <span>Начать нарезку</span>
       {/if}
     </button>
 
@@ -1277,7 +1275,7 @@
       disabled={!$pipelineStore.video || $pipelineStore.status === 'running' || ($pipelineStore.config.mode === 'auto' && $pipelineStore.status !== 'completed')}
       class="font-mono p-4 border-none uppercase text-xs font-bold tracking-[0.1em] cursor-pointer transition-opacity rounded-[2px] bg-[#23c55e] text-white disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
-      <span>Экспортировать клипы</span>
+      <span>Сохранить клипы</span>
     </button>
   </div>
 </div>

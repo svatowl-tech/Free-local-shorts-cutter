@@ -399,8 +399,8 @@
   <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono bg-[#0e0e12] border border-[rgba(226,226,224,0.1)] px-3 py-2 rounded-[4px] w-full max-w-full min-w-0">
     <div class="flex flex-wrap items-center gap-2 min-w-0">
       <span class="label-mono text-[#e2e2e4]">Шкала времени</span>
-      <span class="text-[10px] text-[#5865f2] bg-[#5865f2]/10 border border-[#5865f2]/30 px-2 py-0.5 rounded-[2px] truncate max-w-full">
-        💡 Клик по клипу — превью • Ползунок / Ctrl+колесо — масштаб • Края — точная подгонка
+      <span class="text-[11px] font-sans text-[rgba(226,226,224,0.5)] truncate max-w-full">
+        Клик по клипу — превью • Ползунок или Ctrl + колесо — масштаб • Края — подгонка границ
       </span>
     </div>
 

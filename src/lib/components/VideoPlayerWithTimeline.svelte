@@ -207,14 +207,14 @@
   function handleVideoError() {
     videoLoadError = true;
     const mediaError = videoEl?.error;
-    let msg = 'Видео не может быть отображено встроенным движком WebView2';
+    let msg = 'Предпросмотр этого видеофайла временно недоступен в окне редактора.';
     if (mediaError) {
       if (mediaError.code === 4) {
-        msg = 'Формат или кодек видеофайла (например, HEVC/H.265, 10-бит, AC3 аудио) не поддерживается встроенным движком WebView2.';
+        msg = 'Кодек или формат видео (например, H.265 / 10-бит) не поддерживается встроенным плеером предпросмотра.';
       } else if (mediaError.code === 2) {
-        msg = 'Ошибка сетевого протокола asset.localhost при доступе к локальному диску.';
+        msg = 'Не удалось открыть видеофайл для предпросмотра.';
       } else {
-        msg = `Ошибка воспроизведения (код ${mediaError.code}): ${mediaError.message || 'Media source error'}`;
+        msg = 'Не удалось воспроизвести видеофайл в окне предпросмотра.';
       }
     }
     videoErrorMessage = msg;
@@ -450,14 +450,11 @@
         <Film class="w-5 h-5" />
       </div>
       <div>
-        <h2 class="font-syne font-bold text-base text-[#e2e2e4] flex items-center gap-2">
-          Ручная разметка Reels & Shorts
-          <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-[#5865f2]/20 border border-[#5865f2]/40 text-[#5865f2] uppercase font-bold">
-            9:16 + Whisper
-          </span>
+        <h2 class="font-syne font-bold text-base text-[#e2e2e4]">
+          Редактор клипов и таймлайна
         </h2>
-        <p class="text-xs text-[rgba(226,226,224,0.6)] font-mono">
-          Масштабируйте таймлайн для точной подгонки границ и нажимайте на любой ролик для предпросмотра
+        <p class="text-xs text-[rgba(226,226,224,0.6)] font-sans">
+          Масштабируйте таймлайн для точной подгонки границ и нажимайте на любой клип для предпросмотра
         </p>
       </div>
     </div>
@@ -467,7 +464,7 @@
       <button
         type="button"
         on:click={() => loopPreview = !loopPreview}
-        class="px-3 py-1.5 rounded-[3px] text-xs font-mono border transition-all flex items-center gap-1.5 {
+        class="px-3 py-1.5 rounded-[3px] text-xs font-mono border transition-all flex items-center gap-1.5 whitespace-nowrap {
           loopPreview 
             ? 'bg-[#23c55e]/20 text-[#23c55e] border-[#23c55e]/60' 
             : 'bg-[#1a1a20] text-[rgba(226,226,224,0.6)] border-[rgba(226,226,224,0.15)] hover:text-white'
@@ -481,7 +478,7 @@
       <button
         type="button"
         on:click={() => showCropGuide = !showCropGuide}
-        class="px-3 py-1.5 rounded-[3px] text-xs font-mono border transition-all flex items-center gap-1.5 {
+        class="px-3 py-1.5 rounded-[3px] text-xs font-mono border transition-all flex items-center gap-1.5 whitespace-nowrap {
           showCropGuide 
             ? 'bg-[#5865f2] text-white border-[#5865f2] shadow-[0_0_10px_rgba(88,101,242,0.4)]' 
             : 'bg-[#1a1a20] text-[rgba(226,226,224,0.6)] border-[rgba(226,226,224,0.15)] hover:text-white'
@@ -490,9 +487,6 @@
       >
         <Smartphone class="w-3.5 h-3.5" />
         <span>Рамка 9:16 Reels</span>
-        {#if showCropGuide}
-          <span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
-        {/if}
       </button>
     </div>
   </div>
@@ -545,20 +539,20 @@
         </div>
       {/if}
 
-      <!-- Диагностический оверлей при ошибке кодеков или доступа в WebView2 -->
+      <!-- Оверлей при ошибке воспроизведения в окне предпросмотра -->
       {#if videoLoadError}
         <div class="absolute inset-0 bg-[#0e0e14]/95 z-30 flex flex-col items-center justify-center p-6 text-center">
           <div class="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-3 text-amber-400">
             <AlertTriangle class="w-6 h-6" />
           </div>
-          <h4 class="text-sm font-semibold text-[#e2e2e4] mb-1 font-mono">Превью видео недоступно в системном плеере WebView2</h4>
-          <p class="text-xs text-[rgba(226,226,224,0.7)] max-w-md mb-4 leading-relaxed font-mono">
+          <h4 class="text-sm font-semibold text-[#e2e2e4] mb-1 font-sans">Предпросмотр в плеере недоступен</h4>
+          <p class="text-xs text-[rgba(226,226,224,0.7)] max-w-md mb-4 leading-relaxed font-sans">
             {videoErrorMessage}
           </p>
           <div class="flex flex-wrap items-center justify-center gap-3">
             <label class="btn-primary text-xs cursor-pointer inline-flex items-center gap-2">
               <FolderOpen class="w-3.5 h-3.5" />
-              <span>Выбрать файл через Blob-плеер</span>
+              <span>Выбрать файл заново</span>
               <input type="file" accept="video/*" class="hidden" on:change={handleFallbackFileSelect} />
             </label>
             <button
@@ -569,8 +563,8 @@
               Скрыть сообщение
             </button>
           </div>
-          <p class="text-[11px] text-[rgba(226,226,224,0.4)] mt-4 font-mono max-w-md">
-            💡 <strong>Экспорт клипов всё равно работает:</strong> даже без встроенного превью в плеере, вы можете выделять временные отрезки на таймлайне и экспортировать их. Бэкенд FFmpeg обработает видео напрямую с диска!
+          <p class="text-[11px] text-[rgba(226,226,224,0.5)] mt-4 font-sans max-w-md">
+            Вы всё равно можете выделять фрагменты на таймлайне и сохранять клипы — нарезка и обработка видео сработают в обычном режиме.
           </p>
         </div>
       {/if}
@@ -585,16 +579,16 @@
           <div class="h-full aspect-[9/16] relative border-x-2 border-[#5865f2] shadow-[0_0_20px_rgba(88,101,242,0.3)] flex flex-col justify-between p-3">
             <div class="flex items-center justify-between">
               <span class="text-[10px] font-mono font-bold uppercase bg-[#5865f2] text-white px-2 py-0.5 rounded shadow">
-                Кадр 9:16 Reels
+                Кадр 9:16
               </span>
               <span class="text-[9px] font-mono text-white/80 bg-black/60 px-1.5 py-0.5 rounded">
                 1080×1920
               </span>
             </div>
 
-            <!-- Имитация зоны субтитров Whisper -->
+            <!-- Зона субтитров -->
             <div class="text-center bg-black/70 backdrop-blur-sm border border-white/20 text-white font-syne font-bold text-xs px-2 py-1.5 rounded shadow mb-3 mx-2">
-              [ Субтитры Whisper ASR ]
+              Область субтитров
             </div>
           </div>
 
@@ -811,11 +805,11 @@
       </div>
 
       <div class="flex items-center gap-3 text-xs font-mono text-[rgba(226,226,224,0.6)]">
-        <span>Суммарно: <strong class="text-[#23c55e]">{totalClipsDuration.toFixed(1)} сек</strong></span>
+        <span>Суммарно: <strong class="text-[#23c55e] tabular-nums">{totalClipsDuration.toFixed(1)} сек</strong></span>
         <span>•</span>
-        <span>Формат: <strong class="text-[#5865f2]">9:16 Reels</strong></span>
+        <span>Формат: <strong class="text-[#5865f2]">{$pipelineStore.config.vertical_format ? '9:16' : '16:9'}</strong></span>
         <span>•</span>
-        <span>Субтитры: <strong class="text-purple-400">Whisper ASR</strong></span>
+        <span>Субтитры: <strong class="text-purple-400">Авто</strong></span>
       </div>
     </div>
 
@@ -1083,25 +1077,25 @@
 
     <!-- БОЛЬШАЯ КНОПКА ЭКСПОРТА ВЫДЕЛЕННЫХ КЛИПОВ -->
     <div class="pt-2 border-t border-[rgba(226,226,224,0.08)] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-      <div class="text-xs font-mono text-[rgba(226,226,224,0.6)] flex items-center gap-2">
-        <Check class="w-4 h-4 text-[#23c55e]" />
-        <span>Готово к нарезке в <strong>9:16</strong> со сгенерированными субтитрами Whisper</span>
+      <div class="text-xs font-sans text-[rgba(226,226,224,0.65)] flex items-center gap-2">
+        <Check class="w-4 h-4 text-[#23c55e] shrink-0" />
+        <span>Готово к сохранению в формате <strong>{$pipelineStore.config.vertical_format ? '9:16' : '16:9'}</strong> с субтитрами</span>
       </div>
 
       <button
         type="button"
         on:click={handleExportManualClips}
         disabled={$fragmentsStore.length === 0 || isExporting || $pipelineStore.status === 'running'}
-        class="btn btn-primary py-3.5 px-6 rounded-[3px] text-xs sm:text-sm font-bold tracking-wide flex items-center justify-center gap-2.5 shadow-lg shadow-[#5865f2]/25 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        class="btn btn-primary py-3.5 px-6 rounded-[3px] text-xs sm:text-sm font-bold tracking-wide flex items-center justify-center gap-2.5 shadow-lg shadow-[#5865f2]/25 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
       >
         <Download class="w-4 h-4" />
         <span>
           {#if isExporting}
-            Экспорт в процессе...
+            Сохранение клипов...
           {:else if $fragmentsStore.length > 0}
-            Экспортировать {$fragmentsStore.length} {$fragmentsStore.length === 1 ? 'клип' : 'клипов'} в 9:16 (+ Whisper)
+            Сохранить {$fragmentsStore.length} {$fragmentsStore.length === 1 ? 'клип' : 'клипов'} ({$pipelineStore.config.vertical_format ? '9:16' : '16:9'})
           {:else}
-            Экспортировать клипы (выделите области)
+            Сохранить клипы (выделите области)
           {/if}
         </span>
       </button>

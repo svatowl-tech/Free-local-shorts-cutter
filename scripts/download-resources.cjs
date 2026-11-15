@@ -184,7 +184,7 @@ function downloadFile(url, destPath) {
     try {
         console.log(`Загрузка (curl с авто-повтором при 502/504): ${url} -> ${destPath}`);
         execSync(
-            `curl -fL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 -A "Mozilla/5.0 VideoCutterPro/2.1" -o "${destPath}" "${url}"`,
+            `curl -fL --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 30 -A "Mozilla/5.0 VideoCutterPro/2.3" -o "${destPath}" "${url}"`,
             { stdio: 'inherit' }
         );
         if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1024) {
@@ -201,7 +201,7 @@ function downloadFile(url, destPath) {
         
         const options = {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VideoCutterPro/2.1',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) VideoCutterPro/2.3',
                 'Accept': '*/*'
             }
         };

@@ -238,9 +238,15 @@
   };
   let activeAudioEl: HTMLAudioElement | null = null;
   let liveTimer: ReturnType<typeof setInterval> | null = null;
+  let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   onDestroy(() => {
     stopLiveAudioPreview();
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = null;
+      saveConfigToStore();
+    }
   });
 
   function resolveMediaSrc(pathOrData?: string | null): string {
@@ -305,6 +311,20 @@
     liveProgress = { preroll: 0, postroll: 0 };
   }
 
+  function getLiveFadeOpacity(item: BumperItemConfig, progressPct: number, playing: boolean): number {
+    if (!playing || item.transition === 'cut') return 1;
+    const dur = Math.max(0.5, item.duration_sec || 2.5);
+    const fadeFrac = Math.min(0.28, 0.42 / dur);
+    const p = Math.max(0, Math.min(1, progressPct / 100));
+    if (p < fadeFrac) {
+      return Math.max(0.05, p / Math.max(0.01, fadeFrac));
+    }
+    if (p > 1 - fadeFrac) {
+      return Math.max(0.05, (1 - p) / Math.max(0.01, fadeFrac));
+    }
+    return 1;
+  }
+
   function toggleLivePreviewPlay(slot: 'preroll' | 'postroll') {
     if (isPlayingLive[slot]) {
       stopLiveAudioPreview();
@@ -313,6 +333,8 @@
     stopLiveAudioPreview();
     const item = category[slot];
     const totalDur = Math.max(0.5, item.duration_sec || 2.5);
+    const baseVol = Math.max(0, Math.min(1, item.audio_volume ?? 1.0));
+    const fadeSec = Math.min(0.45, totalDur * 0.28);
 
     isPlayingLive[slot] = true;
     liveProgress[slot] = 0;
@@ -321,7 +343,7 @@
       const src = resolveMediaSrc(item.custom_audio_path);
       if (src) {
         const audio = new Audio(src);
-        audio.volume = Math.max(0, Math.min(1, item.audio_volume ?? 1.0));
+        audio.volume = (item.audio_fade_in || item.transition !== 'cut') ? 0.02 : baseVol;
         audio.play().catch((err) => console.warn('Audio preview play error:', err));
         activeAudioEl = audio;
       }
@@ -334,11 +356,35 @@
         stopLiveAudioPreview();
       } else {
         liveProgress[slot] = Math.min(100, (elapsed / totalDur) * 100);
+        if (activeAudioEl) {
+          let gain = 1.0;
+          if ((item.audio_fade_in || item.transition !== 'cut') && elapsed < fadeSec) {
+            gain = Math.min(gain, elapsed / Math.max(0.05, fadeSec));
+          }
+          if ((item.audio_fade_out || item.transition !== 'cut') && totalDur - elapsed < fadeSec) {
+            gain = Math.min(gain, (totalDur - elapsed) / Math.max(0.05, fadeSec));
+          }
+          activeAudioEl.volume = Math.max(0, Math.min(1, baseVol * Math.max(0.02, gain)));
+        }
       }
     }, 40);
   }
 
+  function scheduleSaveConfig() {
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer);
+    }
+    saveDebounceTimer = setTimeout(() => {
+      saveDebounceTimer = null;
+      saveConfigToStore();
+    }, 350);
+  }
+
   function saveConfigToStore() {
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer);
+      saveDebounceTimer = null;
+    }
     config = { ...config, enabled: true };
     pipelineStore.updateConfig({ bumper_config: config });
     if (isTauriRuntime()) {
@@ -718,7 +764,7 @@
     // Браузерный экспорт .vcpb (ZIP-архив с preset.json)
     const jsonBytes = new TextEncoder().encode(JSON.stringify(activePreset, null, 2));
     const zipBytes = buildClientZipArchive([{ name: 'preset.json', data: jsonBytes }]);
-    const blob = new Blob([zipBytes], { type: 'application/zip' });
+    const blob = new Blob([zipBytes as unknown as BlobPart], { type: 'application/zip' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -994,10 +1040,10 @@
           >
             {#if isRendering}
               <RefreshCw class="w-3.5 h-3.5 animate-spin" />
-              <span>Рендеринг MP4...</span>
+              <span>Подготовка MP4...</span>
             {:else}
               <Sparkles class="w-3.5 h-3.5" />
-              <span>⚡ Предрендерить заставки в MP4</span>
+              <span>Подготовить заставки заранее</span>
             {/if}
           </button>
 
@@ -1006,10 +1052,10 @@
             type="button"
             on:click={handleExportPresetArchive}
             class="flex items-center gap-1 px-2.5 py-1.5 bg-[#18181c] hover:bg-[#222228] border border-[rgba(226,226,224,0.15)] text-slate-300 rounded font-mono cursor-pointer"
-            title="Экспортировать пресет со всеми звуками, логотипами и фонами в единый ZIP-архив (.vcpb)"
+            title="Экспортировать пресет со всеми звуками, логотипами и фонами в архив (.vcpb)"
           >
             <Download class="w-3.5 h-3.5 text-[#5865f2]" />
-            <span>Экспорт (.vcpb)</span>
+            <span>Экспорт пресета</span>
           </button>
 
           <!-- Import Preset (.vcpb / .zip) -->
@@ -1020,7 +1066,7 @@
             title="Импортировать архив пресета (.vcpb / .zip)"
           >
             <Upload class="w-3.5 h-3.5 text-[#5865f2]" />
-            <span>Импорт (.vcpb)</span>
+            <span>Импорт пресета</span>
           </button>
           <input
             id="bumper_preset_import_input"
@@ -1147,7 +1193,11 @@
                         <track kind="captions" />
                       </video>
                     {:else}
-                      <!-- 1. Задний план с эффектами в реальном времени -->
+                      <!-- 1. Задний план с эффектами в реальном времени (включая плавный фейдер входа/выхода при проигрывании) -->
+                      <div
+                        class="absolute inset-0 transition-opacity duration-75"
+                        style="opacity: {getLiveFadeOpacity(item, liveProgress[slot], isPlayingLive[slot])};"
+                      >
                       {#if item.bg_mode === 'custom_video' && item.bg_video_path}
                         <video
                           src={resolveMediaSrc(item.bg_video_path)}
@@ -1250,10 +1300,11 @@
                           {/if}
                         </div>
                       {/if}
+                      </div>
 
                       <!-- Live Indicator Badge -->
                       <div class="absolute top-2 left-2 px-2 py-0.5 bg-black/70 backdrop-blur text-[10px] font-mono text-slate-200 rounded border border-white/10 flex items-center gap-1.5 pointer-events-none select-none">
-                        <span class="w-1.5 h-1.5 rounded-full {isPlayingLive[slot] ? 'bg-amber-400 animate-ping' : 'bg-emerald-400 animate-pulse'}"></span>
+                        <span class="w-1.5 h-1.5 rounded-full {isPlayingLive[slot] ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'}"></span>
                         <span class="tabular-nums">
                           {isPlayingLive[slot] ? `Проигрывание (${item.duration_sec.toFixed(1)}с)` : `Живое превью · ${item.duration_sec.toFixed(1)}с`}
                         </span>
@@ -1289,7 +1340,7 @@
                       on:click={() => handleRenderAndPlaySingle(slot)}
                       disabled={isRenderingSingle[slot]}
                       class="px-2.5 py-1 bg-[#5865f2] hover:bg-[#4752c4] text-white font-mono text-[11px] font-semibold rounded shadow flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
-                      title="Сгенерировать готовый видеофайл MP4 через FFmpeg с вашим звуком и эффектами"
+                      title="Собрать предпросмотр заставки с вашим звуком и эффектами"
                     >
                       {#if isRenderingSingle[slot]}
                         <RefreshCw class="w-3 h-3 animate-spin" />
@@ -1491,7 +1542,8 @@
                               max="30"
                               step="0.1"
                               bind:value={item.duration_sec}
-                              on:input={() => { item.sync_duration_to_audio = false; saveConfigToStore(); }}
+                              on:input={() => { item.sync_duration_to_audio = false; scheduleSaveConfig(); }}
+                              on:change={saveConfigToStore}
                               class="w-16 bg-[#16161c] border border-[rgba(226,226,224,0.18)] text-white px-2 py-0.5 rounded text-right tabular-nums"
                             />
                           </div>
@@ -1507,17 +1559,18 @@
                                 max="1.5"
                                 step="0.05"
                                 bind:value={item.audio_volume}
-                                on:input={saveConfigToStore}
+                                on:input={scheduleSaveConfig}
+                                on:change={saveConfigToStore}
                                 class="w-full accent-[#5865f2]"
                               />
                             </div>
                             <label class="flex items-center gap-1.5 text-[10px] font-mono text-slate-300 cursor-pointer">
                               <input type="checkbox" bind:checked={item.audio_fade_in} on:change={saveConfigToStore} class="accent-[#5865f2]" />
-                              <span>Fade-In звука</span>
+                              <span>Плавный вход звука</span>
                             </label>
                             <label class="flex items-center gap-1.5 text-[10px] font-mono text-slate-300 cursor-pointer">
                               <input type="checkbox" bind:checked={item.audio_fade_out} on:change={saveConfigToStore} class="accent-[#5865f2]" />
-                              <span>Fade-Out звука</span>
+                              <span>Плавное затухание</span>
                             </label>
                           </div>
                         {/if}
@@ -1560,7 +1613,7 @@
                             type="file" 
                             accept="image/*" 
                             on:change={(e) => handleMediaUpload(e, slot, 'logo_image_path')} 
-                            class="hidden" 
+                            class="hidden"
                           />
                         </div>
 
@@ -1568,23 +1621,23 @@
                           <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 pt-1">
                             <div>
                               <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Размер лого: {Math.round(item.logo_scale * 100)}%</span>
-                              <input type="range" min="0.1" max="1.4" step="0.02" bind:value={item.logo_scale} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                              <input type="range" min="0.1" max="1.4" step="0.02" bind:value={item.logo_scale} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                             </div>
                             <div>
                               <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Позиция X: {Math.round(item.logo_x_percent)}%</span>
-                              <input type="range" min="10" max="90" step="1" bind:value={item.logo_x_percent} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                              <input type="range" min="10" max="90" step="1" bind:value={item.logo_x_percent} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                             </div>
                             <div>
                               <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Позиция Y: {Math.round(item.logo_y_percent)}%</span>
-                              <input type="range" min="10" max="90" step="1" bind:value={item.logo_y_percent} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                              <input type="range" min="10" max="90" step="1" bind:value={item.logo_y_percent} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                             </div>
                             <div>
                               <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Прозрачность: {Math.round((item.logo_opacity ?? 1) * 100)}%</span>
-                              <input type="range" min="0.1" max="1" step="0.05" bind:value={item.logo_opacity} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                              <input type="range" min="0.1" max="1" step="0.05" bind:value={item.logo_opacity} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                             </div>
                             <div>
                               <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Скругление: {Math.round(item.logo_radius ?? 0)}%</span>
-                              <input type="range" min="0" max="50" step="2" bind:value={item.logo_radius} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                              <input type="range" min="0" max="50" step="2" bind:value={item.logo_radius} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                             </div>
                             <label class="flex items-center gap-1.5 text-[10px] font-mono text-slate-300 cursor-pointer self-end pb-1">
                               <input type="checkbox" bind:checked={item.logo_shadow} on:change={saveConfigToStore} class="accent-[#5865f2]" />
@@ -1605,7 +1658,8 @@
                             type="text" 
                             placeholder="Название канала / студии..."
                             bind:value={item.title}
-                            on:input={saveConfigToStore}
+                            on:input={scheduleSaveConfig}
+                            on:change={saveConfigToStore}
                             class="w-full bg-[#0c0c0e] border border-[rgba(226,226,224,0.15)] text-white px-2.5 py-1.5 rounded font-mono"
                           />
                         </div>
@@ -1615,7 +1669,8 @@
                             type="text" 
                             placeholder="Призыв к подписке / соцсети..."
                             bind:value={item.subtitle}
-                            on:input={saveConfigToStore}
+                            on:input={scheduleSaveConfig}
+                            on:change={saveConfigToStore}
                             class="w-full bg-[#0c0c0e] border border-[rgba(226,226,224,0.15)] text-white px-2.5 py-1.5 rounded font-mono"
                           />
                         </div>
@@ -1624,30 +1679,30 @@
                       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1">Цвет заголовка</span>
-                          <input type="color" bind:value={item.title_color} on:input={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
+                          <input type="color" bind:value={item.title_color} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1 tabular-nums">Размер загол. ({item.title_size}px)</span>
-                          <input type="range" min="16" max="76" step="2" bind:value={item.title_size} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="16" max="76" step="2" bind:value={item.title_size} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1">Цвет подзагол.</span>
-                          <input type="color" bind:value={item.subtitle_color} on:input={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
+                          <input type="color" bind:value={item.subtitle_color} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1 tabular-nums">Размер подз. ({item.subtitle_size ?? 18}px)</span>
-                          <input type="range" min="12" max="44" step="1" bind:value={item.subtitle_size} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="12" max="44" step="1" bind:value={item.subtitle_size} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                       </div>
 
                       <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1 tabular-nums">Позиция X ({Math.round(item.title_x_percent)}%)</span>
-                          <input type="range" min="15" max="85" step="1" bind:value={item.title_x_percent} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="15" max="85" step="1" bind:value={item.title_x_percent} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1 tabular-nums">Позиция Y ({Math.round(item.title_y_percent)}%)</span>
-                          <input type="range" min="12" max="90" step="1" bind:value={item.title_y_percent} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="12" max="90" step="1" bind:value={item.title_y_percent} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1">Стиль плашки</span>
@@ -1659,7 +1714,7 @@
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block mb-1 tabular-nums">Прозр. плашки ({Math.round((item.plate_opacity ?? 0.55) * 100)}%)</span>
-                          <input type="range" min="0.1" max="0.95" step="0.05" bind:value={item.plate_opacity} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="0.1" max="0.95" step="0.05" bind:value={item.plate_opacity} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                       </div>
 
@@ -1781,11 +1836,11 @@
                         <div class="grid grid-cols-2 gap-2.5 p-2.5 bg-[#0c0c0e] rounded border border-[rgba(226,226,224,0.1)]">
                           <div>
                             <span class="text-[10px] font-mono text-slate-400 block mb-1">Основной цвет фона</span>
-                            <input type="color" bind:value={item.bg_color_primary} on:input={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
+                            <input type="color" bind:value={item.bg_color_primary} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
                           </div>
                           <div>
                             <span class="text-[10px] font-mono text-slate-400 block mb-1">Второй цвет градиента</span>
-                            <input type="color" bind:value={item.bg_color_secondary} on:input={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
+                            <input type="color" bind:value={item.bg_color_secondary} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full h-7 bg-transparent cursor-pointer rounded" />
                           </div>
                         </div>
                       {/if}
@@ -1793,28 +1848,28 @@
                       <!-- Слайдеры эффектов заднего видео и фона -->
                       <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5 p-2.5 bg-[#0c0c0e] rounded border border-[rgba(226,226,224,0.1)]">
                         <div>
-                          <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Размытие (Blur): {Math.round(item.bg_blur ?? 12)}px</span>
-                          <input type="range" min="0" max="40" step="1" bind:value={item.bg_blur} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Размытие: {Math.round(item.bg_blur ?? 12)}px</span>
+                          <input type="range" min="0" max="40" step="1" bind:value={item.bg_blur} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Затемнение: {Math.round((item.bg_dim ?? 0.35) * 100)}%</span>
-                          <input type="range" min="0" max="0.9" step="0.05" bind:value={item.bg_dim} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="0" max="0.9" step="0.05" bind:value={item.bg_dim} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Масштаб фона: {Math.round((item.bg_scale ?? 1.1) * 100)}%</span>
-                          <input type="range" min="1.0" max="1.8" step="0.05" bind:value={item.bg_scale} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="1.0" max="1.8" step="0.05" bind:value={item.bg_scale} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Насыщенность: {Math.round((item.bg_saturation ?? 1.0) * 100)}%</span>
-                          <input type="range" min="0.0" max="2.0" step="0.1" bind:value={item.bg_saturation} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="0.0" max="2.0" step="0.1" bind:value={item.bg_saturation} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Контраст: {Math.round((item.bg_contrast ?? 1.0) * 100)}%</span>
-                          <input type="range" min="0.6" max="1.5" step="0.05" bind:value={item.bg_contrast} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="0.6" max="1.5" step="0.05" bind:value={item.bg_contrast} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                         <div>
                           <span class="text-[10px] text-slate-400 font-mono block tabular-nums">Скорость видео: {(item.bg_video_speed ?? 1.0).toFixed(1)}x</span>
-                          <input type="range" min="0.5" max="2.0" step="0.1" bind:value={item.bg_video_speed} on:input={saveConfigToStore} class="w-full accent-[#5865f2]" />
+                          <input type="range" min="0.5" max="2.0" step="0.1" bind:value={item.bg_video_speed} on:input={scheduleSaveConfig} on:change={saveConfigToStore} class="w-full accent-[#5865f2]" />
                         </div>
                       </div>
 

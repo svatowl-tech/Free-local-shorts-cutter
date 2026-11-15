@@ -417,23 +417,56 @@ pub async fn attach_bumpers_if_enabled(
         return Ok(());
     }
 
-    let (target_w, target_h, clip_dur, clip_has_audio) =
+    let (target_w, target_h, clip_dur_raw, clip_has_audio) =
         probe_video_stream_info(clip_path, is_vertical, app_handle).await;
+    let clip_dur = clip_dur_raw.max(0.4);
+
+    let pre_info = if let Some((ref pre_path, ref pre_cfg)) = pre_bumper {
+        let (_, _, d, has_a) = probe_video_stream_info(pre_path, is_vertical, app_handle).await;
+        Some((pre_path.clone(), pre_cfg.clone(), d.max(0.4), has_a))
+    } else {
+        None
+    };
+    let post_info = if let Some((ref post_path, ref post_cfg)) = post_bumper {
+        let (_, _, d, has_a) = probe_video_stream_info(post_path, is_vertical, app_handle).await;
+        Some((post_path.clone(), post_cfg.clone(), d.max(0.4), has_a))
+    } else {
+        None
+    };
 
     let temp_output = clip_path.with_extension(format!("with_bumpers_{}.tmp.mp4", ts));
 
-    // Собираем единый граф фильтров с нормализацией разрешения, FPS, SAR, цветового пространства (yuv420p),
-    // стерео-аудио 48000 Hz и плавными переходами (crossfade / fade_black / cut)
+    // Определяем режимы переходов и длительность плавных фейдов/наплывов (crossfade / fade_black / cut).
+    // ВАЖНО: Для crossfade мы добавляем безопасный стоп-кадр с тишиной на стыке основного клипа (tpad + adelay/apad),
+    // чтобы xfade/acrossfade давал мягкий киношный наплыв, НЕ съедая ни миллисекунды речи в начале и конце шортса!
+    let pre_mode = pre_info
+        .as_ref()
+        .map(|(_, c, _, _)| c.transition.as_str())
+        .unwrap_or("cut");
+    let post_mode = post_info
+        .as_ref()
+        .map(|(_, c, _, _)| c.transition.as_str())
+        .unwrap_or("cut");
+
+    let d_pre_xfade = match pre_info.as_ref() {
+        Some((_, c, pre_d, _)) if c.transition != "cut" && c.transition != "fade_black" => {
+            (pre_d * 0.35).clamp(0.25, 0.48).min(clip_dur * 0.30)
+        }
+        _ => 0.0,
+    };
+    let d_post_xfade = match post_info.as_ref() {
+        Some((_, c, post_d, _)) if c.transition != "cut" && c.transition != "fade_black" => {
+            (post_d * 0.35).clamp(0.25, 0.50).min(clip_dur * 0.30)
+        }
+        _ => 0.0,
+    };
+
     let mut args = vec!["-hide_banner".to_string(), "-nostdin".to_string(), "-y".to_string()];
     let mut filter_parts: Vec<String> = Vec::new();
-    let mut concat_pads = String::new();
     let mut input_idx = 0usize;
-    let mut seg_count = 0usize;
 
-    // Вход Преролла (если активен)
-    if let Some((ref pre_path, ref pre_cfg)) = pre_bumper {
-        let (_, _, pre_dur, pre_has_audio) =
-            probe_video_stream_info(pre_path, is_vertical, app_handle).await;
+    // 1. Вход Преролла (если активен)
+    let pre_dur_opt = if let Some((ref pre_path, ref pre_cfg, pre_dur, pre_has_audio)) = pre_info {
         args.push("-i".to_string());
         args.push(pre_path.to_string_lossy().to_string());
         let v_in = input_idx;
@@ -445,7 +478,7 @@ pub async fn attach_bumpers_if_enabled(
             args.push("-f".to_string());
             args.push("lavfi".to_string());
             args.push("-t".to_string());
-            args.push(format!("{:.3}", pre_dur.max(0.5)));
+            args.push(format!("{:.3}", pre_dur + 0.30));
             args.push("-i".to_string());
             args.push("anullsrc=r=48000:cl=stereo".to_string());
             let idx = input_idx;
@@ -453,30 +486,46 @@ pub async fn attach_bumpers_if_enabled(
             idx
         };
 
-        let trans_fade = if pre_cfg.transition != "cut" && pre_dur > 0.5 {
-            format!(",fade=t=out:st={:.3}:d=0.22", (pre_dur - 0.22).max(0.05))
+        let outer_fade_in_v = if pre_cfg.transition != "cut" && pre_dur > 0.70 {
+            ",fade=t=in:st=0:d=0.30".to_string()
         } else {
             String::new()
         };
-        let audio_fade = if pre_cfg.transition != "cut" && pre_dur > 0.5 {
-            format!(",afade=t=out:st={:.3}:d=0.22", (pre_dur - 0.22).max(0.05))
+        let outer_fade_in_a = if pre_cfg.transition != "cut" && pre_dur > 0.70 {
+            ",afade=t=in:st=0:d=0.25".to_string()
+        } else {
+            String::new()
+        };
+
+        let fb_d = (pre_dur * 0.32).clamp(0.20, 0.42);
+        let inner_fade_out_v = if pre_cfg.transition == "fade_black" && pre_dur > 0.50 {
+            format!(",fade=t=out:st={:.3}:d={:.3}", (pre_dur - fb_d).max(0.05), fb_d)
+        } else {
+            String::new()
+        };
+        let inner_fade_out_a = if pre_cfg.transition == "fade_black" && pre_dur > 0.50 {
+            format!(",afade=t=out:st={:.3}:d={:.3}", (pre_dur - fb_d).max(0.05), fb_d)
+        } else if pre_cfg.transition == "cut" && pre_dur > 0.20 {
+            format!(",afade=t=out:st={:.3}:d=0.02", (pre_dur - 0.02).max(0.05))
         } else {
             String::new()
         };
 
         filter_parts.push(format!(
-            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p{}[v{}]",
-            v_in, target_w, target_h, target_w, target_h, trans_fade, seg_count
+            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,settb=AVTB,format=yuv420p,tpad=stop_mode=clone:stop_duration=0.25,trim=duration={:.3},setpts=PTS-STARTPTS{}{}[v_pre]",
+            v_in, target_w, target_h, target_w, target_h, pre_dur, outer_fade_in_v, inner_fade_out_v
         ));
         filter_parts.push(format!(
-            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{}[a{}]",
-            a_in, audio_fade, seg_count
+            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad=pad_dur=0.25,atrim=duration={:.3},asetpts=PTS-STARTPTS{}{}[a_pre]",
+            a_in, pre_dur, outer_fade_in_a, inner_fade_out_a
         ));
-        concat_pads.push_str(&format!("[v{}][a{}]", seg_count, seg_count));
-        seg_count += 1;
-    }
+        Some(pre_dur)
+    } else {
+        None
+    };
 
-    // Вход Основного клипа
+    // 2. Вход Основного клипа
+    let clip_virt_dur = clip_dur + d_pre_xfade + d_post_xfade;
     {
         args.push("-i".to_string());
         args.push(clip_path.to_string_lossy().to_string());
@@ -489,7 +538,7 @@ pub async fn attach_bumpers_if_enabled(
             args.push("-f".to_string());
             args.push("lavfi".to_string());
             args.push("-t".to_string());
-            args.push(format!("{:.3}", clip_dur.max(0.5)));
+            args.push(format!("{:.3}", clip_dur + 0.30));
             args.push("-i".to_string());
             args.push("anullsrc=r=48000:cl=stereo".to_string());
             let idx = input_idx;
@@ -497,43 +546,57 @@ pub async fn attach_bumpers_if_enabled(
             idx
         };
 
-        let fade_in_clip = if pre_bumper
-            .as_ref()
-            .map(|(_, c)| c.transition != "cut")
-            .unwrap_or(false)
-            && clip_dur > 0.6
-        {
-            ",fade=t=in:st=0:d=0.20".to_string()
+        let start_tpad = if d_pre_xfade > 0.0 {
+            format!(",tpad=start_mode=clone:start_duration={:.3}:stop_mode=clone:stop_duration={:.3}", d_pre_xfade, d_post_xfade + 0.25)
+        } else {
+            format!(",tpad=stop_mode=clone:stop_duration={:.3}", d_post_xfade + 0.25)
+        };
+        let start_adelay = if d_pre_xfade > 0.0 {
+            let ms = (d_pre_xfade * 1000.0).round() as i64;
+            format!(",adelay={}|{}", ms, ms)
         } else {
             String::new()
         };
-        let fade_out_clip = if post_bumper
-            .as_ref()
-            .map(|(_, c)| c.transition != "cut")
-            .unwrap_or(false)
-            && clip_dur > 0.6
-        {
-            format!(",fade=t=out:st={:.3}:d=0.20", (clip_dur - 0.20).max(0.1))
+
+        let fb_in_d = (clip_dur * 0.25).clamp(0.20, 0.40);
+        let fb_out_d = (clip_dur * 0.25).clamp(0.20, 0.40);
+
+        let clip_fade_in_v = if pre_info.is_some() && pre_mode == "fade_black" && clip_dur > 0.60 {
+            format!(",fade=t=in:st=0:d={:.3}", fb_in_d)
+        } else {
+            String::new()
+        };
+        let clip_fade_in_a = if pre_info.is_some() && pre_mode == "fade_black" && clip_dur > 0.60 {
+            format!(",afade=t=in:st=0:d={:.3}", fb_in_d)
+        } else if pre_info.is_some() && pre_mode == "cut" {
+            ",afade=t=in:st=0:d=0.02".to_string()
+        } else {
+            String::new()
+        };
+
+        let clip_fade_out_v = if post_info.is_some() && post_mode == "fade_black" && clip_dur > 0.60 {
+            format!(",fade=t=out:st={:.3}:d={:.3}", (clip_virt_dur - fb_out_d).max(0.1), fb_out_d)
+        } else {
+            String::new()
+        };
+        let clip_fade_out_a = if post_info.is_some() && post_mode == "fade_black" && clip_dur > 0.60 {
+            format!(",afade=t=out:st={:.3}:d={:.3}", (clip_virt_dur - fb_out_d).max(0.1), fb_out_d)
         } else {
             String::new()
         };
 
         filter_parts.push(format!(
-            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p{}{}[v{}]",
-            v_in, target_w, target_h, target_w, target_h, fade_in_clip, fade_out_clip, seg_count
+            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,settb=AVTB,format=yuv420p{},trim=duration={:.3},setpts=PTS-STARTPTS{}{}[v_clip]",
+            v_in, target_w, target_h, target_w, target_h, start_tpad, clip_virt_dur, clip_fade_in_v, clip_fade_out_v
         ));
         filter_parts.push(format!(
-            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a{}]",
-            a_in, seg_count
+            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{},apad=pad_dur={:.3},atrim=duration={:.3},asetpts=PTS-STARTPTS{}{}[a_clip]",
+            a_in, start_adelay, d_post_xfade + 0.25, clip_virt_dur, clip_fade_in_a, clip_fade_out_a
         ));
-        concat_pads.push_str(&format!("[v{}][a{}]", seg_count, seg_count));
-        seg_count += 1;
     }
 
-    // Вход Постролла (если активен)
-    if let Some((ref post_path, ref post_cfg)) = post_bumper {
-        let (_, _, post_dur, post_has_audio) =
-            probe_video_stream_info(post_path, is_vertical, app_handle).await;
+    // 3. Вход Постролла (если активен)
+    let post_dur_opt = if let Some((ref post_path, ref post_cfg, post_dur, post_has_audio)) = post_info {
         args.push("-i".to_string());
         args.push(post_path.to_string_lossy().to_string());
         let v_in = input_idx;
@@ -545,39 +608,97 @@ pub async fn attach_bumpers_if_enabled(
             args.push("-f".to_string());
             args.push("lavfi".to_string());
             args.push("-t".to_string());
-            args.push(format!("{:.3}", post_dur.max(0.5)));
+            args.push(format!("{:.3}", post_dur + 0.30));
             args.push("-i".to_string());
             args.push("anullsrc=r=48000:cl=stereo".to_string());
             input_idx
         };
 
-        let trans_fade_in = if post_cfg.transition != "cut" && post_dur > 0.5 {
-            ",fade=t=in:st=0:d=0.22".to_string()
+        let fb_d = (post_dur * 0.32).clamp(0.20, 0.42);
+        let inner_fade_in_v = if post_cfg.transition == "fade_black" && post_dur > 0.50 {
+            format!(",fade=t=in:st=0:d={:.3}", fb_d)
         } else {
             String::new()
         };
-        let audio_fade_in = if post_cfg.transition != "cut" && post_dur > 0.5 {
-            ",afade=t=in:st=0:d=0.22".to_string()
+        let inner_fade_in_a = if post_cfg.transition == "fade_black" && post_dur > 0.50 {
+            format!(",afade=t=in:st=0:d={:.3}", fb_d)
+        } else if post_cfg.transition == "cut" && post_dur > 0.20 {
+            ",afade=t=in:st=0:d=0.02".to_string()
+        } else {
+            String::new()
+        };
+
+        let outer_fade_out_v = if post_cfg.transition != "cut" && post_dur > 0.70 {
+            format!(",fade=t=out:st={:.3}:d=0.35", (post_dur - 0.35).max(0.1))
+        } else {
+            String::new()
+        };
+        let outer_fade_out_a = if post_cfg.transition != "cut" && post_dur > 0.70 {
+            format!(",afade=t=out:st={:.3}:d=0.35", (post_dur - 0.35).max(0.1))
         } else {
             String::new()
         };
 
         filter_parts.push(format!(
-            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p{}[v{}]",
-            v_in, target_w, target_h, target_w, target_h, trans_fade_in, seg_count
+            "[{}:v]scale={}:{}:force_original_aspect_ratio=decrease,pad={}:{}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,settb=AVTB,format=yuv420p,tpad=stop_mode=clone:stop_duration=0.25,trim=duration={:.3},setpts=PTS-STARTPTS{}{}[v_post]",
+            v_in, target_w, target_h, target_w, target_h, post_dur, inner_fade_in_v, outer_fade_out_v
         ));
         filter_parts.push(format!(
-            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo{}[a{}]",
-            a_in, audio_fade_in, seg_count
+            "[{}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad=pad_dur=0.25,atrim=duration={:.3},asetpts=PTS-STARTPTS{}{}[a_post]",
+            a_in, post_dur, inner_fade_in_a, outer_fade_out_a
         ));
-        concat_pads.push_str(&format!("[v{}][a{}]", seg_count, seg_count));
-        seg_count += 1;
+        Some(post_dur)
+    } else {
+        None
+    };
+
+    // 4. Поэтапная сборка с фейдерами (xfade + acrossfade при crossfade, или concat при fade_black / cut)
+    let mut cur_v = "v_clip".to_string();
+    let mut cur_a = "a_clip".to_string();
+    let mut cur_dur = clip_virt_dur;
+
+    if let Some(pre_dur) = pre_dur_opt {
+        if d_pre_xfade > 0.0 {
+            let offset1 = (pre_dur - d_pre_xfade).max(0.05);
+            filter_parts.push(format!(
+                "[v_pre][v_clip]xfade=transition=fade:duration={:.3}:offset={:.3},setpts=PTS-STARTPTS[v_mid]",
+                d_pre_xfade, offset1
+            ));
+            filter_parts.push(format!(
+                "[a_pre][a_clip]acrossfade=d={:.3}:c1=tri:c2=tri,asetpts=PTS-STARTPTS[a_mid]",
+                d_pre_xfade
+            ));
+            cur_dur = offset1 + clip_virt_dur;
+        } else {
+            filter_parts.push(
+                "[v_pre][a_pre][v_clip][a_clip]concat=n=2:v=1:a=1[v_mid_raw][a_mid_raw];[v_mid_raw]fps=30,settb=AVTB,format=yuv420p,setpts=PTS-STARTPTS[v_mid];[a_mid_raw]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,asetpts=PTS-STARTPTS[a_mid]".to_string()
+            );
+            cur_dur = pre_dur + clip_virt_dur;
+        }
+        cur_v = "v_mid".to_string();
+        cur_a = "a_mid".to_string();
     }
 
-    filter_parts.push(format!(
-        "{}concat=n={}:v=1:a=1[outv][outa]",
-        concat_pads, seg_count
-    ));
+    if let Some(_post_dur) = post_dur_opt {
+        if d_post_xfade > 0.0 {
+            let offset2 = (cur_dur - d_post_xfade).max(0.10);
+            filter_parts.push(format!(
+                "[{}][v_post]xfade=transition=fade:duration={:.3}:offset={:.3},setpts=PTS-STARTPTS[outv]",
+                cur_v, d_post_xfade, offset2
+            ));
+            filter_parts.push(format!(
+                "[{}][a_post]acrossfade=d={:.3}:c1=tri:c2=tri,asetpts=PTS-STARTPTS[outa]",
+                cur_a, d_post_xfade
+            ));
+        } else {
+            filter_parts.push(format!(
+                "[{}][{}][v_post][a_post]concat=n=2:v=1:a=1[outv][outa]",
+                cur_v, cur_a
+            ));
+        }
+    } else {
+        filter_parts.push(format!("[{}]null[outv];[{}]anull[outa]", cur_v, cur_a));
+    }
 
     let filter_complex = filter_parts.join(";");
     args.extend([
@@ -1882,9 +2003,9 @@ async fn verify_and_repair_short_audio_with_whisper(
                     let expected_end = last_cue.end.max(end_sec + 0.55);
                     let lo_s = (expected_end - 0.15).max(end_sec + 0.45).min(max_nb_sec);
                     let hi_bound = if let Some(nc) = next_cue_opt {
-                        // Если в SRT `last_cue.end` был занижен (как 824.83с при реальном окончании слова «подлец» в 826.35с),
-                        // даем до +1.65с от `end_sec`, но не глубже чем `nc.start + 1.55с`
-                        (nc.start + 0.35).max(lo_s + 0.85).min(end_sec + 1.75)
+                        // Если после паузы в финальной реплике стоит ещё одно слово (например «...спасибо тогда. Помогла.»),
+                        // разрешаем дотянуться вплоть до `nc.start + 0.35` (до +2.85с), не залезая глубже в следующую реплику.
+                        (nc.start + 0.35).max(lo_s + 0.85).min(end_sec + 2.85)
                     } else {
                         expected_end + 1.50
                     };
@@ -2002,11 +2123,32 @@ async fn verify_and_repair_short_audio_with_whisper(
             Vec::new()
         };
 
-        // --- ВТОРОЙ КОНТУР ДОВОДКИ (ЕСЛИ ПРИ ПЕРВОМ ПРОДЛЕНИИ ПОД ГРОМКУЮ МУЗЫКУ ЗАЦЕПИЛСЯ КУСОК СЛЕДУЮЩЕЙ ФРАЗЫ ВРОДЕ «И не по...») ---
-        let recheck_still_cut = recheck_cues
+        // --- ВТОРОЙ КОНТУР ДОВОДКИ (ЕСЛИ ПРИ ПЕРВОМ ПРОДЛЕНИИ ЗАЦЕПИЛСЯ КУСОК СЛЕДУЮЩЕЙ ФРАЗЫ ИЛИ ВСЁ ЕЩЁ НЕ ДОСЛЫШАНО ФИНАЛЬНОЕ СЛОВО ИЗ SRT) ---
+        let recheck_ending_cut = recheck_cues
             .last()
             .map(|c| is_short_whisper_ending_cut(&c.text, None))
             .unwrap_or(false);
+        let recheck_words: Vec<String> = recheck_cues
+            .iter()
+            .flat_map(|c| normalize_words_for_short_audit(&c.text))
+            .collect();
+        let recheck_missing_expected_last = last_expected_idx_opt
+            .and_then(|idx| project_cues.get(idx))
+            .and_then(|lc| {
+                let words = normalize_words_for_short_audit(&lc.text);
+                words.last().cloned()
+            })
+            .map(|lw| {
+                lw.chars().count() >= 3
+                    && !recheck_words.is_empty()
+                    && !recheck_words
+                        .iter()
+                        .rev()
+                        .take(10)
+                        .any(|sw| audit_words_match(sw, &lw))
+            })
+            .unwrap_or(false);
+        let recheck_still_cut = recheck_ending_cut || recheck_missing_expected_last;
 
         if recheck_still_cut {
             let mut repaired_end_v2: Option<f64> = None;
@@ -2014,7 +2156,7 @@ async fn verify_and_repair_short_audio_with_whisper(
             // Случай 1: Предпоследняя распознанная реплика в исправленном шортсе полностью завершена (например «...как последний подлец.»),
             // а последняя реплика — короткий оборванный зачин следующей мысли (<= 5 слов, например «И не по...» или «Не, не злитесь!»).
             // Тогда у нас есть ТОЧНЫЙ таймкод от самого Whisper внутри шортса, где закончилась полная фраза (`prev_rc.end`) и начался лишний хвост (`last_rc.start`)!
-            if recheck_cues.len() >= 2 {
+            if recheck_ending_cut && !recheck_missing_expected_last && recheck_cues.len() >= 2 {
                 let prev_rc = &recheck_cues[recheck_cues.len() - 2];
                 let last_rc = &recheck_cues[recheck_cues.len() - 1];
                 let last_rc_words = normalize_words_for_short_audit(&last_rc.text).len();
@@ -2048,21 +2190,35 @@ async fn verify_and_repair_short_audio_with_whisper(
                 }
             }
 
-            // Случай 2: Если подрезать перед хвостом нельзя (это одна длинная фраза), продлеваем до конца следующей реплики в SRT проекта!
+            // Случай 2: Если подрезать перед хвостом нельзя (или не прозвучало последнее слово финальной реплики),
+            // дотягиваем границу до завершения слова / следующей реплики в SRT проекта!
             if repaired_end_v2.is_none() {
                 if let Some((nb_frames, nb_valley_db)) = nb_analysis.as_ref() {
                     let max_nb_sec = nb_start + nb_dur - 0.15;
-                    let target_sec = project_cues
-                        .iter()
-                        .find(|c| c.end > repaired_end + 0.25 && c.start < repaired_end + 1.20)
-                        .map(|c| (c.end + 0.30).min(max_nb_sec))
-                        .unwrap_or_else(|| (repaired_end + 2.10).min(max_nb_sec));
+                    let (target_sec, hi_cap_sec) = if recheck_missing_expected_last {
+                        let le_end = last_expected_idx_opt
+                            .and_then(|idx| project_cues.get(idx))
+                            .map(|lc| lc.end)
+                            .unwrap_or(repaired_end);
+                        let nc_cap = last_expected_idx_opt
+                            .and_then(|idx| project_cues.get(idx + 1))
+                            .map(|nc| nc.start + 0.35)
+                            .unwrap_or(max_nb_sec);
+                        let t = le_end.max(repaired_end + 1.15).min(nc_cap).min(max_nb_sec);
+                        (t, nc_cap.min(max_nb_sec))
+                    } else {
+                        let t = project_cues
+                            .iter()
+                            .find(|c| c.end > repaired_end + 0.25 && c.start < repaired_end + 1.20)
+                            .map(|c| (c.end + 0.30).min(max_nb_sec))
+                            .unwrap_or_else(|| (repaired_end + 2.10).min(max_nb_sec));
+                        (t, (t + 0.90).min(max_nb_sec))
+                    };
                     if target_sec > repaired_end + 0.35 {
                         let lo_idx = ((((target_sec - 0.30) - nb_start) * 100.0).round() as isize)
                             .clamp(0, (nb_frames.len().saturating_sub(1)) as isize)
                             as usize;
-                        let hi_idx = ((((target_sec + 0.90).min(max_nb_sec) - nb_start) * 100.0)
-                            .round() as isize)
+                        let hi_idx = (((hi_cap_sec.max(target_sec + 0.20) - nb_start) * 100.0).round() as isize)
                             .clamp(lo_idx as isize, (nb_frames.len().saturating_sub(1)) as isize)
                             as usize;
                         let cut_idx = find_best_cut_index_in_frames(

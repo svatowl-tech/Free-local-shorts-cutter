@@ -49,6 +49,22 @@
     return $pipelineStore.config.output_dir || 'Готовые клипы';
   })();
 
+  function getClipTypeFromPath(clipPath: string): 'highlights' | 'talk_video' | 'shorts' {
+    const normalized = clipPath.replace(/\\/g, '/');
+    if (normalized.includes('/Хайлайты/') || normalized.includes('Хайлайты_')) {
+      return 'highlights';
+    }
+    if (
+      normalized.includes('/Ток-видео/') ||
+      normalized.includes('Разговорное_видео') ||
+      normalized.includes('Демка_') ||
+      normalized.includes('Ток_видео')
+    ) {
+      return 'talk_video';
+    }
+    return 'shorts';
+  }
+
   function getSmmForClip(clipPath: string, index: number): SmmClipMetadata {
     const normalizedTarget = clipPath.replace(/\\/g, '/');
     const targetName = getFileName(clipPath, `clip_${index + 1}.mp4`);
@@ -56,7 +72,7 @@
       m =>
         m.clip_path === clipPath ||
         m.clip_path.replace(/\\/g, '/') === normalizedTarget ||
-        m.clip_filename === targetName
+        getFileName(m.clip_path, '') === targetName
     );
     if (found) return found;
 
@@ -88,7 +104,8 @@
     if (typeof navigator === 'undefined' || !navigator.clipboard) return;
     const blocks = $pipelineStore.clips.map((clip, idx) => {
       const smm = getSmmForClip(clip, idx);
-      return `=== [${smm.clip_type.toUpperCase()}] ${smm.clip_filename} ===\nНазвание: ${smm.title}\n\nОписание:\n${smm.description}\n\nХештеги:\n${smm.hashtags}\nФайл .txt: ${smm.txt_file_path}`;
+      const clipFilename = getFileName(smm.clip_path, getFileName(clip, `clip_${idx + 1}.mp4`));
+      return `=== [${smm.clip_type.toUpperCase()}] ${clipFilename} ===\nНазвание: ${smm.title}\n\nОписание:\n${smm.description}\n\nХештеги:\n${smm.hashtags}\nФайл описания: ${getFileName(smm.txt_path, 'clip.txt')}`;
     });
     await navigator.clipboard.writeText(blocks.join('\n\n----------------------------------------\n\n'));
     copiedAllSmm = true;
@@ -104,9 +121,11 @@
     try {
       const frag = $fragmentsStore[index] || { start: index * 15, end: (index + 1) * 15 };
       const videoPath = $pipelineStore.video?.path || $pipelineStore.video?.name || 'Видео';
+      const clipType = getClipTypeFromPath(clipPath);
       const updated = await regenerateClipSmm(
         videoPath,
         clipPath,
+        clipType,
         index,
         frag.start,
         frag.end,
@@ -114,12 +133,12 @@
       );
       pipelineStore.updateSmmItem(updated);
       pipelineStore.addLog(
-        `✍️ SMM-описание обновлено и перезаписано в ${getFileName(updated.txt_file_path, 'clip.txt')}`,
+        `Описание ролика обновлено и сохранено в ${getFileName(updated.txt_path, 'clip.txt')}`,
         'LLM',
         'info'
       );
     } catch (err: unknown) {
-      console.error('Ошибка перегенерации SMM:', formatErrorMessage(err));
+      console.error('Ошибка обновления описания:', formatErrorMessage(err));
     } finally {
       regeneratingMap = { ...regeneratingMap, [clipPath]: false };
     }
@@ -208,34 +227,34 @@
   <!-- Status Banner -->
   <div class="p-4 bg-[#23c55e]/10 border-l-[3px] border-[#23c55e] rounded-[2px] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
     <div>
-      <div class="label-mono text-[#23c55e] mb-1 font-bold">ОПЕРАЦИЯ И SMM-КОПИРАЙТИНГ УСПЕШНО ЗАВЕРШЕНЫ</div>
+      <div class="label-mono text-[#23c55e] mb-1 font-bold">Ролики и описания готовы</div>
       <p class="text-xs text-[#e2e2e4]">
-        Все ролики и готовые текстовые файлы описаний (<span class="font-mono text-amber-300">.txt</span> с названием, ироничным описанием и хештегами) разложены по папкам (<span class="font-mono">Шортсы</span>, <span class="font-mono">Хайлайты</span>, <span class="font-mono">Ток-видео</span>).
+        Видеоклипы и текстовые файлы с заголовком, описанием и хештегами сохранены и разложены по тематическим папкам.
       </p>
     </div>
     <div class="flex flex-wrap items-center gap-2 shrink-0">
       <button
         type="button"
         on:click={copyAllClipsSmm}
-        class="btn py-2 px-3 border border-amber-500/50 bg-amber-500/15 hover:bg-amber-500/30 text-amber-200 font-mono text-xs font-bold rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors"
+        class="btn py-2 px-3 border border-amber-500/50 bg-amber-500/15 hover:bg-amber-500/30 text-amber-200 font-mono text-xs font-bold rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0"
         title="Скопировать названия, описания и хештеги сразу всех роликов"
       >
         {#if copiedAllSmm}
           <Check class="h-4 w-4 text-[#23c55e]" />
-          <span class="text-[#23c55e]">Все SMM-тексты скопированы!</span>
+          <span class="text-[#23c55e]">Все тексты скопированы</span>
         {:else}
           <Copy class="h-4 w-4 text-amber-300" />
-          <span>Скопировать SMM всех роликов</span>
+          <span>Скопировать все описания</span>
         {/if}
       </button>
 
       <button
         type="button"
         on:click={(e) => revealInFolder($pipelineStore.clips[0] || defaultExportFolder, e)}
-        class="btn py-2 px-3.5 bg-[#23c55e] hover:bg-[#1ea950] text-black font-mono text-xs font-bold rounded-[2px] flex items-center gap-2 cursor-pointer transition-colors shadow"
+        class="btn py-2 px-3.5 bg-[#23c55e] hover:bg-[#1ea950] text-black font-mono text-xs font-bold rounded-[2px] flex items-center gap-2 cursor-pointer transition-colors shadow whitespace-nowrap shrink-0"
       >
         <FolderOpen class="h-4 w-4" />
-        <span>Открыть папку с роликами и .txt</span>
+        <span>Открыть папку с роликами</span>
       </button>
     </div>
   </div>
@@ -244,7 +263,7 @@
   <div class="p-3.5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.14)] rounded-[4px] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
     <div class="min-w-0 flex-1">
       <div class="text-[10px] font-mono uppercase text-[rgba(226,226,224,0.45)]">
-        Директория сохранения готовых клипов и .txt файлов SMM:
+        Папка сохранения
       </div>
       <div class="text-xs font-mono text-[#e2e2e4] truncate mt-0.5 select-all" title={defaultExportFolder}>
         {defaultExportFolder}
@@ -324,14 +343,14 @@
     </div>
   {/if}
 
-  <!-- Clips & SMM Cards List -->
+  <!-- Clips & Descriptions Cards List -->
   <div class="space-y-3">
-    <div class="flex items-center justify-between">
+    <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="label-mono text-[#e2e2e4]">
-        Экспортированные ролики и готовые SMM-описания ({$pipelineStore.clips.length})
+        Готовые ролики ({$pipelineStore.clips.length})
       </div>
-      <div class="text-[11px] font-mono text-amber-300/90">
-        ✍️ Название + Описание с иронией + Хештеги (.txt в папке с видео)
+      <div class="text-[11px] font-sans text-[rgba(226,226,224,0.55)]">
+        Заголовок, описание и хештеги сохраняются в текстовом файле рядом с видео
       </div>
     </div>
 
@@ -341,7 +360,7 @@
         {@const isPreviewing = activePreviewClip === clip}
         {@const clipCat = getClipCategoryInfo(clip)}
         {@const smm = getSmmForClip(clip, index)}
-        {@const txtFileName = getFileName(smm.txt_file_path, clipName.replace(/\.mp4$/i, '.txt'))}
+        {@const txtFileName = getFileName(smm.txt_path, clipName.replace(/\.mp4$/i, '.txt'))}
         {@const isRegenerating = !!regeneratingMap[clip]}
 
         <div
@@ -352,7 +371,7 @@
           <div
             on:click={() => toggleClipPreview(clip)}
             class="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 cursor-pointer hover:bg-[#16161a]/60 transition-colors"
-            title="Нажмите для воспроизведения предпросмотра ролика"
+            title="Нажмите для предпросмотра ролика"
           >
             <div class="flex items-center gap-3.5 min-w-0">
               <div class="w-10 h-10 {isPreviewing ? 'bg-[#23c55e] text-black' : 'bg-[#16161a] text-[#5865f2]'} border border-[rgba(226,226,224,0.1)] rounded-[2px] flex items-center justify-center shrink-0 transition-colors">
@@ -365,7 +384,7 @@
 
               <div class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <h4 class="text-xs font-bold text-[#e2e2e4] truncate font-mono" title={clipName}>
+                  <h4 class="text-xs font-bold text-[#e2e2e4] truncate font-mono" title={clip}>
                     {clipName}
                   </h4>
                   <span class="text-[10px] font-mono px-1.5 py-0.5 rounded {clipCat.badgeClass}">
@@ -374,22 +393,19 @@
                   {#if $fragmentsStore[index]?.repaired || ($fragmentsStore[index]?.title && $fragmentsStore[index].title.includes('Доработан'))}
                     <span
                       class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold"
-                      title={$fragmentsStore[index]?.repair_note || 'Клип автоматически доработан на 2-м круге ревизии ИИ'}
+                      title={$fragmentsStore[index]?.repair_note || 'Границы клипа автоматически уточнены при проверке'}
                     >
-                      ✓ Доработан (2 круг)
+                      Улучшен при проверке
                     </span>
                   {/if}
                   <span
                     class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1"
-                    title={`Текстовый файл с описанием сохранен рядом с видео: ${smm.txt_file_path}`}
+                    title={`Файл с описанием: ${smm.txt_path}`}
                   >
                     <FileText class="w-3 h-3" />
                     <span>{txtFileName}</span>
                   </span>
                 </div>
-                <p class="text-[10px] text-[rgba(226,226,224,0.4)] font-mono mt-0.5 truncate">
-                  {clip}
-                </p>
               </div>
             </div>
 
@@ -397,7 +413,7 @@
               <button
                 type="button"
                 on:click|stopPropagation={() => toggleClipPreview(clip)}
-                class="btn py-2 px-3 border {isPreviewing ? 'border-[#23c55e] bg-[#23c55e]/15 text-[#23c55e]' : 'border-[#5865f2]/40 bg-[#5865f2]/10 hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white'} text-xs font-mono rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors"
+                class="btn py-2 px-3 border {isPreviewing ? 'border-[#23c55e] bg-[#23c55e]/15 text-[#23c55e]' : 'border-[#5865f2]/40 bg-[#5865f2]/10 hover:bg-[#5865f2] text-[#e2e2e4] hover:text-white'} text-xs font-mono rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
               >
                 {#if isPreviewing}
                   <Pause class="h-3.5 w-3.5" />
@@ -411,7 +427,7 @@
               <button
                 type="button"
                 on:click={(e) => revealInFolder(clip, e)}
-                class="btn py-2 px-3 border border-[rgba(226,226,224,0.15)] bg-transparent hover:bg-[#5865f2]/10 hover:border-[#5865f2] text-xs font-mono text-[rgba(226,226,224,0.7)] hover:text-[#e2e2e4] rounded-[2px] flex items-center gap-2 cursor-pointer transition-colors"
+                class="btn py-2 px-3 border border-[rgba(226,226,224,0.15)] bg-transparent hover:bg-[#5865f2]/10 hover:border-[#5865f2] text-xs font-mono text-[rgba(226,226,224,0.7)] hover:text-[#e2e2e4] rounded-[2px] flex items-center gap-2 cursor-pointer transition-colors whitespace-nowrap"
               >
                 <FolderInput class="h-3.5 w-3.5 text-[#5865f2]" />
                 <span>Открыть папку</span>
@@ -419,42 +435,37 @@
             </div>
           </div>
 
-          <!-- SMM Package Block: Title, Ironic Description, Hashtags -->
+          <!-- Post Copy Block: Title, Description, Hashtags -->
           <div class="p-4 bg-[#121216] border-t border-[rgba(226,226,224,0.09)] flex flex-col gap-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
-              <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-mono text-[11px] font-bold text-amber-300">
-                  ✍️ SMM-описание для выкладки
-                </span>
-                <span class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#1c1c22] border border-[rgba(226,226,224,0.12)] text-[rgba(226,226,224,0.65)]">
-                  Модель: {smm.model_used}
-                </span>
-              </div>
+              <span class="font-mono text-[11px] font-bold text-amber-300">
+                Текст для публикации
+              </span>
 
               <div class="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   on:click={(e) => handleRegenerateSmm(clip, index, e)}
                   disabled={isRegenerating}
-                  class="px-2.5 py-1 bg-[#1c1c22] hover:bg-[#272730] border border-[rgba(226,226,224,0.18)] text-[11px] font-mono text-[#e2e2e4] rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40"
-                  title="Сгенерировать новый вариант названия, ироничной шутки и хештегов и обновить .txt файл"
+                  class="px-2.5 py-1 bg-[#1c1c22] hover:bg-[#272730] border border-[rgba(226,226,224,0.18)] text-[11px] font-mono text-[#e2e2e4] rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors disabled:opacity-40 whitespace-nowrap"
+                  title="Подобрать другой вариант заголовка, описания и хештегов"
                 >
                   <RefreshCw class="w-3 h-3 text-amber-300 {isRegenerating ? 'animate-spin' : ''}" />
-                  <span>{isRegenerating ? 'Генерация...' : 'Другой вариант шутки / SMM'}</span>
+                  <span>{isRegenerating ? 'Обновление...' : 'Другой вариант текста'}</span>
                 </button>
 
                 <button
                   type="button"
                   on:click={(e) => copyTextWithFeedback(`all_${index}`, formatFullSmmText(smm), e)}
-                  class="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/50 text-amber-200 font-mono text-[11px] font-bold rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors"
-                  title="Скопировать сразу Название + Описание + Хештеги для вставки при публикации"
+                  class="px-3 py-1 bg-amber-500/20 hover:bg-amber-500/35 border border-amber-500/50 text-amber-200 font-mono text-[11px] font-bold rounded-[2px] flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap"
+                  title="Скопировать заголовок, описание и хештеги вместе"
                 >
                   {#if copiedFieldMap[`all_${index}`]}
                     <Check class="w-3.5 h-3.5 text-[#23c55e]" />
-                    <span class="text-[#23c55e]">Скопировано всё!</span>
+                    <span class="text-[#23c55e]">Скопировано всё</span>
                   {:else}
                     <Copy class="w-3.5 h-3.5 text-amber-300" />
-                    <span>Скопировать всё для выкладки</span>
+                    <span>Скопировать всё</span>
                   {/if}
                 </button>
               </div>
@@ -464,7 +475,7 @@
             <div class="flex flex-col gap-1">
               <div class="flex items-center justify-between">
                 <span class="font-mono text-[10px] uppercase text-[rgba(226,226,224,0.5)]">
-                  1. Название ролика
+                  Заголовок
                 </span>
                 <button
                   type="button"
@@ -472,9 +483,9 @@
                   class="font-mono text-[10px] text-[#9aa4ff] hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   {#if copiedFieldMap[`title_${index}`]}
-                    <span class="text-[#23c55e]">✓ Название скопировано</span>
+                    <span class="text-[#23c55e]">Скопировано</span>
                   {:else}
-                    <span>[Копировать название]</span>
+                    <span>Копировать</span>
                   {/if}
                 </button>
               </div>
@@ -486,11 +497,11 @@
               />
             </div>
 
-            <!-- 2. Description (with context & irony) -->
+            <!-- 2. Description -->
             <div class="flex flex-col gap-1">
               <div class="flex items-center justify-between">
                 <span class="font-mono text-[10px] uppercase text-[rgba(226,226,224,0.5)]">
-                  2. Описание (исходник + суть внутри + контекст + ироничная шутка)
+                  Описание
                 </span>
                 <button
                   type="button"
@@ -498,9 +509,9 @@
                   class="font-mono text-[10px] text-[#9aa4ff] hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   {#if copiedFieldMap[`desc_${index}`]}
-                    <span class="text-[#23c55e]">✓ Описание скопировано</span>
+                    <span class="text-[#23c55e]">Скопировано</span>
                   {:else}
-                    <span>[Копировать описание]</span>
+                    <span>Копировать</span>
                   {/if}
                 </button>
               </div>
@@ -516,7 +527,7 @@
             <div class="flex flex-col gap-1">
               <div class="flex items-center justify-between">
                 <span class="font-mono text-[10px] uppercase text-[rgba(226,226,224,0.5)]">
-                  3. Хештеги
+                  Хештеги
                 </span>
                 <button
                   type="button"
@@ -524,9 +535,9 @@
                   class="font-mono text-[10px] text-[#9aa4ff] hover:underline flex items-center gap-1 cursor-pointer"
                 >
                   {#if copiedFieldMap[`tags_${index}`]}
-                    <span class="text-[#23c55e]">✓ Хештеги скопированы</span>
+                    <span class="text-[#23c55e]">Скопировано</span>
                   {:else}
-                    <span>[Копировать хештеги]</span>
+                    <span>Копировать</span>
                   {/if}
                 </button>
               </div>
@@ -538,10 +549,10 @@
               />
             </div>
 
-            <!-- Saved .txt path footer -->
+            <!-- Saved .txt footer -->
             <div class="text-[10px] font-mono text-[rgba(226,226,224,0.45)] flex items-center justify-between pt-1 border-t border-[rgba(226,226,224,0.06)]">
-              <span class="truncate" title={smm.txt_file_path}>
-                📄 Экспортировано в текстовый файл: <span class="text-[rgba(226,226,224,0.75)]">{smm.txt_file_path}</span>
+              <span class="truncate" title={smm.txt_path}>
+                Текстовый файл: <span class="text-[rgba(226,226,224,0.75)]">{txtFileName}</span>
               </span>
             </div>
           </div>

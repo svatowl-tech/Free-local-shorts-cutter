@@ -9,7 +9,6 @@
     CheckCircle, 
     AlertCircle, 
     Loader2, 
-    Folder, 
     RefreshCw, 
     Check,
     Trash2,
@@ -50,12 +49,12 @@
 
   function getCategoryBadge(category: string): { label: string; colorClass: string } {
     if (category === 'whisper') {
-      return { label: 'WHISPER РЕЧЬ', colorClass: 'text-[#38bdf8] bg-[#38bdf8]/10 border-[#38bdf8]/30' };
+      return { label: 'РЕЧЬ', colorClass: 'text-[#38bdf8] bg-[#38bdf8]/10 border-[#38bdf8]/30' };
     }
     if (category === 'llm') {
-      return { label: 'LLM ТЕКСТ ≤3B', colorClass: 'text-[#a855f7] bg-[#a855f7]/10 border-[#a855f7]/30' };
+      return { label: 'ДИАЛОГИ', colorClass: 'text-[#a855f7] bg-[#a855f7]/10 border-[#a855f7]/30' };
     }
-    return { label: 'VISION КАДРЫ', colorClass: 'text-[#f59e0b] bg-[#f59e0b]/10 border-[#f59e0b]/30' };
+    return { label: 'КАДРЫ', colorClass: 'text-[#f59e0b] bg-[#f59e0b]/10 border-[#f59e0b]/30' };
   }
 
   onMount(() => {
@@ -112,8 +111,8 @@
           </svg>
         </div>
         <div>
-          <div class="label-mono">ОТКРЫТЫЕ ЛОКАЛЬНЫЕ НЕЙРОСЕТИ (МАКС. 3B • БЕЗ КЛЮЧЕЙ)</div>
-          <h2 class="panel-title text-sm">Менеджер ИИ-Моделей ({installedCount} установлено)</h2>
+          <div class="label-mono">Локальная работа без подписок и API-ключей</div>
+          <h2 class="panel-title text-sm">Библиотека моделей ({installedCount} установлено)</h2>
         </div>
       </div>
       
@@ -147,7 +146,7 @@
           ? 'bg-[#5865f2] text-white border-[#5865f2] font-bold'
           : 'bg-[#0c0c0e] text-[rgba(226,226,224,0.65)] border-[rgba(226,226,224,0.12)] hover:text-[#e2e2e4]'}"
       >
-        ВСЕ МОДЕЛИ ({$modelsStore.models.length})
+        Все ({$modelsStore.models.length})
       </button>
       <button
         type="button"
@@ -156,7 +155,7 @@
           ? 'bg-[#5865f2] text-white border-[#5865f2] font-bold'
           : 'bg-[#0c0c0e] text-[rgba(226,226,224,0.65)] border-[rgba(226,226,224,0.12)] hover:text-[#e2e2e4]'}"
       >
-        СУБТИТРЫ WHISPER ({$modelsStore.models.filter(m => m.category === 'whisper').length})
+        Распознавание речи ({$modelsStore.models.filter(m => m.category === 'whisper').length})
       </button>
       <button
         type="button"
@@ -165,7 +164,7 @@
           ? 'bg-[#5865f2] text-white border-[#5865f2] font-bold'
           : 'bg-[#0c0c0e] text-[rgba(226,226,224,0.65)] border-[rgba(226,226,224,0.12)] hover:text-[#e2e2e4]'}"
       >
-        АНАЛИЗ ДИАЛОГОВ LLM ≤3B ({$modelsStore.models.filter(m => m.category === 'llm').length})
+        Анализ диалогов ({$modelsStore.models.filter(m => m.category === 'llm').length})
       </button>
       <button
         type="button"
@@ -174,7 +173,7 @@
           ? 'bg-[#5865f2] text-white border-[#5865f2] font-bold'
           : 'bg-[#0c0c0e] text-[rgba(226,226,224,0.65)] border-[rgba(226,226,224,0.12)] hover:text-[#e2e2e4]'}"
       >
-        КАДРЫ VISION ({$modelsStore.models.filter(m => m.category === 'vision').length})
+        Анализ кадров ({$modelsStore.models.filter(m => m.category === 'vision').length})
       </button>
     </div>
 
@@ -192,8 +191,8 @@
       {/if}
 
       <div class="info-card">
-        <div class="label-mono text-[#e2e2e4] mb-1">Оптимизировано для обычных ПК и ноутбуков (до 3B параметров)</div>
-        Все представленные модели полностью бесплатны, скачиваются напрямую из официальных репозиториев Hugging Face без API-ключей и токенов. Вы можете свободно скачивать новые модели, переключаться между ними кнопкой <strong class="text-[#5865f2] font-mono">ВЫБРАТЬ</strong> и удалять ненужные веса кнопкой <strong class="text-red-400 font-mono">УДАЛИТЬ</strong> для освобождения места на диске.
+        <div class="label-mono text-[#e2e2e4] mb-1">Оптимизировано для обычных ПК и ноутбуков</div>
+        Все модели бесплатны, скачиваются напрямую с Hugging Face на ваш компьютер и работают без API-ключей и подписок. Вы можете переключаться между установленными моделями или удалять неиспользуемые, чтобы освободить место на диске.
       </div>
 
       <div class="space-y-3 pt-1">
@@ -236,18 +235,7 @@
                     </span>
                   {/if}
                 </div>
-                <p class="text-xs text-[rgba(226,226,224,0.65)] leading-normal">{model.description}</p>
-                <div class="flex flex-wrap items-center gap-3 text-[10px] text-[rgba(226,226,224,0.4)] font-mono mt-1">
-                  <span class="flex items-center gap-1">
-                    <Folder class="h-3 w-3" />
-                    <span>Файл: {model.filename}</span>
-                  </span>
-                  {#if model.mmproj_filename}
-                    <span class="flex items-center gap-1 text-[#f59e0b]/80">
-                      <span>+ Проектор: {model.mmproj_filename}</span>
-                    </span>
-                  {/if}
-                </div>
+                <p class="text-xs text-[rgba(226,226,224,0.65)] leading-normal" title={model.filename}>{model.description}</p>
               </div>
 
               <!-- Actions or progress -->
@@ -258,7 +246,7 @@
                       <span class="text-[#5865f2] font-bold flex items-center gap-1">
                         <Loader2 class="h-3 w-3 animate-spin" />
                         {#if model.mmproj_filename}
-                          {downloadState.progress < 65 ? 'Веса (1/2)...' : 'Проектор mmproj (2/2)...'}
+                          {downloadState.progress < 65 ? 'Модель (1/2)...' : 'Компонент (2/2)...'}
                         {:else}
                           Загрузка...
                         {/if}
@@ -339,7 +327,7 @@
 
     <!-- Footer -->
     <div class="p-4 border-t border-[rgba(226,226,224,0.1)] bg-[#0c0c0e] flex items-center justify-between">
-      <span class="label-mono">Прямая загрузка открытых GGUF/BIN моделей с Hugging Face (без ключей)</span>
+      <span class="label-mono">Локальная загрузка открытых моделей с Hugging Face (без ключей и подписок)</span>
       <button 
         type="button"
         on:click={onClose}

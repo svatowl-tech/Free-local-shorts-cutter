@@ -64,18 +64,15 @@
 <div class="panel p-6 sm:p-8 flex flex-col gap-6">
   <!-- Header -->
   <div class="panel-title flex items-center justify-between pb-4 border-b border-[rgba(226,226,224,0.1)]">
-    <div class="flex items-center gap-2">
-      <div class="w-3 h-3 rounded-full bg-[#5865f2] animate-ping"></div>
-      <span>Выполнение конвейера</span>
-    </div>
-    <div class="label-mono text-[#5865f2] font-semibold">АКТИВНО</div>
+    <span>Обработка видео</span>
+    <span class="font-mono text-xs text-[#5865f2] font-semibold tabular-nums">{$pipelineStore.percentage}%</span>
   </div>
 
   <!-- Stage and Main Progress -->
   <div class="p-5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] space-y-3">
-    <div class="flex justify-between items-center text-xs font-mono">
-      <span class="text-[#e2e2e4] uppercase tracking-wider font-semibold">Этап: {$pipelineStore.currentStage}</span>
-      <span class="text-[#5865f2] font-bold">{$pipelineStore.percentage}%</span>
+    <div class="flex justify-between items-center text-xs">
+      <span class="text-[#e2e2e4] font-medium">{$pipelineStore.currentStage || 'Подготовка...'}</span>
+      <span class="font-mono text-[#5865f2] font-bold tabular-nums">{$pipelineStore.percentage}%</span>
     </div>
 
     <!-- Minimal Geometric Progress Bar -->
@@ -93,14 +90,14 @@
       {#if $pipelineStore.stageDetails.ffmpeg}
         {@const f = $pipelineStore.stageDetails.ffmpeg}
         <div class="p-3.5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] space-y-2">
-          <div class="flex justify-between items-center text-xs font-mono">
-            <span class="text-[rgba(226,226,224,0.7)]">FFmpeg: Конвертация</span>
-            <span class="text-[#5865f2]">{Math.round(f.percent)}%</span>
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-[rgba(226,226,224,0.8)]">Подготовка аудио</span>
+            <span class="font-mono text-[#5865f2] tabular-nums">{Math.round(f.percent)}%</span>
           </div>
           <div class="w-full bg-[#16161a] h-1.5 overflow-hidden">
             <div class="bg-[#5865f2] h-full" style="width: {f.percent}%"></div>
           </div>
-          <p class="text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
+          <p class="text-[11px] text-[rgba(226,226,224,0.45)] font-mono tabular-nums">
             {f.currentTime.toFixed(1)}с / {f.duration.toFixed(1)}с
           </p>
         </div>
@@ -109,15 +106,15 @@
       {#if $pipelineStore.stageDetails.whisper}
         {@const w = $pipelineStore.stageDetails.whisper}
         <div class="p-3.5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] space-y-2">
-          <div class="flex justify-between items-center text-xs font-mono">
-            <span class="text-[rgba(226,226,224,0.7)]">Whisper: {w.stage}</span>
-            <span class="text-[#5865f2]">{Math.round(w.percent)}%</span>
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-[rgba(226,226,224,0.8)]">Распознавание речи</span>
+            <span class="font-mono text-[#5865f2] tabular-nums">{Math.round(w.percent)}%</span>
           </div>
           <div class="w-full bg-[#16161a] h-1.5 overflow-hidden">
             <div class="bg-[#5865f2] h-full" style="width: {w.percent}%"></div>
           </div>
-          <p class="text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-            Локальная расшифровка ASR
+          <p class="text-[11px] text-[rgba(226,226,224,0.45)]">
+            {w.stage === 'loading_model' ? 'Подготовка модели' : w.stage === 'cached' ? 'Использование сохранённых субтитров' : 'Создание субтитров'}
           </p>
         </div>
       {/if}
@@ -125,15 +122,15 @@
       {#if $pipelineStore.stageDetails.analyzer}
         {@const a = $pipelineStore.stageDetails.analyzer}
         <div class="p-3.5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] space-y-2">
-          <div class="flex justify-between items-center text-xs font-mono">
-            <span class="text-[rgba(226,226,224,0.7)]">Анализ сцен: {a.stage}</span>
-            <span class="text-[#5865f2]">{Math.round(a.percent)}%</span>
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-[rgba(226,226,224,0.8)]">Поиск лучших моментов</span>
+            <span class="font-mono text-[#5865f2] tabular-nums">{Math.round(a.percent)}%</span>
           </div>
           <div class="w-full bg-[#16161a] h-1.5 overflow-hidden">
             <div class="bg-[#5865f2] h-full" style="width: {a.percent}%"></div>
           </div>
-          <p class="text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-            Кадры: {a.currentFrame} / {a.totalFrames}
+          <p class="text-[11px] text-[rgba(226,226,224,0.45)] font-mono tabular-nums">
+            Проверено: {a.currentFrame} / {a.totalFrames}
           </p>
         </div>
       {/if}
@@ -141,15 +138,15 @@
       {#if $pipelineStore.stageDetails.renderer}
         {@const r = $pipelineStore.stageDetails.renderer}
         <div class="p-3.5 bg-[#0c0c0e] border border-[rgba(226,226,224,0.1)] rounded-[4px] space-y-2">
-          <div class="flex justify-between items-center text-xs font-mono">
-            <span class="text-[rgba(226,226,224,0.7)]">FFmpeg Рендер: {r.stage}</span>
-            <span class="text-[#23c55e]">{Math.round(r.percent)}%</span>
+          <div class="flex justify-between items-center text-xs">
+            <span class="text-[rgba(226,226,224,0.8)]">Сборка клипов</span>
+            <span class="font-mono text-[#23c55e] tabular-nums">{Math.round(r.percent)}%</span>
           </div>
           <div class="w-full bg-[#16161a] h-1.5 overflow-hidden">
             <div class="bg-[#23c55e] h-full" style="width: {r.percent}%"></div>
           </div>
-          <p class="text-[10px] text-[rgba(226,226,224,0.4)] font-mono">
-            Нарезка и кроппинг (9:16)
+          <p class="text-[11px] text-[rgba(226,226,224,0.45)]">
+            {r.stage || 'Нарезка и оформление роликов'}
           </p>
         </div>
       {/if}
@@ -160,8 +157,8 @@
   <div class="space-y-2 flex-1 flex flex-col min-h-[180px]">
     <div class="flex flex-wrap items-center justify-between gap-2">
       <div class="label-mono flex items-center gap-2">
-        <span>Консоль логирования (FFmpeg / Whisper / Аудио / LLM / Рендер)</span>
-        <span class="text-xs text-[rgba(226,226,224,0.4)] font-mono">({$pipelineStore.logs.length} строк)</span>
+        <span>Журнал выполнения</span>
+        <span class="text-xs text-[rgba(226,226,224,0.4)] font-mono">({$pipelineStore.logs.length})</span>
       </div>
       
       <!-- Log Actions -->
@@ -211,7 +208,7 @@
         </div>
       {/each}
       {#if $pipelineStore.logs.length === 0}
-        <div class="text-[rgba(226,226,224,0.3)] italic">Ожидание событий процессов (FFmpeg, Whisper, LLM)...</div>
+        <div class="text-[rgba(226,226,224,0.35)] italic">Ожидание событий обработки...</div>
       {/if}
     </div>
   </div>
