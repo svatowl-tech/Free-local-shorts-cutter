@@ -273,6 +273,18 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "блок, мэм, салф",
         "ауэй, лайс",
         "\"баке\"",
+        "позитиванные грустные",
+        "взрослый мокро-мен",
+        "мы можем убить всё в флэкс",
+        "мы можем убить все в флэкс",
+        "повыкновение на руках",
+        "взрослой паспорт",
+        "взрослой башни",
+        "викател, ай",
+        "который почмок",
+        "нанте, не все",
+        "канай, тай",
+        "ва, я, екте",
         "amara.org",
         "амара.орг",
         "opensubtitles",
@@ -281,6 +293,9 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         if lower.contains(cred) {
             return true;
         }
+    }
+    if clean_exact == "грую" {
+        return true;
     }
 
     // 3. Универсальные призывы (Call-to-Action) для видео, стримов и YouTube
@@ -930,6 +945,82 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("троем с моком", "втроём с Моком"),
         ("голлафана", "Галафана"),
         ("муфеозных", "мафиозных"),
+        // 1 серия Маски вермильона и сопутствующие фонетические искажения
+        ("зря ты репыхаешься", "зря трепыхаешься"),
+        ("тебя меня не убить", "тебе меня не убить"),
+        ("гвоздь программы, тогда маска улыбки", "гвоздь программы — маска улыбки"),
+        ("самому грюмому человеку", "самому угрюмому человеку"),
+        ("все пануры и ходят, концы с конца не сводят", "все понурые ходят, концы с концами сводят"),
+        ("все пануры и ходят", "все понурые ходят"),
+        ("концы с конца не сводят", "концы с концами сводят"),
+        ("эта кулыбка", "так улыбка"),
+        ("гастенру", "Гастон Ру"),
+        ("гастонна", "Гастона"),
+        ("достона", "Гастона"),
+        ("достон,", "Гастон,"),
+        ("достон!", "Гастон!"),
+        ("достон.", "Гастон."),
+        ("асона успела", "а Сона успела"),
+        ("ешь, как упаковал", "Ишь, как упаковал"),
+        ("в три, дорога", "втридорога"),
+        ("была красть её", "было красть её"),
+        ("была красть ее", "было красть её"),
+        ("к твоему, к сожалению", "к твоему сожалению"),
+        ("я тоток из госотряда", "Я Тото из госотряда"),
+        ("тоток выстрелит", "Тото выстрелит"),
+        ("та-так! не надо!", "Тото! Не надо!"),
+        ("пэру дарсет", "Беро Дарсет"),
+        ("гуляешь по меру", "гуляешь по миру"),
+        ("влезблан", "в Лизблан"),
+        ("сельдьтесь дальше", "Цельтесь дальше"),
+        ("сон, это наша подруга", "Сона — это наша подруга"),
+        ("с такой-то полиции", "с такой-то полицией"),
+        ("ходят нос по весе", "ходят нос повесив"),
+        ("величеству голуну", "величеству Гоону"),
+        ("храбры ты был мужчина, обещая", "Храбрый ты, мужчина, обещаю"),
+        ("садура, меня не держи", "За дуру меня не держи"),
+        ("за дура меня не держи", "За дуру меня не держи"),
+        ("своим подчинёнам", "своим подчинённым"),
+        ("своим подчиненам", "своим подчинённым"),
+        ("и впремь", "и впрямь"),
+        ("ради нашего благо, выясняем", "Ради нашего блага выясним"),
+        ("балкарновал", "бал-карнавал"),
+        ("маска хамилёна", "Маска хамелеона"),
+        ("маска хамилена", "Маска хамелеона"),
+        ("из честь хватайся", "Исчез! Хватайся"),
+        ("до татронного зала", "до тронного зала"),
+        ("мазочник перу", "Масочник Беро"),
+        ("мазочник", "масочник"),
+        ("маска огнедыщущего дракона", "Маска огнедышащего дракона"),
+        ("огнедыщущего", "огнедышащего"),
+        ("что заникотей", "что за лиходей"),
+        ("шишидевр", "шедевр"),
+        ("барнарта? занебывала опасность", "Бернарда? За небывалую опасность"),
+        ("занебывала опасность", "за небывалую опасность"),
+        ("случилось трагедия", "случилась трагедия"),
+        ("и не позволю трагедии и повториться", "И не позволю трагедии повториться"),
+        ("со ним не поспеваю", "за ним не поспеваю"),
+        ("масковойна! какой убёртый!", "Маска воина! Какой упёртый!"),
+        ("масковойна", "Маска воина"),
+        ("какой убёртый", "какой упёртый"),
+        ("какой убертый", "какой упёртый"),
+        ("давать сдаче", "давать сдачи"),
+        ("перу сашол сума!", "Беро сошёл с ума!"),
+        ("сашол сума", "сошёл с ума"),
+        ("дело не слушается!", "Тело не слушается!"),
+        ("далека от совершенствах", "далека от совершенства"),
+        ("избить с них всю спесь", "сбить с них всю спесь"),
+        ("маскакота", "Маска кота"),
+        ("маска-кота", "Маска кота"),
+        ("маскапаука", "Маска паука"),
+        ("я поука!", "Маска паука!"),
+        ("где гон?", "Где Гоон?"),
+        ("плаще спачкал", "Плащ испачкал"),
+        ("не вдомай!", "Не вздумай!"),
+        ("раклятья!", "Проклятье!"),
+        ("сломленное, горимое чайнием, сона заключила пакет", "Сломленная, гонимая отчаянием, Сона заключила пакт"),
+        ("лицогона озарила улыбку, он предкушает", "Лицо Гоона озарила улыбка, он предвкушает"),
+        ("подчиняя своей воли, не зная горечи от рат", "Подчиняя своей воле, не зная горечи утрат"),
     ];
 
     // Короткие предложно-местоименные склейки, которые должны заменяться ТОЛЬКО как отдельные слова целиком
@@ -1423,10 +1514,29 @@ fn repair_split_words_and_orphans(
         return (fragments, 0);
     }
 
+    /// Если перед склейкой хвоста `frag` (`[t1 .. t2]`) в `prev` (`[t0 .. t1]`) первая часть `prev` имела
+    /// предшествующую паузу/музыку (`t1 - t0 > prev_spoken + 0.55с`), подтягиваем `prev.start` вперед к `t1 - prev_spoken`.
+    /// Иначе последующий `tighten_subtitle_timestamps` сожмет объединенную фразу с конца и отрежет `[t1 .. t2]`!
+    fn pre_tighten_prev_start(prev: &mut crate::text_analyzer::SubtitleFragment) {
+        let prev_char_cnt = prev
+            .text
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .count()
+            .max(1);
+        let prev_word_cnt = prev.text.split_whitespace().count().max(1);
+        let prev_spoken = (0.28 + (prev_char_cnt as f64) / 11.5)
+            .max((prev_word_cnt as f64) * 0.40)
+            .clamp(0.65, 5.20);
+        if (prev.end - prev.start) > prev_spoken + 0.55 {
+            prev.start = (prev.end - prev_spoken).max(prev.start);
+        }
+    }
+
     let mut out: Vec<crate::text_analyzer::SubtitleFragment> = Vec::with_capacity(fragments.len());
     let mut repaired_count = 0usize;
 
-    for frag in fragments {
+    for mut frag in fragments {
         let mut curr_text = frag.text.trim().to_string();
         if curr_text.is_empty() {
             continue;
@@ -1478,6 +1588,30 @@ fn repair_split_words_and_orphans(
                     curr_text = curr_tokens[matched_k..].join(" ");
                     repaired_count += 1;
                 }
+
+                // 0.6. Если `prev` оборвался внутри грамматической конструкции без знака препинания (например «И не позволю трагедии»),
+                // а `curr_text` начинается с ложного заглавного эхо-союза «И » перед строчным инфинитивом/продолжением («И повториться, я своими руками...»),
+                // снимаем фантомный союз «И », чтобы обе половинки предложения бесшовно соединились!
+                if curr_text.starts_with("И ") && !prev.text.trim_end().ends_with(',') {
+                    let rest_after_conj = curr_text["И ".len()..].trim_start();
+                    let next_w_lower: String = rest_after_conj
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .filter(|c| c.is_alphabetic())
+                        .collect::<String>()
+                        .to_lowercase();
+                    let is_infinitive_or_tail = next_w_lower.ends_with("ть")
+                        || next_w_lower.ends_with("ться")
+                        || next_w_lower.ends_with("ти");
+                    if rest_after_conj.chars().next().map_or(false, |c| c.is_lowercase())
+                        && (is_infinitive_or_tail || prev.text.to_lowercase().contains("и не "))
+                    {
+                        curr_text = rest_after_conj.to_string();
+                        repaired_count += 1;
+                    }
+                }
             }
 
             // 1. Если новая строка начинается с оторванного знака препинания (`.`, `!`, `?`, `,`, `;`, `:`, `…`)
@@ -1487,6 +1621,7 @@ fn repair_split_words_and_orphans(
                     curr_text = curr_text[first_ch.len_utf8()..].trim_start().to_string();
                     repaired_count += 1;
                     if curr_text.is_empty() {
+                        pre_tighten_prev_start(prev);
                         prev.end = prev.end.max(frag.end);
                         continue;
                     }
@@ -1539,6 +1674,7 @@ fn repair_split_words_and_orphans(
                         // Если после склейки слова вторая строка пустая или короткая (общая длина <= 95 символов) —
                         // объединяем оба блока в одну цельную фразу!
                         if remainder.is_empty() || combined_chars <= 95 {
+                            pre_tighten_prev_start(prev);
                             prev.text.push_str(joiner);
                             prev.text.push_str(&w_next_raw);
                             if !remainder.is_empty() {
@@ -1550,19 +1686,25 @@ fn repair_split_words_and_orphans(
                             continue;
                         } else {
                             // Иначе приклеиваем оторванный хвост слова к `prev`, а остаток фразы оставляем в `curr`
+                            pre_tighten_prev_start(prev);
                             prev.text.push_str(joiner);
                             prev.text.push_str(&w_next_raw);
                             prev.text = fix_common_whisper_glued_words(&prev.text);
+                            let frag_dur = (frag.end - frag.start).max(0.0);
+                            if frag_dur >= 0.90 {
+                                prev.end = (prev.end + 0.32).min(frag.end - 0.45);
+                                frag.start = (prev.end + 0.03).min(frag.end - 0.40);
+                            }
                             curr_text = remainder;
                         }
                     }
                 }
             }
 
-            // 2.5. Если `prev` оборвался без финальной пунктуации (например «Довольно, Существо Икс! Я все твои невзгоды и испытания»),
+            // 2.5. Если `prev` оборвался без финальной пунктуации (например «Не стану! Я украду её как»),
             // а `curr_text` начинается со строчного завершения этой фразы (1–4 слова со знаком `.`, `!`, `?`, `…`), после которого в том же `curr_text`
-            // с заглавной буквы начинается уже следующее предложение («играючи пройду! Нечего было недооценивать...») —
-            // переносим этот короткий хвост в конец `prev`, чтобы оба предложения стали грамматически полными!
+            // с заглавной буквы начинается уже следующее предложение («последний подлец. И не позволю трагедии...») —
+            // переносим этот короткий хвост в конец `prev` И сдвигаем границу таймкода `prev.end` / `frag.start` на реальное время произнесения перенесенных слов!
             if !word_stitched
                 && gap <= 0.35
                 && !crate::text_analyzer::has_terminal_punctuation(&prev.text)
@@ -1600,6 +1742,22 @@ fn repair_split_words_and_orphans(
                     let prefix_tail = curr_text[..split_at].trim();
                     let remainder = curr_text[split_at..].trim_start().to_string();
                     if !prefix_tail.is_empty() && !remainder.is_empty() {
+                        pre_tighten_prev_start(prev);
+                        let prefix_words_cnt = prefix_tail.split_whitespace().count().max(1);
+                        let prefix_chars_cnt = prefix_tail
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .count()
+                            .max(1);
+                        let frag_dur = (frag.end - frag.start).max(0.0);
+                        let tail_spoken_dur = ((prefix_words_cnt as f64) * 0.44)
+                            .max((prefix_chars_cnt as f64) / 11.0 + 0.18)
+                            .clamp(0.45, (frag_dur - 0.65).max(0.45));
+                        if frag_dur >= 1.10 {
+                            let new_boundary = (frag.start + tail_spoken_dur).min(frag.end - 0.50);
+                            prev.end = prev.end.max(new_boundary);
+                            frag.start = (prev.end + 0.04).min(frag.end - 0.45);
+                        }
                         prev.text.push(' ');
                         prev.text.push_str(prefix_tail);
                         prev.text = fix_common_whisper_glued_words(&prev.text);
@@ -1609,11 +1767,9 @@ fn repair_split_words_and_orphans(
                 }
             }
 
-            // 3. Склеиваем короткие оторванные хвосты предложений (1–3 слова, до 28 символов, например «ты так.», «бою.», «нужна сила.», «вооружие.», «бойцом.»),
-            // которые whisper.cpp перенес в конец сегмента при срабатывании лимита длины строки `-ml`.
-            // ВАЖНО: Если короткий кусок НЕ имеет финальной точки/!/? и начинается с подчинительного союза («что для меня», «если я», «когда он»),
-            // то это НЕ хвост предыдущей фразы, а оторванное начало следующей клаузы — его нельзя оставлять висящим на конце `prev`!
-            if !word_stitched && gap <= 0.30 && !crate::text_analyzer::has_terminal_punctuation(&prev.text) {
+            // 3. Склеиваем короткие оторванные хвосты предложений (1–4 слова, до 36 символов, например «ты так.», «бою.», «со ним не поспеваю!»),
+            // а также прямые строчные продолжения разорванной фразы («И не позволю трагедии» + «повториться, я своими руками уничтожу все»).
+            if !word_stitched && gap <= 0.35 && !crate::text_analyzer::has_terminal_punctuation(&prev.text) {
                 let curr_words = curr_text.split_whitespace().count();
                 let curr_chars = curr_text.chars().count();
                 let curr_dur = (frag.end - frag.start).max(0.0);
@@ -1632,14 +1788,15 @@ fn repair_split_words_and_orphans(
                 .iter()
                 .any(|p| curr_lower.starts_with(p));
 
-                // Если `prev` сам является коротким оторванным зачином клаузы (1–3 слова без точки, например «что для меня» или «то не дядя,»),
-                // а `curr_text` — его прямое строчное продолжение («всё не по чём...»), склеиваем их в единую фразу!
+                // Если `prev` сам является коротким оторванным зачином клаузы (1–4 слова без точки, например «что для меня» или «И не позволю трагедии»),
+                // а `curr_text` — его прямое строчное продолжение («повториться, я своими руками...»), склеиваем их в единую фразу!
                 let prev_words = prev.text.split_whitespace().count();
                 if starts_lower
                     && !starts_dialog
-                    && prev_words <= 3
-                    && (prev.text.chars().count() + 1 + curr_chars) <= 105
+                    && (prev_words <= 3 || (!starts_subordinate && prev_words <= 5 && curr_words <= 7))
+                    && (prev.text.chars().count() + 1 + curr_chars) <= 108
                 {
+                    pre_tighten_prev_start(prev);
                     prev.text.push(' ');
                     prev.text.push_str(&curr_text);
                     prev.text = fix_common_whisper_glued_words(&prev.text);
@@ -1660,7 +1817,8 @@ fn repair_split_words_and_orphans(
                             && curr_dur <= 3.2)
                         || (curr_words == 1 && curr_chars <= 14 && curr_dur <= 1.0 && gap <= 0.08));
 
-                if is_short_orphan_tail && (prev.text.chars().count() + 1 + curr_chars) <= 105 {
+                if is_short_orphan_tail && (prev.text.chars().count() + 1 + curr_chars) <= 108 {
+                    pre_tighten_prev_start(prev);
                     prev.text.push(' ');
                     prev.text.push_str(&curr_text);
                     prev.text = fix_common_whisper_glued_words(&prev.text);
@@ -2064,8 +2222,9 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
         }
     }
 
-    let mut clean_fragments = deduplicate_multiline_loops(clean_fragments);
-    let mut total_stitched_words = 0usize;
+    let (repaired_initial, mut total_stitched_words) =
+        repair_split_words_and_orphans(clean_fragments);
+    let mut clean_fragments = deduplicate_multiline_loops(repaired_initial);
     let mut total_tightened_cues = 0usize;
 
     // Многопроходная конвергенция (до достижения полной неподвижной точки):
@@ -2329,10 +2488,20 @@ fn deduplicate_multiline_loops(
                         || (min_len >= 4 && matched * 5 >= min_len * 4)
                         || shared_phrase
                     {
-                        // Если новая версия реплики более полная (например «А ведь у нас идёт война, господин генерал» вместо обрывка «А ведь у нас сомнений»),
-                        // проверяем зазор по времени:
-                        if curr_words.len() >= prev_words.len() + 2 {
+                        // Если новая версия реплики более полная (например «Мне мало крошечного королевства, весь мир должен стать моим.»
+                        // вместо оборванного фальш-старта «Мне мало крошечного королевства. Весь мир.»),
+                        // сохраняем именно полную версию и её актуальный таймкод!
+                        if curr_words.len() >= prev_words.len() + 2
+                            || (d == 1 && curr_words.len() > prev_words.len())
+                        {
                             if time_gap <= 3.0 {
+                                if d == 1
+                                    && (fragments[i].start - out[prev_idx].end).abs() <= 0.65
+                                    && (out[prev_idx].end - out[prev_idx].start) >= 2.8
+                                {
+                                    out[prev_idx].start = fragments[i].start;
+                                    out[prev_idx].end = fragments[i].end;
+                                }
                                 out[prev_idx].text = fragments[i].text.clone();
                                 out_norms[prev_idx] = norms[i].clone();
                                 is_echo = true;

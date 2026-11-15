@@ -430,6 +430,165 @@ pub async fn probe_audio_duration(audio_path: &Path, app_handle: &AppHandle) -> 
     2.5
 }
 
+/// Извлекает лучший (не чёрный) последний кадр из видеофайла/шортса в PNG для размытого фона заставки.
+/// Пропускает финальный fade-out или чёрные кадры в конце, проверяя яркость кандидатов.
+async fn extract_best_last_frame_png(
+    video_path: &Path,
+    cache_dir: &Path,
+    tag_prefix: &str,
+    app_handle: &AppHandle,
+) -> Option<(PathBuf, f64)> {
+    if !video_path.exists() {
+        return None;
+    }
+
+    let vid_dur = probe_audio_duration(video_path, app_handle).await;
+    let max_t = (vid_dur - 0.12).max(0.05);
+
+    let raw_candidates: Vec<f64> = if vid_dur > 1.8 {
+        vec![
+            (vid_dur - 0.35).clamp(0.05, max_t),
+            (vid_dur - 0.75).clamp(0.05, max_t),
+            (vid_dur - 1.35).clamp(0.05, max_t),
+            (vid_dur * 0.80).clamp(0.05, max_t),
+            (vid_dur * 0.55).clamp(0.05, max_t),
+            (vid_dur * 0.25).clamp(0.05, max_t),
+        ]
+    } else {
+        vec![
+            (vid_dur - 0.20).clamp(0.02, max_t),
+            (vid_dur * 0.55).clamp(0.02, max_t),
+            0.05,
+        ]
+    };
+
+    let mut candidates: Vec<f64> = Vec::new();
+    for t in raw_candidates {
+        if !candidates.iter().any(|&prev| (prev - t).abs() < 0.12) {
+            candidates.push(t);
+        }
+    }
+
+    let mut best_t = candidates.first().copied().unwrap_or(0.5);
+    let mut best_luma = -1.0f64;
+    let mut best_score = -1.0f64;
+
+    for (idx, &t) in candidates.iter().enumerate() {
+        let probe_path = cache_dir.join(format!("{}_frame_probe_{}.rgb", tag_prefix, idx));
+        let Ok(cmd) = app_handle.shell().sidecar("ffmpeg") else {
+            continue;
+        };
+        let args = vec![
+            "-hide_banner".to_string(),
+            "-loglevel".to_string(),
+            "error".to_string(),
+            "-y".to_string(),
+            "-ss".to_string(),
+            format!("{:.3}", t),
+            "-i".to_string(),
+            video_path.to_string_lossy().to_string(),
+            "-frames:v".to_string(),
+            "1".to_string(),
+            "-vf".to_string(),
+            "scale=64:64:flags=fast_bilinear,format=rgb24".to_string(),
+            "-f".to_string(),
+            "rawvideo".to_string(),
+            probe_path.to_string_lossy().to_string(),
+        ];
+
+        if let Ok((mut rx, child)) = cmd
+            .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+            .args(args)
+            .spawn()
+        {
+            while let Some(ev) = rx.recv().await {
+                if matches!(ev, CommandEvent::Terminated(_)) {
+                    break;
+                }
+            }
+            let _ = child.kill();
+        }
+
+        if let Ok(bytes) = std::fs::read(&probe_path) {
+            let _ = std::fs::remove_file(&probe_path);
+            let px_count = bytes.len() / 3;
+            if px_count >= 16 {
+                let mut sum_y = 0.0f64;
+                let mut min_y = 255.0f64;
+                let mut max_y = 0.0f64;
+                for chunk in bytes.chunks_exact(3) {
+                    let y = 0.299 * (chunk[0] as f64)
+                        + 0.587 * (chunk[1] as f64)
+                        + 0.114 * (chunk[2] as f64);
+                    sum_y += y;
+                    if y < min_y {
+                        min_y = y;
+                    }
+                    if y > max_y {
+                        max_y = y;
+                    }
+                }
+                let mean_y = sum_y / (px_count as f64);
+                let spread = max_y - min_y;
+                let score = mean_y + spread * 0.5;
+                if score > best_score {
+                    best_score = score;
+                    best_t = t;
+                    best_luma = mean_y;
+                }
+                if mean_y >= 22.0 && spread >= 12.0 {
+                    best_t = t;
+                    best_luma = mean_y;
+                    break;
+                }
+            }
+        } else {
+            let _ = std::fs::remove_file(&probe_path);
+        }
+    }
+
+    let frame_png = cache_dir.join(format!("{}_last_frame.png", tag_prefix));
+    let Ok(cmd) = app_handle.shell().sidecar("ffmpeg") else {
+        return None;
+    };
+    let args = vec![
+        "-hide_banner".to_string(),
+        "-loglevel".to_string(),
+        "error".to_string(),
+        "-y".to_string(),
+        "-ss".to_string(),
+        format!("{:.3}", best_t),
+        "-i".to_string(),
+        video_path.to_string_lossy().to_string(),
+        "-frames:v".to_string(),
+        "1".to_string(),
+        frame_png.to_string_lossy().to_string(),
+    ];
+
+    if let Ok((mut rx, child)) = cmd
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args(args)
+        .spawn()
+    {
+        while let Some(ev) = rx.recv().await {
+            if matches!(ev, CommandEvent::Terminated(_)) {
+                break;
+            }
+        }
+        let _ = child.kill();
+    }
+
+    let ok = std::fs::metadata(&frame_png)
+        .map(|m| m.len() > 256)
+        .unwrap_or(false);
+    if ok {
+        Some((frame_png, if best_luma >= 0.0 { best_luma } else { 80.0 }))
+    } else {
+        let _ = std::fs::remove_file(&frame_png);
+        None
+    }
+}
+
 /// Генерация / Предрендеринг одного бампера (преролла или постролла) с поддержкой:
 /// - авто-длительности по кастомному звуку (`sync_duration_to_audio`),
 /// - кастомного логотипа, заставки, фонового изображения и заднего видео,
@@ -650,8 +809,11 @@ pub async fn render_single_bumper_video(
     // Режим Б: Студийный генератор заставки с настраиваемым задним видео/фоном, логотипом, текстом и звуком
     let mut ffmpeg_args = vec!["-y".to_string()];
 
-    // Вход 0: Задний фон (кастомное видео | кастомная картинка | кадр из видео | градиентная плашка)
+    // Вход 0: Задний фон (кастомное видео | кастомная картинка | последний размытый кадр из видео | градиентная плашка)
     let mut using_video_bg = false;
+    let mut temp_extracted_frame: Option<PathBuf> = None;
+    let mut extracted_luma: Option<f64> = None;
+
     if item.bg_mode == "custom_video" && bg_video_file.is_some() {
         using_video_bg = true;
         ffmpeg_args.push("-stream_loop".to_string());
@@ -661,16 +823,31 @@ pub async fn render_single_bumper_video(
     } else if (item.bg_mode == "custom_image" || bg_image_file.is_some()) && bg_image_file.is_some() {
         ffmpeg_args.push("-loop".to_string());
         ffmpeg_args.push("1".to_string());
+        ffmpeg_args.push("-framerate".to_string());
+        ffmpeg_args.push("30".to_string());
         ffmpeg_args.push("-i".to_string());
         ffmpeg_args.push(bg_image_file.as_ref().unwrap().to_string_lossy().to_string());
     } else if item.bg_mode != "gradient" && source_video_path.exists() {
-        using_video_bg = true;
-        ffmpeg_args.push("-stream_loop".to_string());
-        ffmpeg_args.push("-1".to_string());
-        ffmpeg_args.push("-ss".to_string());
-        ffmpeg_args.push("3.0".to_string());
-        ffmpeg_args.push("-i".to_string());
-        ffmpeg_args.push(source_video_path.to_string_lossy().to_string());
+        if let Some((frame_png, luma)) =
+            extract_best_last_frame_png(source_video_path, &cache_dir, tag_prefix, app_handle).await
+        {
+            ffmpeg_args.push("-loop".to_string());
+            ffmpeg_args.push("1".to_string());
+            ffmpeg_args.push("-framerate".to_string());
+            ffmpeg_args.push("30".to_string());
+            ffmpeg_args.push("-i".to_string());
+            ffmpeg_args.push(frame_png.to_string_lossy().to_string());
+            temp_extracted_frame = Some(frame_png);
+            extracted_luma = Some(luma);
+        } else {
+            using_video_bg = true;
+            ffmpeg_args.push("-stream_loop".to_string());
+            ffmpeg_args.push("-1".to_string());
+            ffmpeg_args.push("-ss".to_string());
+            ffmpeg_args.push("1.0".to_string());
+            ffmpeg_args.push("-i".to_string());
+            ffmpeg_args.push(source_video_path.to_string_lossy().to_string());
+        }
     } else {
         // Студийный цветной фон через lavfi color
         let hex_color = item.bg_color_primary.trim_start_matches('#');
@@ -727,7 +904,7 @@ pub async fn render_single_bumper_video(
     ffmpeg_args.push("-t".to_string());
     ffmpeg_args.push(format!("{:.3}", duration));
 
-    // Сборка цепочки видеоэффектов для заднего видео / изображения
+    // Сборка цепочки видеоэффектов для заднего видео / изображения / последнего кадра
     let mut bg_filters: Vec<String> = Vec::new();
 
     if using_video_bg && (item.bg_video_speed - 1.0).abs() > 0.05 {
@@ -746,35 +923,55 @@ pub async fn render_single_bumper_video(
         target_h
     ));
 
-    // Насыщенность, контраст и затемнение (dim -> brightness shift)
-    let sat = item.bg_saturation.clamp(0.0, 2.0);
+    // Насыщенность, контраст, мягкий подъём гаммы для тёмных кадров и деликатное затемнение (colorchannelmixer вместо сжигающего offset)
+    let is_blur_frame = item.bg_mode == "blur_frame" || extracted_luma.is_some();
+    let base_sat = item.bg_saturation.clamp(0.0, 2.0);
+    let sat = if is_blur_frame { (base_sat * 1.15).clamp(0.0, 2.2) } else { base_sat };
     let cont = item.bg_contrast.clamp(0.5, 1.5);
-    let bright = -(item.bg_dim.clamp(0.0, 0.90) * 0.75);
+    let gamma_lift = match extracted_luma {
+        Some(luma) if luma < 50.0 => 1.32,
+        Some(luma) if luma < 90.0 => 1.15,
+        _ => 1.05,
+    };
     bg_filters.push(format!(
-        "eq=saturation={:.2}:contrast={:.2}:brightness={:.2}",
-        sat, cont, bright
+        "eq=saturation={:.2}:contrast={:.2}:gamma={:.2}",
+        sat, cont, gamma_lift
     ));
 
-    // Размытие фона (Blur)
-    let blur_val = item.bg_blur.clamp(0.0, 40.0) as i32;
+    let dim_val = item.bg_dim.clamp(0.0, 0.90);
+    let dim_gain = if is_blur_frame {
+        (1.0 - dim_val * 0.48).clamp(0.32, 1.0)
+    } else {
+        (1.0 - dim_val * 0.65).clamp(0.20, 1.0)
+    };
+    if (dim_gain - 1.0).abs() > 0.02 {
+        bg_filters.push(format!(
+            "colorchannelmixer=rr={:.2}:gg={:.2}:bb={:.2}",
+            dim_gain, dim_gain, dim_gain
+        ));
+    }
+
+    // Двухпроходное мягкое размытие фона (Blur) — гарантированно заметно в режиме кадра из видео
+    let raw_blur = item.bg_blur.clamp(0.0, 40.0).round() as i32;
+    let blur_val = if is_blur_frame { raw_blur.max(16) } else { raw_blur };
     if blur_val > 0 {
         let luma_r = blur_val.clamp(1, 40);
         let chroma_r = (blur_val / 2).clamp(1, 20);
-        bg_filters.push(format!("boxblur={}:1:{}:1", luma_r, chroma_r));
+        bg_filters.push(format!("boxblur={}:2:{}:2", luma_r, chroma_r));
     }
 
     if item.bg_vignette {
-        bg_filters.push("vignette=PI/4".to_string());
+        bg_filters.push("vignette=PI/6".to_string());
     }
 
     let mut filter_chain = format!("[0:v]{}[bg];", bg_filters.join(","));
     let mut current_v = "bg".to_string();
 
     if let Some(ov_idx) = canvas_overlay_idx {
-        // Наложение pixel-perfect прозрачного PNG оверлея из интерактивного превью
+        // Наложение pixel-perfect прозрачного PNG оверлея из интерактивного превью (принудительный RGBA alpha-compositing)
         let next_v = "with_canvas_ov".to_string();
         filter_chain.push_str(&format!(
-            "[{}:v]scale={}:{}[ov];[{}][ov]overlay=0:0:format=auto[{}];",
+            "[{}:v]format=rgba,scale={}:{}[ov];[{}]format=rgba[bg_rgba];[bg_rgba][ov]overlay=0:0:format=rgb[{}];",
             ov_idx, target_w, target_h, current_v, next_v
         ));
         current_v = next_v;
@@ -787,7 +984,7 @@ pub async fn render_single_bumper_video(
 
             let next_v = "with_logo".to_string();
             filter_chain.push_str(&format!(
-                "[{}:v]scale={}:-1[logo];[{}][logo]overlay=x={}:y={}[{}];",
+                "[{}:v]format=rgba,scale={}:-1[logo];[{}]format=rgba[bgl];[bgl][logo]overlay=x={}:y={}:format=rgb[{}];",
                 l_idx, scale_w, current_v, pos_x, pos_y, next_v
             ));
             current_v = next_v;
@@ -832,7 +1029,7 @@ pub async fn render_single_bumper_video(
     if item.transition == "fade_black" && duration > 0.6 {
         let fade_out_st = (duration - 0.25).max(0.1);
         filter_chain.push_str(&format!(
-            "[{}]fade=t=in:st=0:d=0.20,fade=t=out:st={:.3}:d=0.25,fps=30,setsar=1,format=yuv420p[outv]",
+            "[{}]fade=t=in:st=0:d=0.15,fade=t=out:st={:.3}:d=0.20,fps=30,setsar=1,format=yuv420p[outv]",
             current_v, fade_out_st
         ));
     } else {
@@ -909,6 +1106,10 @@ pub async fn render_single_bumper_video(
         }
     }
     let _ = child.kill();
+
+    if let Some(ref tmp_frame) = temp_extracted_frame {
+        let _ = tokio::fs::remove_file(tmp_frame).await;
+    }
 
     let valid_file = std::fs::metadata(output_path)
         .map(|m| m.len() > 512)

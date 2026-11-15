@@ -993,7 +993,18 @@ pub async fn save_bumper_config(
     app: AppHandle,
     config: crate::bumpers::BumperGlobalConfig,
 ) -> AppResult<()> {
-    crate::bumpers::save_bumper_config_to_disk(&app, &config)
+    crate::bumpers::save_bumper_config_to_disk(&app, &config)?;
+    use tauri::Manager;
+    if let Ok(app_data) = app.path().app_data_dir() {
+        let cache_dir = app_data.join("bumpers_cache").join(&config.active_preset_id);
+        for name in ["preroll_916.mp4", "preroll_169.mp4", "postroll_916.mp4", "postroll_169.mp4"] {
+            let p = cache_dir.join(name);
+            if p.exists() {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Асинхронная команда: Загрузка глобальной конфигурации заставок с диска

@@ -4595,9 +4595,12 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         variants[seed % variants.len()]
     } else if is_mystery_or_artifact {
         let variants = [
-            "Цена чужой маски: почему этот подарок пугает больше врагов",
+            "Цена чужой маски: почему этот артефакт пугает сильнее врагов",
             "Очнулся не там и с опасным трофеем на лице",
-            "Когда реликвия выбирает носителя раньше, чем он успел подумать",
+            "Когда древняя реликвия выбирает носителя без его согласия",
+            "Тайна мастерской масок: какую силу скрывает этот артефакт",
+            "Проклятый дар или спасение: почему за этой маской идёт охота",
+            "Секрет древнего ремесла: когда маска начинает диктовать свои правила",
         ];
         variants[seed % variants.len()]
     } else if is_combat_or_danger {
@@ -4605,6 +4608,9 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             "Секунда до бури: когда переговоры официально зашли в тупик",
             "Никаких прелюдий — сразу в эпицентр схватки на выживание",
             "Момент, когда инстинкт самосохранения окончательно взял выходной",
+            "Проверка боем без права на ошибку: кто выстоит в этой дуэли",
+            "Когда противник пошёл ва-банк и времени на раздумья не осталось",
+            "Опасный манёвр на пределе скорости: ставка выше жизни",
         ];
         variants[seed % variants.len()]
     } else if has_question && has_exclam {
@@ -4612,6 +4618,9 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             "Неудобный вопрос и ответ, после которого повисла тишина",
             "Словесная дуэль на повышенных тонах: кто кого переиграет?",
             "Когда одна реплика переворачивает расстановку сил в сцене",
+            "Дерзкий вызов в лицо: разговор, который едва не перерос в бой",
+            "Обмен колкостями на грани фола: никто не хотел уступать",
+            "Прямой вопрос без дипломатии: когда маски сброшены",
         ];
         variants[seed % variants.len()]
     } else if has_exclam {
@@ -4619,6 +4628,9 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             "Эмоции через край: момент, когда сдерживаться уже невозможно",
             "Когда спокойный разговор за секунду превратился в ультиматум",
             "Точка кипения: сцена, которая меняет правила игры",
+            "Вызов брошен открыто: почему отступать уже слишком поздно",
+            "Накал страстей в кадре: когда каждое слово бьёт в цель",
+            "Никаких компромиссов: момент, где решается судьба героев",
         ];
         variants[seed % variants.len()]
     } else {
@@ -4626,6 +4638,8 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             "Тишина после бури: диалог, в котором каждое слово весит тонну",
             "Тонкий расчёт и двойное дно: о чём на самом деле эта сцена",
             "Когда в короткой паузе читается больше, чем в громких криках",
+            "Затишье перед новым витком сюжета: детали, которые легко упустить",
+            "Неочевидный поворот разговора: что скрывают герои друг от друга",
         ];
         variants[seed % variants.len()]
     };
@@ -5711,6 +5725,7 @@ pub async fn generate_and_save_smm_bundle(
     );
 
     let mut results: Vec<SmmClipMetadata> = Vec::with_capacity(exported_items.len());
+    let mut used_titles: Vec<String> = Vec::with_capacity(exported_items.len());
     let total = exported_items.len();
 
     for (idx, (clip_path, start_s, end_s, clip_type)) in exported_items.iter().enumerate() {
@@ -5732,7 +5747,26 @@ pub async fn generate_and_save_smm_bundle(
         );
 
         match generate_smm_for_single_clip(&input, smm_config, app_handle, cancel_rx.resubscribe()).await {
-            Ok(meta) => {
+            Ok(mut meta) => {
+                // Гарантируем 100% уникальность заголовков внутри одного пакета экспорта
+                if used_titles.iter().any(|t| t == &meta.title) {
+                    for shift in 1..=12 {
+                        let mut alt_input = input.clone();
+                        alt_input.clip_index = input.clip_index + shift;
+                        let (alt_title, alt_desc, _) = build_deterministic_smm_copy(&alt_input);
+                        if !used_titles.iter().any(|t| t == &alt_title) {
+                            meta.title = alt_title;
+                            meta.description = alt_desc;
+                            meta.full_copy_text =
+                                format!("{}\n\n{}\n\n{}", meta.title, meta.description, meta.hashtags);
+                            let txt_content = format_smm_txt_file_content(&meta, &clean_title);
+                            let _ = tokio::fs::write(&meta.txt_path, txt_content.as_bytes()).await;
+                            break;
+                        }
+                    }
+                }
+                used_titles.push(meta.title.clone());
+
                 crate::logger::emit_log(
                     app_handle,
                     "LLM",

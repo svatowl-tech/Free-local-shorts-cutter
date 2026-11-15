@@ -354,7 +354,7 @@
   }
 </script>
 
-<div class="panel p-6 sm:p-8 flex-1 flex flex-col">
+<div class="panel p-6 sm:p-8 flex-1 flex flex-col min-w-0 max-w-full overflow-hidden">
   <div class="panel-title flex items-center gap-2 mb-4">
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>

@@ -442,7 +442,7 @@
   $: totalClipsDuration = $fragmentsStore.reduce((acc, f) => acc + (f.end - f.start), 0);
 </script>
 
-<div class="panel p-6 sm:p-7 flex flex-col gap-5 border border-[rgba(226,226,224,0.15)] bg-[#121216] rounded-[4px]">
+<div class="panel p-6 sm:p-7 flex flex-col gap-5 border border-[rgba(226,226,224,0.15)] bg-[#121216] rounded-[4px] w-full max-w-full min-w-0 overflow-hidden">
   <!-- Верхний заголовок секции разметки -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[rgba(226,226,224,0.1)] pb-4">
     <div class="flex items-center gap-3">

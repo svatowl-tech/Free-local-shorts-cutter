@@ -165,7 +165,8 @@ pub async fn attach_bumpers_if_enabled(
         }
     }
 
-    let global_cfg = match (resolved_cfg, detected_preset_id.as_ref()) {
+    // Синхронизируем недостающие оверлеи/медиа из сохраненной конфигурации на диске (если IPC передал сокращенную копию)
+    let mut global_cfg = match (resolved_cfg, detected_preset_id.as_ref()) {
         (Some(mut cfg), _) => {
             cfg.ensure_populated();
             cfg
@@ -190,6 +191,35 @@ pub async fn attach_bumpers_if_enabled(
         }
     };
 
+    if let Some(disk_cfg) = crate::bumpers::load_saved_bumper_config(app_handle) {
+        for preset in &mut global_cfg.presets {
+            if let Some(disk_preset) = disk_cfg.presets.iter().find(|p| p.id == preset.id) {
+                for (cur_slot, disk_slot) in [
+                    (&mut preset.v916.preroll, &disk_preset.v916.preroll),
+                    (&mut preset.v916.postroll, &disk_preset.v916.postroll),
+                    (&mut preset.v169.preroll, &disk_preset.v169.preroll),
+                    (&mut preset.v169.postroll, &disk_preset.v169.postroll),
+                ] {
+                    if cur_slot.overlay_png_base64.is_none() {
+                        cur_slot.overlay_png_base64 = disk_slot.overlay_png_base64.clone();
+                    }
+                    if cur_slot.logo_image_path.is_none() {
+                        cur_slot.logo_image_path = disk_slot.logo_image_path.clone();
+                    }
+                    if cur_slot.custom_audio_path.is_none() {
+                        cur_slot.custom_audio_path = disk_slot.custom_audio_path.clone();
+                    }
+                    if cur_slot.bg_video_path.is_none() {
+                        cur_slot.bg_video_path = disk_slot.bg_video_path.clone();
+                    }
+                    if cur_slot.bg_image_path.is_none() {
+                        cur_slot.bg_image_path = disk_slot.bg_image_path.clone();
+                    }
+                }
+            }
+        }
+    }
+
     let active_preset = global_cfg
         .presets
         .iter()
@@ -213,12 +243,58 @@ pub async fn attach_bumpers_if_enabled(
     let primary_cat = if is_vertical { &preset.v916 } else { &preset.v169 };
     let fallback_cat = if is_vertical { &preset.v169 } else { &preset.v916 };
 
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut temp_bumper_files: Vec<PathBuf> = Vec::new();
+
     let mut pre_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
     let mut post_bumper: Option<(PathBuf, crate::bumpers::BumperItemConfig)> = None;
 
     // 1. Авто-проверка и прикрепление Преролла (только если преролл включен в пресете)
     if primary_cat.preroll.enabled || fallback_cat.preroll.enabled {
-        if primary_cat.preroll.enabled && pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+        let use_item = if primary_cat.preroll.enabled {
+            &primary_cat.preroll
+        } else {
+            &fallback_cat.preroll
+        };
+        let uses_clip_frame = use_item.mode != "custom_video"
+            && (use_item.bg_mode == "blur_frame" || use_item.bg_mode.trim().is_empty());
+
+        if uses_clip_frame {
+            // Всегда генерируем индивидуальный преролл из размытого последнего кадра конкретного шортса (clip_path)
+            let dynamic_pre = clip_path.with_extension(format!("preroll_{}_{}.tmp.mp4", fmt_tag, ts));
+            let frame_src = if clip_path.exists() { clip_path } else { source_video_path };
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!(
+                    "🎬 Генерация персонального преролла ({}) с размытым последним кадром клипа...",
+                    fmt_tag
+                ),
+            );
+            if let Err(e) = crate::bumpers::render_single_bumper_video(
+                use_item,
+                is_vertical,
+                frame_src,
+                &dynamic_pre,
+                app_handle,
+            )
+            .await
+            {
+                crate::logger::emit_log(
+                    app_handle,
+                    "Bumpers",
+                    "warn",
+                    &format!("Ошибка генерации преролла по кадру клипа: {}", e),
+                );
+            } else if dynamic_pre.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+                temp_bumper_files.push(dynamic_pre.clone());
+                pre_bumper = Some((dynamic_pre, use_item.clone()));
+            }
+        } else if primary_cat.preroll.enabled && pre_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
             crate::logger::emit_log(
                 app_handle,
                 "Bumpers",
@@ -235,7 +311,6 @@ pub async fn attach_bumpers_if_enabled(
             );
             pre_bumper = Some((pre_file_alt, fallback_cat.preroll.clone()));
         } else {
-            let use_item = if primary_cat.preroll.enabled { &primary_cat.preroll } else { &fallback_cat.preroll };
             crate::logger::emit_log(
                 app_handle,
                 "Bumpers",
@@ -245,7 +320,7 @@ pub async fn attach_bumpers_if_enabled(
             if let Err(e) = crate::bumpers::render_single_bumper_video(
                 use_item,
                 is_vertical,
-                source_video_path,
+                clip_path,
                 &pre_file_primary,
                 app_handle,
             ).await {
@@ -258,7 +333,47 @@ pub async fn attach_bumpers_if_enabled(
 
     // 2. Авто-проверка и прикрепление Постролла (только если постролл включен в пресете)
     if primary_cat.postroll.enabled || fallback_cat.postroll.enabled {
-        if primary_cat.postroll.enabled && post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+        let use_item = if primary_cat.postroll.enabled {
+            &primary_cat.postroll
+        } else {
+            &fallback_cat.postroll
+        };
+        let uses_clip_frame = use_item.mode != "custom_video"
+            && (use_item.bg_mode == "blur_frame" || use_item.bg_mode.trim().is_empty());
+
+        if uses_clip_frame {
+            // Всегда генерируем индивидуальный постролл с размытым последним кадром этого шортса
+            let dynamic_post = clip_path.with_extension(format!("postroll_{}_{}.tmp.mp4", fmt_tag, ts));
+            let frame_src = if clip_path.exists() { clip_path } else { source_video_path };
+            crate::logger::emit_log(
+                app_handle,
+                "Bumpers",
+                "info",
+                &format!(
+                    "🎬 Генерация персонального постролла ({}) с размытым последним кадром клипа...",
+                    fmt_tag
+                ),
+            );
+            if let Err(e) = crate::bumpers::render_single_bumper_video(
+                use_item,
+                is_vertical,
+                frame_src,
+                &dynamic_post,
+                app_handle,
+            )
+            .await
+            {
+                crate::logger::emit_log(
+                    app_handle,
+                    "Bumpers",
+                    "warn",
+                    &format!("Ошибка генерации постролла по кадру клипа: {}", e),
+                );
+            } else if dynamic_post.metadata().map(|m| m.len() > 512).unwrap_or(false) {
+                temp_bumper_files.push(dynamic_post.clone());
+                post_bumper = Some((dynamic_post, use_item.clone()));
+            }
+        } else if primary_cat.postroll.enabled && post_file_primary.metadata().map(|m| m.len() > 512).unwrap_or(false) {
             crate::logger::emit_log(
                 app_handle,
                 "Bumpers",
@@ -275,7 +390,6 @@ pub async fn attach_bumpers_if_enabled(
             );
             post_bumper = Some((post_file_alt, fallback_cat.postroll.clone()));
         } else {
-            let use_item = if primary_cat.postroll.enabled { &primary_cat.postroll } else { &fallback_cat.postroll };
             crate::logger::emit_log(
                 app_handle,
                 "Bumpers",
@@ -285,7 +399,7 @@ pub async fn attach_bumpers_if_enabled(
             if let Err(e) = crate::bumpers::render_single_bumper_video(
                 use_item,
                 is_vertical,
-                source_video_path,
+                clip_path,
                 &post_file_primary,
                 app_handle,
             ).await {
@@ -297,16 +411,15 @@ pub async fn attach_bumpers_if_enabled(
     }
 
     if pre_bumper.is_none() && post_bumper.is_none() {
+        for tmp_f in temp_bumper_files {
+            let _ = tokio::fs::remove_file(tmp_f).await;
+        }
         return Ok(());
     }
 
     let (target_w, target_h, clip_dur, clip_has_audio) =
         probe_video_stream_info(clip_path, is_vertical, app_handle).await;
 
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
     let temp_output = clip_path.with_extension(format!("with_bumpers_{}.tmp.mp4", ts));
 
     // Собираем единый граф фильтров с нормализацией разрешения, FPS, SAR, цветового пространства (yuv420p),
@@ -561,6 +674,10 @@ pub async fn attach_bumpers_if_enabled(
             "warn",
             &format!("Не удалось вшить заставки в '{}': {}", clip_path.display(), last_err),
         );
+    }
+
+    for tmp_f in temp_bumper_files {
+        let _ = tokio::fs::remove_file(tmp_f).await;
     }
 
     Ok(())
@@ -1220,14 +1337,166 @@ fn audit_words_match(a: &str, b: &str) -> bool {
     false
 }
 
+/// Проверяет по тексту последней реплики Whisper из самого отрендеренного шортса,
+/// оборвалась ли фраза на полуслове, висячем предлоге/союзе или многоточии обрыва («И не по...», «Когда он пришёл, не...»)
+fn is_short_whisper_ending_cut(text: &str, reference_cue_text: Option<&str>) -> bool {
+    let trimmed = text.trim().trim_end_matches(['"', '»', ')']).trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    if !crate::text_analyzer::has_terminal_punctuation(trimmed)
+        || crate::text_analyzer::has_incomplete_clause(trimmed)
+        || trimmed.ends_with(',')
+        || trimmed.ends_with('—')
+        || trimmed.ends_with('-')
+        || trimmed.ends_with(':')
+        || trimmed.ends_with(';')
+    {
+        return true;
+    }
+
+    // Когда аудио обрывается посреди слова или незаконченной синтаксической группы, Whisper ставит в конце «...» или «…»
+    // (например «И не по...» в Клипе 05 или «Когда он пришёл, не...» в Клипе 02)
+    let ends_with_ellipsis =
+        trimmed.ends_with("...") || trimmed.ends_with("..") || trimmed.ends_with('…');
+    if ends_with_ellipsis {
+        let ref_has_ellipsis = reference_cue_text
+            .map(|r| {
+                let rt = r.trim();
+                rt.ends_with("...") || rt.ends_with('…')
+            })
+            .unwrap_or(false);
+
+        let without_dots = trimmed.trim_end_matches(['.', '…', ' ']);
+        let words = normalize_words_for_short_audit(without_dots);
+        let last_w = words.last().map(|s| s.as_str()).unwrap_or("");
+
+        // Короткий осколок <= 4 слов с многоточием («И не по...»), короткое слово/приставка <= 3 букв перед «...»,
+        // незавершенная клауза перед «...», либо отсутствие многоточия в эталонном SRT проекта — это 100% аудиообрезка!
+        if !ref_has_ellipsis
+            || words.len() <= 4
+            || last_w.chars().count() <= 3
+            || crate::text_analyzer::has_incomplete_clause(without_dots)
+            || matches!(
+                last_w,
+                "по" | "не"
+                    | "ни"
+                    | "на"
+                    | "за"
+                    | "со"
+                    | "во"
+                    | "до"
+                    | "от"
+                    | "из"
+                    | "об"
+                    | "при"
+                    | "про"
+                    | "без"
+                    | "под"
+                    | "над"
+                    | "для"
+                    | "как"
+                    | "что"
+                    | "кто"
+                    | "где"
+                    | "или"
+                    | "но"
+                    | "да"
+                    | "же"
+                    | "бы"
+                    | "то"
+                    | "это"
+                    | "все"
+                    | "я"
+                    | "ты"
+                    | "он"
+                    | "она"
+                    | "мы"
+                    | "вы"
+                    | "они"
+                    | "его"
+                    | "ее"
+                    | "их"
+            )
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Находит оптимальную точку разреза (индекс 10-мс фрейма) в интервале `[min_idx ..= max_idx]`:
+/// 1) Если есть чистая речевая пауза >= 140 мс (`14` фреймов подряд без речи и ниже `valley_db + 1.5`),
+///    возвращает точку через 80 мс после окончания последнего речевого сэмпла (строго до начала следующей фразы).
+/// 2) Если играет громкая фоновая музыка (BGM), находит центр самого тихого 100-мс окна (`10` фреймов)
+///    с минимальным числом речевых фреймов и минимальной энергией RMS dB.
+fn find_best_cut_index_in_frames(
+    nb_frames: &[ShortPcmFrame],
+    nb_valley_db: f32,
+    scan_start_idx: usize,
+    min_idx: usize,
+    max_idx: usize,
+) -> usize {
+    if nb_frames.is_empty() {
+        return min_idx;
+    }
+    let last_valid = nb_frames.len().saturating_sub(1);
+    let lo = min_idx.min(last_valid);
+    let hi = max_idx.min(last_valid).max(lo);
+    let start_k = scan_start_idx.min(lo);
+
+    let mut quiet_streak = 0usize;
+    for k in start_k..=hi {
+        let f = nb_frames[k];
+        if !f.is_speech && f.rms_db <= nb_valley_db + 1.5 {
+            quiet_streak += 1;
+            if quiet_streak >= 14 && k >= lo {
+                let speech_done_idx = k.saturating_sub(quiet_streak);
+                return (speech_done_idx + 8).clamp(lo, k.saturating_sub(2).max(lo));
+            }
+        } else {
+            quiet_streak = 0;
+        }
+    }
+
+    // Если из-за громкой музыки (BGM) порог `nb_valley_db + 1.5` не пробивается —
+    // ищем самое тихое 100-мс окно (10 фреймов) внутри `[lo ..= hi]` и режем ровно по его центру!
+    let win_len = 10usize.min(hi.saturating_sub(lo) + 1).max(1);
+    let mut best_center = lo;
+    let mut best_score = f32::MAX;
+
+    let max_w_start = hi.saturating_sub(win_len - 1).max(lo);
+    for w_start in lo..=max_w_start {
+        let w_end = (w_start + win_len).min(hi + 1);
+        let mut speech_cnt = 0usize;
+        let mut sum_db = 0.0f32;
+        for f in &nb_frames[w_start..w_end] {
+            if f.is_speech {
+                speech_cnt += 1;
+            }
+            sum_db += f.rms_db;
+        }
+        let avg_db = sum_db / ((w_end - w_start).max(1) as f32);
+        let score = (speech_cnt as f32) * 8.0 + avg_db;
+        if score < best_score {
+            best_score = score;
+            best_center = w_start + (w_end - w_start) / 2;
+        }
+    }
+
+    best_center.clamp(lo, hi)
+}
+
 /// ФИНАЛЬНАЯ ПРОВЕРКА ГОТОВОГО ШОРТСА ЧЕРЕЗ WHISPER ASR И 10-МС АНАЛИЗ FFMPEG PCM:
 /// 1. Извлекает аудио из самого готового файла шортса (`cropped_short_path`) и прогоняет его через `whisper.cpp`.
 /// 2. Проверяет, все ли слова стартовой и финальной реплики распознались целиком, нет ли обрыва на полуслове,
-///    незакрытой запятой/союза, либо случайного захвата первых 1–4 слов следующей фразы, обрывающейся на конце ролика.
-/// 3. Параллельно проверяет 10-мс профиль звуковой энергии FFmpeg на границах `start_sec` и `end_sec` в окрестности оригинала
-///    (включая защиту от ложного среза на смычке взрывных согласных `'г'`, `'к'`, `'п'`, `'т'`, `'в'` внутри слова!).
+///    многоточия обрыва («И не по...»), незакрытой запятой/союза, либо случайного захвата начала следующей фразы.
+/// 3. Параллельно проверяет 10-мс профиль звуковой энергии FFmpeg на границах `start_sec` и `end_sec` в окрестности оригинала.
 /// 4. Если обнаружена обрезка слова или фразы — вычисляет исправленные `[repaired_start, repaired_dur]`,
-///    пересоздает синхронизированные субтитры, перерендеривает шортс и повторно проверяет результат!
+///    пересоздает синхронизированные субтитры, перерендеривает шортс и выполняет контрольную верификацию Whisper
+///    (со вторым контуром авто-доводки, если на стыке под фоновую музыку зацепился хвост следующей реплики)!
 #[allow(clippy::too_many_arguments)]
 async fn verify_and_repair_short_audio_with_whisper(
     source_video_path: &Path,
@@ -1285,9 +1554,9 @@ async fn verify_and_repair_short_audio_with_whisper(
 
     let end_sec = start_sec + duration_sec;
 
-    // Извлекаем окрестность из исходного видео: [start_sec - 1.8s .. end_sec + 4.5s] для точного анализа пограничных слов и пауз
+    // Извлекаем окрестность из исходного видео: [start_sec - 1.8s .. end_sec + 6.5s] для точного анализа пограничных слов и пауз
     let nb_start = (start_sec - 1.80).max(0.0);
-    let nb_dur = (end_sec + 4.50 - nb_start).max(duration_sec + 2.0);
+    let nb_dur = (end_sec + 6.50 - nb_start).max(duration_sec + 3.0);
     let nb_analysis =
         extract_wav_and_10ms_frames(source_video_path, Some(nb_start), Some(nb_dur), &nb_wav, app_handle).await;
 
@@ -1296,6 +1565,24 @@ async fn verify_and_repair_short_audio_with_whisper(
     let mut need_end_shift = 0.0f64;
     let mut prefer_trim_leaked_tail = false;
     let mut leaked_tail_pause_sec: Option<f64> = None;
+    let mut extend_into_next_cue = false;
+    let mut last_expected_idx_opt: Option<usize> = None;
+
+    // Находим реплики проекта, которые существенно (>= 42% своей длительности или >= 0.85с) входят в интервал шортса.
+    // Это исключает ложное принятие следующей реплики, задетой самым краем на 0.15–0.25с (как в Клипе 02), за целевую финальную!
+    let active_cues: Vec<(usize, &crate::text_analyzer::SubtitleFragment)> = project_cues
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| {
+            let overlap = (c.end.min(end_sec) - c.start.max(start_sec)).max(0.0);
+            let cue_dur = (c.end - c.start).max(0.10);
+            overlap >= 0.85 || overlap >= cue_dur * 0.42
+        })
+        .collect();
+
+    if let Some(&(last_idx, _)) = active_cues.last() {
+        last_expected_idx_opt = Some(last_idx);
+    }
 
     // --- АНАЛИЗ WHISPER ASR ГОТОВОГО ШОРТСА ---
     let short_all_words: Vec<String> = short_whisper_cues
@@ -1305,32 +1592,19 @@ async fn verify_and_repair_short_audio_with_whisper(
 
     if let Some(last_short_cue) = short_whisper_cues.last() {
         let last_txt = last_short_cue.text.trim();
-        // Если последняя распознанная Whisper фраза внутри самого шортса обрывается без точки/!/? или на висячем союзе/предлоге/запятой
-        let ends_near_clip_edge = last_short_cue.end >= duration_sec - 1.65;
-        if ends_near_clip_edge
-            && (!crate::text_analyzer::has_terminal_punctuation(last_txt)
-                || crate::text_analyzer::has_incomplete_clause(last_txt)
-                || last_txt.ends_with(',')
-                || last_txt.ends_with('—')
-                || last_txt.ends_with('-'))
-        {
+        let ref_txt = active_cues.last().map(|(_, c)| c.text.as_str());
+        let ends_near_clip_edge = last_short_cue.end >= duration_sec - 1.85;
+        if ends_near_clip_edge && is_short_whisper_ending_cut(last_txt, ref_txt) {
             cut_reasons.push(format!(
-                "Whisper на готовом шортсе зафиксировал незавершенную фразу в конце: «{}»",
+                "Whisper на готовом шортсе зафиксировал незавершенную/обрезанную фразу в конце: «{}»",
                 last_txt
             ));
-            need_end_shift = need_end_shift.max(1.85);
+            need_end_shift = need_end_shift.max(1.65);
         }
     }
 
     // Сверяем слова последней и следующей реплики из SRT проекта со словами, которые реально услышал Whisper в готовом шортсе
     if !project_cues.is_empty() && !short_all_words.is_empty() {
-        // Находим последнюю реплику, которая должна полностью прозвучать в шортсе
-        let active_cues: Vec<(usize, &crate::text_analyzer::SubtitleFragment)> = project_cues
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.end > start_sec + 0.25 && c.start < end_sec - 0.15)
-            .collect();
-
         if let Some(&(first_idx, first_expected)) = active_cues.first() {
             let expected_first_words = normalize_words_for_short_audit(&first_expected.text);
             let head_window: Vec<&String> = short_all_words.iter().take(10).collect();
@@ -1371,34 +1645,31 @@ async fn verify_and_repair_short_audio_with_whisper(
                         last_w,
                         last_expected.text.trim()
                     ));
-                    let deficit = (last_expected.end - end_sec).max(0.0) + 0.85;
-                    need_end_shift = need_end_shift.max(deficit.clamp(0.75, 3.20));
+                    let deficit = (last_expected.end - end_sec).max(0.0) + 1.15;
+                    need_end_shift = need_end_shift.max(deficit.clamp(0.85, 2.20));
                 }
             }
 
             // 2) Если целевая финальная реплика в проекте сама заканчивалась запятой или не имела финальной точки
-            // (например «Но ведь когда-то сам Гоон был всеобщим героем,» перед «чьим мужеством и силой восхищались все.»)
             if !crate::text_analyzer::has_terminal_punctuation(&last_expected.text)
                 || crate::text_analyzer::has_incomplete_clause(&last_expected.text)
             {
                 if last_idx + 1 < project_cues.len() {
                     let next_cue = &project_cues[last_idx + 1];
-                    let ext_needed = (next_cue.end - end_sec + 0.20).clamp(0.80, 4.00);
+                    let ext_needed = (next_cue.end - end_sec + 0.25).clamp(0.85, 4.80);
                     cut_reasons.push(format!(
                         "Финальная реплика шортса синтаксически переходит в «{}» (требуется договорить фразу до конца)",
                         next_cue.text.trim()
                     ));
+                    extend_into_next_cue = true;
                     need_end_shift = need_end_shift.max(ext_needed);
                 }
             } else if last_idx + 1 < project_cues.len() {
-                // 3) Проверяем обратную ситуацию: когда таймкод `next_cue.start` в SRT немного запаздывал,
-                // а в реальном аудио диктор уже начал произносить следующую фразу (`next_cue`, например «Но ведь когда-то сам Гоон был всеобщим героем...»),
-                // и шортс оборвал её прямо на слове «героем»!
+                // 3) Проверяем обратную ситуацию: в конец шортса попало начало следующей фразы (`next_cue`), но не вся она целиком!
                 let next_cue = &project_cues[last_idx + 1];
                 let next_words = normalize_words_for_short_audit(&next_cue.text);
                 if next_words.len() >= 2 && (next_cue.start - end_sec) <= 4.2 {
                     let prev_words_norm = normalize_words_for_short_audit(&last_expected.text);
-                    // Проверяем, появились ли в самом конце `short_all_words` (после слов `last_expected`) слова из `next_cue`!
                     let mut leaked_match_count = 0usize;
                     let mut last_matched_next_word = String::new();
                     for nw in next_words.iter().take(7) {
@@ -1411,7 +1682,6 @@ async fn verify_and_repair_short_audio_with_whisper(
                         }
                     }
 
-                    // Если в конец шортса попала часть следующей фразы `next_cue`, но НЕ вся `next_cue` целиком!
                     let next_last_w = next_words.last().cloned().unwrap_or_default();
                     let next_completed = !next_last_w.is_empty()
                         && tail_window
@@ -1426,21 +1696,21 @@ async fn verify_and_repair_short_audio_with_whisper(
                             next_cue.text.trim(),
                             last_matched_next_word
                         ));
-                        // Если зацепилось всего 1 короткое слово после паузы — лучше аккуратно подрезать до паузы перед ним;
-                        // если же диктор уже произнес 2+ слова новой мысли («Но ведь когда-то сам Гоон был всеобщим героем») —
-                        // обязательно даем ему договорить мысль до точки!
-                        if leaked_match_count == 1 && (end_sec - last_expected.end) <= 0.75 {
+                        // Если все слова `last_expected` уже прозвучали, а из `next_cue` зацепилось лишь 1–2 слова на самом хвосте (`<= 0.90с`),
+                        // приоритет — аккуратно подрезать по паузе ПЕРЕД `next_cue`; иначе — договорить `next_cue` целиком!
+                        if leaked_match_count <= 2 && (end_sec - last_expected.end) <= 0.95 {
                             prefer_trim_leaked_tail = true;
                         } else {
-                            let mut target_end = next_cue.end + 0.18;
-                            if !crate::text_analyzer::has_terminal_punctuation(&next_cue.text)
-                                && last_idx + 2 < project_cues.len()
-                            {
-                                target_end = project_cues[last_idx + 2].end + 0.18;
-                            }
-                            let ext = (target_end - end_sec).clamp(0.85, 4.20);
-                            need_end_shift = need_end_shift.max(ext);
+                            extend_into_next_cue = true;
                         }
+                        let mut target_end = next_cue.end + 0.25;
+                        if !crate::text_analyzer::has_terminal_punctuation(&next_cue.text)
+                            && last_idx + 2 < project_cues.len()
+                        {
+                            target_end = project_cues[last_idx + 2].end + 0.25;
+                        }
+                        let ext = (target_end - end_sec).clamp(0.95, 5.20);
+                        need_end_shift = need_end_shift.max(ext);
                     }
                 }
             }
@@ -1460,7 +1730,6 @@ async fn verify_and_repair_short_audio_with_whisper(
         let active_at_start = (start_win_lo..=start_win_hi)
             .filter(|&k| nb_frames[k].is_speech && nb_frames[k].rms_db > nb_valley_db + 3.0)
             .count();
-        // Если прямо перед точкой старта и сразу после неё идет плотная голосовая волна (>= 40мс), значит первое слово разрезано!
         let speech_before_start = (rel_start_idx.saturating_sub(8)..rel_start_idx)
             .filter(|&k| nb_frames[k].is_speech)
             .count();
@@ -1478,10 +1747,7 @@ async fn verify_and_repair_short_audio_with_whisper(
             need_start_shift = need_start_shift.min(-0.35);
         }
 
-        // 2. Проверяем точку конца `rel_end_idx`:
-        // Учитываем, что внутри слова (например перед «г» в «героем» или «в» в «воле») бывает смычка согласного до 80-100 мс!
-        // Поэтому если речь активна в последних 120 мс перед `end_sec` И продолжается в первых 140 мс после `end_sec`,
-        // значит `end_sec` гарантированно разрезал слово или фразу!
+        // 2. Проверяем точку конца `rel_end_idx`
         let speech_before_end = (rel_end_idx.saturating_sub(12)..rel_end_idx)
             .filter(|&k| nb_frames[k].is_speech && nb_frames[k].rms_db > nb_valley_db + 2.5)
             .count();
@@ -1490,7 +1756,6 @@ async fn verify_and_repair_short_audio_with_whisper(
             .count();
         let boundary_rms = nb_frames[rel_end_idx].rms_db;
 
-        // Также проверяем последние 120 мс самого отрендеренного шортса (перед 40мс afade=out, т.е. фреймы len-14 .. len-4)
         let short_len = short_frames.len();
         let short_tail_active = if short_len > 16 {
             (short_len.saturating_sub(14)..short_len.saturating_sub(4))
@@ -1509,23 +1774,22 @@ async fn verify_and_repair_short_audio_with_whisper(
                 end_sec, speech_before_end, speech_after_end
             ));
 
-            // Проверим, не была ли прямо перед `rel_end_idx` (в пределах 0.85с назад) длинная чистая пауза >= 180 мс (18 фреймов),
-            // после которой диктор только начал говорить новую фразу и мы зацепили её первые 0.2–0.7с!
-            let lookback_limit = rel_end_idx.saturating_sub(85);
-            for k in (lookback_limit + 18..rel_end_idx.saturating_sub(4)).rev() {
-                let quiet_180ms = (0..18).all(|off| {
+            // Ищем чистую паузу >= 150 мс в пределах 0.90с перед `rel_end_idx` (если мы случайно зацепили первые 0.15–0.75с следующей фразы)
+            let lookback_limit = rel_end_idx.saturating_sub(90);
+            for k in (lookback_limit + 15..rel_end_idx.saturating_sub(4)).rev() {
+                let quiet_150ms = (0..15).all(|off| {
                     let idx_q = k.saturating_sub(off);
-                    !nb_frames[idx_q].is_speech && nb_frames[idx_q].rms_db <= nb_valley_db + 1.5
+                    !nb_frames[idx_q].is_speech && nb_frames[idx_q].rms_db <= nb_valley_db + 1.6
                 });
                 let leaked_frames = rel_end_idx.saturating_sub(k);
-                if quiet_180ms && (12..=70).contains(&leaked_frames) {
-                    leaked_tail_pause_sec = Some(nb_start + ((k.saturating_sub(3)) as f64) * 0.01);
+                if quiet_150ms && (10..=75).contains(&leaked_frames) {
+                    leaked_tail_pause_sec = Some(nb_start + ((k.saturating_sub(4)) as f64) * 0.01);
                     break;
                 }
             }
 
             if need_end_shift < 0.45 {
-                need_end_shift = 1.60;
+                need_end_shift = 1.45;
             }
         }
     }
@@ -1571,7 +1835,6 @@ async fn verify_and_repair_short_audio_with_whisper(
                     !nb_frames[idx_q].is_speech && nb_frames[idx_q].rms_db <= nb_valley_db + 1.4
                 });
                 if quiet_120ms {
-                    // Ставим точку старта в тихой впадине за 80 мс до начала голосового импульса
                     target_start_idx = k.saturating_sub(4);
                     break;
                 }
@@ -1580,49 +1843,74 @@ async fn verify_and_repair_short_audio_with_whisper(
         }
 
         // 2. Исправление конца `repaired_end`:
-        // Вариант А: если зацепился короткий фальш-хвост следующей реплики после длинной паузы >= 180 мс,
-        // и до этой паузы все фразы клипа грамматически завершены — аккуратно подрезаем по этой паузе!
-        let min_safe_clip_end = (repaired_start + 8.0).max(end_sec - 0.85);
+        // Вариант А: если зацепился короткий фальш-хвост следующей реплики после паузы,
+        // и все слова целевой финальной реплики `last_expected` уже прозвучали — подрезаем по этой паузе!
+        let min_safe_clip_end = (repaired_start + 8.0).max(end_sec - 0.90);
         if let Some(pause_sec) = leaked_tail_pause_sec {
             if prefer_trim_leaked_tail && pause_sec >= min_safe_clip_end {
                 repaired_end = pause_sec;
             }
         }
 
-        // Вариант Б (основной): продлеваем конец клипа вперёд до полного завершения обрезанного слова и текущей фразы
-        // (до первой устойчивой межфразовой паузы >= 160 мс после `min_required_end`, плюс 120 мс мягкого запаса под afade=out)!
+        // Вариант Б (основной): продлеваем конец клипа вперёд до завершения обрезанного слова/фразы.
+        // ВАЖНО: Если мы договариваем текущую реплику `last_expected` (НЕ переходя в `next_cue`),
+        // жестко ограничиваем окно поиска паузы границей начала `next_cue`, чтобы на громкой музыке (BGM)
+        // не проскочить межфразовый вдох и не разрезать следующую реплику посередине (как «И не по...»)!
         if (repaired_end - end_sec).abs() < 0.03 {
-            let min_forward_sec = (end_sec + need_end_shift.max(0.45) * 0.45).min(nb_start + nb_dur - 0.25);
-            let min_forward_idx = (((min_forward_sec - nb_start) * 100.0).round() as isize)
-                .clamp(rel_end_idx as isize + 15, (nb_frames.len().saturating_sub(1)) as isize)
-                as usize;
-            let max_forward_idx = nb_frames.len().saturating_sub(1);
-
-            let mut quiet_streak = 0usize;
-            let mut found_idx: Option<usize> = None;
-            let mut quietest_idx = min_forward_idx;
-            let mut quietest_db = nb_frames[min_forward_idx].rms_db;
-
-            for k in (rel_end_idx + 8)..=max_forward_idx {
-                let f = nb_frames[k];
-                if k >= min_forward_idx && f.rms_db < quietest_db {
-                    quietest_db = f.rms_db;
-                    quietest_idx = k;
-                }
-                if !f.is_speech && f.rms_db <= nb_valley_db + 1.4 {
-                    quiet_streak += 1;
-                    if quiet_streak >= 16 && k >= min_forward_idx {
-                        // Речь закончилась `quiet_streak` фреймов назад; оставляем +12 фреймов (120 мс) запаса после последнего звука!
-                        let speech_done_idx = k.saturating_sub(quiet_streak);
-                        found_idx = Some((speech_done_idx + 12).min(k));
-                        break;
+            let max_nb_sec = nb_start + nb_dur - 0.15;
+            let (min_forward_sec, max_forward_sec) = if let Some(last_idx) = last_expected_idx_opt {
+                let last_cue = &project_cues[last_idx];
+                let next_cue_opt = project_cues.get(last_idx + 1);
+                if extend_into_next_cue {
+                    if let Some(nc) = next_cue_opt {
+                        let mut target_end = nc.end;
+                        if !crate::text_analyzer::has_terminal_punctuation(&nc.text) {
+                            if let Some(nc2) = project_cues.get(last_idx + 2) {
+                                target_end = nc2.end;
+                            }
+                        }
+                        let lo_s = (target_end - 0.25).max(end_sec + 0.85).min(max_nb_sec);
+                        let hi_s = (target_end + 1.35).max(lo_s + 0.40).min(max_nb_sec);
+                        (lo_s, hi_s)
+                    } else {
+                        let lo_s = (end_sec + 0.65).min(max_nb_sec);
+                        let hi_s = (end_sec + need_end_shift.max(1.50)).min(max_nb_sec);
+                        (lo_s, hi_s)
                     }
                 } else {
-                    quiet_streak = 0;
+                    // Договариваем ТОЛЬКО `last_cue` и останавливаемся в межфразовой впадине перед `next_cue`!
+                    let expected_end = last_cue.end.max(end_sec + 0.55);
+                    let lo_s = (expected_end - 0.15).max(end_sec + 0.45).min(max_nb_sec);
+                    let hi_bound = if let Some(nc) = next_cue_opt {
+                        // Если в SRT `last_cue.end` был занижен (как 824.83с при реальном окончании слова «подлец» в 826.35с),
+                        // даем до +1.65с от `end_sec`, но не глубже чем `nc.start + 1.55с`
+                        (nc.start + 0.35).max(lo_s + 0.85).min(end_sec + 1.75)
+                    } else {
+                        expected_end + 1.50
+                    };
+                    let hi_s = hi_bound.max(lo_s + 0.35).min(max_nb_sec);
+                    (lo_s, hi_s)
                 }
-            }
+            } else {
+                let lo_s = (end_sec + 0.55).min(max_nb_sec);
+                let hi_s = (end_sec + 1.85).min(max_nb_sec);
+                (lo_s, hi_s)
+            };
 
-            let chosen_idx = found_idx.unwrap_or_else(|| (quietest_idx + 8).min(max_forward_idx));
+            let min_forward_idx = (((min_forward_sec - nb_start) * 100.0).round() as isize)
+                .clamp(rel_end_idx as isize + 10, (nb_frames.len().saturating_sub(1)) as isize)
+                as usize;
+            let max_forward_idx = (((max_forward_sec - nb_start) * 100.0).round() as isize)
+                .clamp(min_forward_idx as isize, (nb_frames.len().saturating_sub(1)) as isize)
+                as usize;
+
+            let chosen_idx = find_best_cut_index_in_frames(
+                nb_frames,
+                *nb_valley_db,
+                rel_end_idx + 8,
+                min_forward_idx,
+                max_forward_idx,
+            );
             repaired_end = nb_start + (chosen_idx as f64) * 0.01;
         }
     } else {
@@ -1630,7 +1918,7 @@ async fn verify_and_repair_short_audio_with_whisper(
         repaired_end = end_sec + need_end_shift.max(0.85);
     }
 
-    let repaired_dur = (repaired_end - repaired_start).max(5.0);
+    let mut repaired_dur = (repaired_end - repaired_start).max(5.0);
     if (repaired_start - start_sec).abs() < 0.06 && (repaired_dur - duration_sec).abs() < 0.06 {
         let _ = tokio::fs::remove_dir_all(&temp_dir).await;
         return None;
@@ -1654,7 +1942,7 @@ async fn verify_and_repair_short_audio_with_whisper(
     );
 
     // 4. Пересоздаем синхронизированные субтитры для обновленного интервала `[repaired_start .. repaired_start + repaired_dur]`
-    let new_temp_srt = if let Some(sp) = project_srt_path {
+    let mut new_temp_srt = if let Some(sp) = project_srt_path {
         if sp.exists() {
             create_clip_srt(sp, repaired_start, repaired_dur).await
         } else {
@@ -1676,7 +1964,7 @@ async fn verify_and_repair_short_audio_with_whisper(
         config,
         crop_expr,
         app_handle,
-        cancel_rx,
+        cancel_rx.resubscribe(),
     )
     .await;
 
@@ -1695,9 +1983,9 @@ async fn verify_and_repair_short_audio_with_whisper(
             let _ = tokio::fs::remove_file(&repaired_video_tmp).await;
         }
 
-        // Контрольный прогон Whisper по уже исправленному шортсу для подтверждения в логах
+        // Контрольный прогон Whisper по уже исправленному шортсу для подтверждения полноты финальной фразы!
         let recheck_wav = temp_dir.join("rechecked_short.wav");
-        let recheck_summary = if extract_wav_and_10ms_frames(
+        let mut recheck_cues = if extract_wav_and_10ms_frames(
             cropped_short_path,
             None,
             None,
@@ -1707,17 +1995,185 @@ async fn verify_and_repair_short_audio_with_whisper(
         .await
         .is_some()
         {
-            let recheck_cues =
-                crate::whisper::transcribe_short_wav_with_whisper(&recheck_wav, app_handle)
-                    .await
-                    .unwrap_or_default();
-            recheck_cues
-                .last()
-                .map(|c| c.text.trim().to_string())
-                .unwrap_or_else(|| "фраза восстановлена".to_string())
+            crate::whisper::transcribe_short_wav_with_whisper(&recheck_wav, app_handle)
+                .await
+                .unwrap_or_default()
         } else {
-            "фраза восстановлена".to_string()
+            Vec::new()
         };
+
+        // --- ВТОРОЙ КОНТУР ДОВОДКИ (ЕСЛИ ПРИ ПЕРВОМ ПРОДЛЕНИИ ПОД ГРОМКУЮ МУЗЫКУ ЗАЦЕПИЛСЯ КУСОК СЛЕДУЮЩЕЙ ФРАЗЫ ВРОДЕ «И не по...») ---
+        let recheck_still_cut = recheck_cues
+            .last()
+            .map(|c| is_short_whisper_ending_cut(&c.text, None))
+            .unwrap_or(false);
+
+        if recheck_still_cut {
+            let mut repaired_end_v2: Option<f64> = None;
+
+            // Случай 1: Предпоследняя распознанная реплика в исправленном шортсе полностью завершена (например «...как последний подлец.»),
+            // а последняя реплика — короткий оборванный зачин следующей мысли (<= 5 слов, например «И не по...» или «Не, не злитесь!»).
+            // Тогда у нас есть ТОЧНЫЙ таймкод от самого Whisper внутри шортса, где закончилась полная фраза (`prev_rc.end`) и начался лишний хвост (`last_rc.start`)!
+            if recheck_cues.len() >= 2 {
+                let prev_rc = &recheck_cues[recheck_cues.len() - 2];
+                let last_rc = &recheck_cues[recheck_cues.len() - 1];
+                let last_rc_words = normalize_words_for_short_audit(&last_rc.text).len();
+                let prev_end_abs = repaired_start + prev_rc.end;
+                let last_start_abs = repaired_start + last_rc.start;
+
+                if !is_short_whisper_ending_cut(&prev_rc.text, None)
+                    && last_rc_words <= 5
+                    && prev_end_abs >= repaired_start + 5.5
+                {
+                    if let Some((nb_frames, nb_valley_db)) = nb_analysis.as_ref() {
+                        let lo_sec = (prev_end_abs - 0.18).max(repaired_start + 5.0);
+                        let hi_sec = (last_start_abs + 0.10).max(lo_sec + 0.15);
+                        let lo_idx = (((lo_sec - nb_start) * 100.0).round() as isize)
+                            .clamp(0, (nb_frames.len().saturating_sub(1)) as isize)
+                            as usize;
+                        let hi_idx = (((hi_sec - nb_start) * 100.0).round() as isize)
+                            .clamp(lo_idx as isize, (nb_frames.len().saturating_sub(1)) as isize)
+                            as usize;
+                        let cut_idx = find_best_cut_index_in_frames(
+                            nb_frames,
+                            *nb_valley_db,
+                            lo_idx,
+                            lo_idx,
+                            hi_idx,
+                        );
+                        repaired_end_v2 = Some(nb_start + (cut_idx as f64) * 0.01);
+                    } else {
+                        repaired_end_v2 = Some((prev_end_abs + 0.12).min(last_start_abs + 0.05));
+                    }
+                }
+            }
+
+            // Случай 2: Если подрезать перед хвостом нельзя (это одна длинная фраза), продлеваем до конца следующей реплики в SRT проекта!
+            if repaired_end_v2.is_none() {
+                if let Some((nb_frames, nb_valley_db)) = nb_analysis.as_ref() {
+                    let max_nb_sec = nb_start + nb_dur - 0.15;
+                    let target_sec = project_cues
+                        .iter()
+                        .find(|c| c.end > repaired_end + 0.25 && c.start < repaired_end + 1.20)
+                        .map(|c| (c.end + 0.30).min(max_nb_sec))
+                        .unwrap_or_else(|| (repaired_end + 2.10).min(max_nb_sec));
+                    if target_sec > repaired_end + 0.35 {
+                        let lo_idx = ((((target_sec - 0.30) - nb_start) * 100.0).round() as isize)
+                            .clamp(0, (nb_frames.len().saturating_sub(1)) as isize)
+                            as usize;
+                        let hi_idx = ((((target_sec + 0.90).min(max_nb_sec) - nb_start) * 100.0)
+                            .round() as isize)
+                            .clamp(lo_idx as isize, (nb_frames.len().saturating_sub(1)) as isize)
+                            as usize;
+                        let cut_idx = find_best_cut_index_in_frames(
+                            nb_frames,
+                            *nb_valley_db,
+                            lo_idx,
+                            lo_idx,
+                            hi_idx,
+                        );
+                        repaired_end_v2 = Some(nb_start + (cut_idx as f64) * 0.01);
+                    }
+                }
+            }
+
+            if let Some(end_v2) = repaired_end_v2 {
+                let dur_v2 = (end_v2 - repaired_start).max(5.0);
+                if (dur_v2 - repaired_dur).abs() >= 0.12 {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "Render",
+                        "info",
+                        &format!(
+                            "⟳ [Точная доводка Whisper Pass 2] Устранение остаточного хвоста на стыке фраз в '{}': [{:.2}с - {:.2}с] -> [{:.2}с - {:.2}с]...",
+                            short_name,
+                            repaired_start,
+                            repaired_start + repaired_dur,
+                            repaired_start,
+                            repaired_start + dur_v2
+                        ),
+                    );
+
+                    let srt_v2 = if let Some(sp) = project_srt_path {
+                        if sp.exists() {
+                            create_clip_srt(sp, repaired_start, dur_v2).await
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    let tmp_v2 =
+                        cropped_short_path.with_extension(format!("audio_repaired_v2_{}.tmp.mp4", ts));
+                    let res_v2 = execute_ffmpeg_clip_render(
+                        source_video_path,
+                        repaired_start,
+                        dur_v2,
+                        &tmp_v2,
+                        srt_v2.as_deref(),
+                        config,
+                        crop_expr,
+                        app_handle,
+                        cancel_rx,
+                    )
+                    .await;
+
+                    if res_v2.is_ok()
+                        && std::fs::metadata(&tmp_v2)
+                            .map(|m| m.len() > 1024)
+                            .unwrap_or(false)
+                    {
+                        let _ = tokio::fs::remove_file(cropped_short_path).await;
+                        if tokio::fs::rename(&tmp_v2, cropped_short_path)
+                            .await
+                            .is_err()
+                        {
+                            let _ = tokio::fs::copy(&tmp_v2, cropped_short_path).await;
+                            let _ = tokio::fs::remove_file(&tmp_v2).await;
+                        }
+                        if let Some(ref old_s) = new_temp_srt {
+                            let _ = tokio::fs::remove_file(old_s).await;
+                        }
+                        repaired_dur = dur_v2;
+                        new_temp_srt = srt_v2;
+
+                        let recheck_wav_v2 = temp_dir.join("rechecked_short_v2.wav");
+                        if extract_wav_and_10ms_frames(
+                            cropped_short_path,
+                            None,
+                            None,
+                            &recheck_wav_v2,
+                            app_handle,
+                        )
+                        .await
+                        .is_some()
+                        {
+                            if let Ok(cues_v2) = crate::whisper::transcribe_short_wav_with_whisper(
+                                &recheck_wav_v2,
+                                app_handle,
+                            )
+                            .await
+                            {
+                                if !cues_v2.is_empty() {
+                                    recheck_cues = cues_v2;
+                                }
+                            }
+                        }
+                    } else {
+                        let _ = tokio::fs::remove_file(&tmp_v2).await;
+                        if let Some(ref s2) = srt_v2 {
+                            let _ = tokio::fs::remove_file(s2).await;
+                        }
+                    }
+                }
+            }
+        }
+
+        let recheck_summary = recheck_cues
+            .last()
+            .map(|c| c.text.trim().to_string())
+            .unwrap_or_else(|| "фраза восстановлена".to_string());
 
         crate::logger::emit_log(
             app_handle,

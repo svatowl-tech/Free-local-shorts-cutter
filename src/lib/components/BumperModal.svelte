@@ -275,11 +275,21 @@
   }
 
   function buildBgFilterCss(item: BumperItemConfig): string {
-    const blur = item.bg_blur ?? 0;
-    const sat = (item.bg_saturation ?? 1.0) * 100;
+    const rawBlur = item.bg_blur ?? 12;
+    const blur = item.bg_mode === 'blur_frame' ? Math.max(14, rawBlur) : rawBlur;
+    const sat = (item.bg_saturation ?? 1.0) * (item.bg_mode === 'blur_frame' ? 115 : 100);
     const cont = (item.bg_contrast ?? 1.0) * 100;
-    const bright = Math.max(10, Math.round((1 - (item.bg_dim ?? 0.35) * 0.85) * 100));
-    return `blur(${Math.round(blur * 0.45)}px) saturate(${Math.round(sat)}%) contrast(${Math.round(cont)}%) brightness(${bright}%)`;
+    const bright = Math.max(45, Math.round((1 - (item.bg_dim ?? 0.35) * 0.42) * 100));
+    return `blur(${Math.round(blur * 0.55)}px) saturate(${Math.round(sat)}%) contrast(${Math.round(cont)}%) brightness(${bright}%)`;
+  }
+
+  function handleBlurFrameVideoLoaded(e: Event) {
+    const v = e.currentTarget as HTMLVideoElement | null;
+    if (!v || !Number.isFinite(v.duration) || v.duration <= 0.2) return;
+    const targetTime = Math.max(0.1, v.duration - 0.6);
+    if (Math.abs(v.currentTime - targetTime) > 0.25) {
+      v.currentTime = targetTime;
+    }
   }
 
   function stopLiveAudioPreview() {
@@ -338,8 +348,25 @@
     }
   }
 
-  function handleClose() {
+  async function handleClose() {
     stopLiveAudioPreview();
+    try {
+      const curPreset = activePreset;
+      if (curPreset.v916.preroll.enabled) {
+        curPreset.v916.preroll.overlay_png_base64 = await buildOverlayPngBase64(curPreset.v916.preroll, true);
+      }
+      if (curPreset.v916.postroll.enabled) {
+        curPreset.v916.postroll.overlay_png_base64 = await buildOverlayPngBase64(curPreset.v916.postroll, true);
+      }
+      if (curPreset.v169.preroll.enabled) {
+        curPreset.v169.preroll.overlay_png_base64 = await buildOverlayPngBase64(curPreset.v169.preroll, false);
+      }
+      if (curPreset.v169.postroll.enabled) {
+        curPreset.v169.postroll.overlay_png_base64 = await buildOverlayPngBase64(curPreset.v169.postroll, false);
+      }
+    } catch (e) {
+      console.warn('Не удалось обновить оверлеи при закрытии:', e);
+    }
     saveConfigToStore();
     dispatch('close');
   }
@@ -1143,6 +1170,8 @@
                           src={$pipelineStore.video?.objectUrl || resolveMediaSrc($pipelineStore.video?.path)}
                           muted
                           playsinline
+                          preload="metadata"
+                          on:loadedmetadata={handleBlurFrameVideoLoaded}
                           class="absolute inset-0 w-full h-full object-cover transition-transform duration-150"
                           style="filter: {buildBgFilterCss(item)}; transform: scale({item.bg_scale ?? 1.1});"
                         ></video>
@@ -1156,7 +1185,7 @@
                       <!-- Слой затемнения (Dim) и Виньетки (Vignette) -->
                       <div
                         class="absolute inset-0 pointer-events-none"
-                        style="background-color: rgba(0,0,0,{(item.bg_dim ?? 0.35) * 0.65}); {item.bg_vignette ? 'box-shadow: inset 0 0 65px rgba(0,0,0,0.85);' : ''}"
+                        style="background-color: rgba(0,0,0,{(item.bg_dim ?? 0.35) * 0.38}); {item.bg_vignette ? 'box-shadow: inset 0 0 48px rgba(0,0,0,0.55);' : ''}"
                       ></div>
 
                       <!-- 2. Кастомный логотип с масштабом, позицией X/Y, скруглением и тенью -->

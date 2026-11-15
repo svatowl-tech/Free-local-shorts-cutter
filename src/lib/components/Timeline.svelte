@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount, tick } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy, tick } from 'svelte';
   import { fragmentsStore, addFragmentRange, updateFragment, removeFragment } from '../stores/fragments';
   import type { Fragment } from '../stores/fragments';
   import { ZoomIn, ZoomOut, Maximize2, Play, Pause, Crosshair } from '@lucide/svelte';
@@ -11,6 +11,7 @@
 
   const dispatch = createEventDispatcher();
 
+  let outerContainerEl: HTMLElement;
   let viewportEl: HTMLElement;
   let timelineEl: HTMLElement;
   let viewportWidth: number = 0;
@@ -23,7 +24,8 @@
   let zoomLevel: number = 1;
   let autoFollowPlayhead: boolean = true;
 
-  $: trackWidth = Math.max(viewportWidth, Math.round(viewportWidth * zoomLevel));
+  $: safeViewportWidth = Math.max(0, Math.min(viewportWidth, typeof window !== 'undefined' ? Math.max(320, window.innerWidth - 32) : 1600));
+  $: trackWidth = Math.max(safeViewportWidth, Math.round(safeViewportWidth * zoomLevel));
   $: scale = videoDuration > 0 && trackWidth > 0 ? trackWidth / videoDuration : 1;
 
   // Состояние выделения области мышкой (drag to select)
@@ -45,17 +47,50 @@
   let initialFragStart: number = 0;
   let initialFragEnd: number = 0;
 
+  function updateMeasuredViewportWidth(rawWidth: number) {
+    if (!Number.isFinite(rawWidth) || rawWidth <= 0) return;
+    const docW = typeof document !== 'undefined' ? document.documentElement.clientWidth : 1600;
+    const maxAllowed = Math.max(320, docW - 32);
+    const clamped = Math.min(Math.floor(rawWidth), maxAllowed);
+    if (Math.abs(clamped - viewportWidth) >= 2) {
+      viewportWidth = clamped;
+    }
+  }
+
   onMount(() => {
+    const targetEl = outerContainerEl || viewportEl;
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        viewportWidth = entry.contentRect.width;
+        updateMeasuredViewportWidth(entry.contentRect.width);
       }
     });
-    if (viewportEl) {
-      observer.observe(viewportEl);
-      viewportWidth = viewportEl.clientWidth;
+    const onWinResize = () => {
+      if (targetEl) {
+        updateMeasuredViewportWidth(targetEl.clientWidth);
+      }
+    };
+    if (targetEl) {
+      observer.observe(targetEl);
+      updateMeasuredViewportWidth(targetEl.clientWidth);
     }
-    return () => observer.disconnect();
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', onWinResize);
+    }
+    return () => {
+      observer.disconnect();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', onWinResize);
+      }
+    };
+  });
+
+  onDestroy(() => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('mousemove', onTimelineMouseMove);
+      window.removeEventListener('mouseup', onTimelineMouseUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    }
   });
 
   // Автопрокрутка масштабированного таймлайна за курсором воспроизведения
@@ -71,17 +106,17 @@
   ) {
     const playheadX = currentTime * scale;
     const viewLeft = viewportEl.scrollLeft;
-    const viewRight = viewLeft + viewportWidth;
-    const margin = viewportWidth * 0.15;
+    const viewRight = viewLeft + safeViewportWidth;
+    const margin = safeViewportWidth * 0.15;
 
     if (playheadX > viewRight - margin || playheadX < viewLeft + margin * 0.5) {
-      viewportEl.scrollLeft = Math.max(0, playheadX - viewportWidth * 0.25);
+      viewportEl.scrollLeft = Math.max(0, playheadX - safeViewportWidth * 0.25);
     }
   }
 
   export async function setZoom(newZoom: number, anchorTime?: number, anchorClientX?: number) {
     const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.round(newZoom * 100) / 100));
-    if (!viewportEl || videoDuration <= 0) {
+    if (!viewportEl || videoDuration <= 0 || safeViewportWidth <= 0) {
       zoomLevel = clamped;
       return;
     }
@@ -90,19 +125,20 @@
     const viewportRect = viewportEl.getBoundingClientRect();
     const offsetInViewport =
       anchorClientX !== undefined
-        ? Math.max(0, Math.min(viewportWidth, anchorClientX - viewportRect.left))
-        : viewportWidth / 2;
+        ? Math.max(0, Math.min(safeViewportWidth, anchorClientX - viewportRect.left))
+        : safeViewportWidth / 2;
 
     zoomLevel = clamped;
     await tick();
 
+    if (!viewportEl) return;
     if (zoomLevel <= 1) {
       viewportEl.scrollLeft = 0;
     } else {
-      const newTrackWidth = Math.max(viewportWidth, viewportWidth * zoomLevel);
+      const newTrackWidth = Math.max(safeViewportWidth, Math.round(safeViewportWidth * zoomLevel));
       const newScale = newTrackWidth / videoDuration;
       const targetScrollLeft = focusTime * newScale - offsetInViewport;
-      viewportEl.scrollLeft = Math.max(0, Math.min(newTrackWidth - viewportWidth, targetScrollLeft));
+      viewportEl.scrollLeft = Math.max(0, Math.min(newTrackWidth - safeViewportWidth, targetScrollLeft));
     }
   }
 
@@ -117,14 +153,22 @@
 
   function handleWheel(e: WheelEvent) {
     if (videoDuration <= 0) return;
-    // Если зажат Shift или идет горизонтальный свайп тачпада — стандартный горизонтальный скролл
-    if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+    // Масштабирование колесом мыши выполняется при зажатом Ctrl / Alt / Meta,
+    // чтобы обычная вертикальная прокрутка страницы не раздувала масштаб таймлайна
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const mouseTime = getMouseTime(e);
+      const factor = e.deltaY < 0 ? 1.2 : 0.83;
+      setZoom(zoomLevel * factor, mouseTime, e.clientX);
       return;
     }
-    e.preventDefault();
-    const mouseTime = getMouseTime(e);
-    const factor = e.deltaY < 0 ? 1.25 : 0.8;
-    setZoom(zoomLevel * factor, mouseTime, e.clientX);
+    // Если таймлайн уже увеличен (zoomLevel > 1) и идет горизонтальный скролл или Shift+колесо — прокручиваем дорожку
+    if (zoomLevel > 1 && viewportEl && (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
+      e.preventDefault();
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      viewportEl.scrollLeft = Math.max(0, Math.min(trackWidth - safeViewportWidth, viewportEl.scrollLeft + delta));
+    }
   }
 
   function getMouseTime(e: MouseEvent): number {
@@ -350,13 +394,13 @@
   $: tickCount = videoDuration > 0 ? Math.min(800, Math.ceil(videoDuration / gridInterval) + 1) : 0;
 </script>
 
-<div class="space-y-2 select-none">
+<div bind:this={outerContainerEl} class="space-y-2 select-none w-full max-w-full min-w-0 overflow-hidden" style="contain: inline-size;">
   <!-- Верхняя панель: подсказки, управление масштабом (Zoom) и текущее время -->
-  <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono bg-[#0e0e12] border border-[rgba(226,226,224,0.1)] px-3 py-2 rounded-[4px]">
-    <div class="flex flex-wrap items-center gap-2">
+  <div class="flex flex-wrap items-center justify-between gap-2 text-xs font-mono bg-[#0e0e12] border border-[rgba(226,226,224,0.1)] px-3 py-2 rounded-[4px] w-full max-w-full min-w-0">
+    <div class="flex flex-wrap items-center gap-2 min-w-0">
       <span class="label-mono text-[#e2e2e4]">Шкала времени</span>
-      <span class="text-[10px] text-[#5865f2] bg-[#5865f2]/10 border border-[#5865f2]/30 px-2 py-0.5 rounded-[2px]">
-        💡 Клик по клипу — превью • Колесо мыши — масштаб • Края — точная подгонка
+      <span class="text-[10px] text-[#5865f2] bg-[#5865f2]/10 border border-[#5865f2]/30 px-2 py-0.5 rounded-[2px] truncate max-w-full">
+        💡 Клик по клипу — превью • Ползунок / Ctrl+колесо — масштаб • Края — точная подгонка
       </span>
     </div>
 
@@ -447,13 +491,14 @@
   <div
     bind:this={viewportEl}
     on:wheel={handleWheel}
-    class="relative w-full overflow-x-auto overflow-y-hidden bg-[#0c0c0e] border border-[rgba(226,226,224,0.15)] rounded-[4px] shadow-inner"
+    class="relative w-full max-w-full min-w-0 overflow-x-auto overflow-y-hidden bg-[#0c0c0e] border border-[rgba(226,226,224,0.15)] rounded-[4px] shadow-inner"
+    style="contain: layout inline-size;"
   >
     <!-- Масштабируемая дорожка времени -->
     <div
       bind:this={timelineEl}
       style="width: {trackWidth > 0 ? `${trackWidth}px` : '100%'};"
-      class="relative h-28 cursor-crosshair select-none"
+      class="relative h-28 cursor-crosshair select-none overflow-hidden"
       on:mousedown={onTimelineMouseDown}
       on:mousemove={onTimelineMouseMoveHover}
       on:mouseleave={onTimelineMouseLeave}
@@ -471,11 +516,15 @@
       {#if videoDuration > 0}
         <!-- Линия предпросмотра при наведении курсора (Hover scrubber) -->
         {#if hoverTime !== null && !isSelecting}
+          {@const hoverPx = Math.max(0, Math.min(trackWidth, hoverTime * scale))}
+          {@const flipTooltipLeft = hoverPx > trackWidth - 76}
           <div
             class="absolute top-0 bottom-0 w-[1px] bg-white/50 pointer-events-none z-15"
-            style="left: {hoverTime * scale}px"
+            style="left: {hoverPx}px"
           >
-            <div class="absolute top-1 left-1.5 bg-[#1a1a24] border border-white/20 text-[#e2e2e4] font-mono text-[9px] px-1.5 py-0.5 rounded shadow whitespace-nowrap">
+            <div
+              class="absolute top-1 {flipTooltipLeft ? 'right-1.5' : 'left-1.5'} bg-[#1a1a24] border border-white/20 text-[#e2e2e4] font-mono text-[9px] px-1.5 py-0.5 rounded shadow whitespace-nowrap"
+            >
               {formatTime(hoverTime)}
             </div>
           </div>
@@ -485,13 +534,18 @@
         {#each Array(tickCount) as _, i}
           {@const t = Math.round(i * gridInterval * 100) / 100}
           {#if t <= videoDuration}
+            {@const tickPx = t * scale}
             <div
               class="absolute top-0 bottom-0 border-l border-[rgba(226,226,224,0.1)] pointer-events-none flex flex-col justify-between py-1"
-              style="left: {t * scale}px;"
+              style="left: {tickPx}px;"
             >
-              <span class="text-[9px] font-mono text-[rgba(226,226,224,0.45)] pl-1 select-none whitespace-nowrap">
-                {formatRulerTick(t, gridInterval)}
-              </span>
+              {#if tickPx <= trackWidth - 38}
+                <span class="text-[9px] font-mono text-[rgba(226,226,224,0.45)] pl-1 select-none whitespace-nowrap">
+                  {formatRulerTick(t, gridInterval)}
+                </span>
+              {:else}
+                <span></span>
+              {/if}
               <div class="w-1 h-2 bg-[rgba(226,226,224,0.25)]"></div>
             </div>
 
@@ -538,7 +592,7 @@
           {#if isBeingEdited}
             <div
               class="absolute top-0.5 bg-[#121218] border border-[#23c55e] text-[#e2e2e4] font-mono text-[10px] px-2 py-0.5 rounded shadow-xl whitespace-nowrap z-50 pointer-events-none flex items-center gap-1.5"
-              style="left: {Math.max(4, frag.start * scale)}px;"
+              style="left: {Math.min(Math.max(4, frag.start * scale), Math.max(4, trackWidth - 220))}px;"
             >
               <span class="text-[#23c55e] font-bold">Клип #{idx + 1}:</span>
               <span>{formatTime(frag.start)} → {formatTime(frag.end)}</span>
