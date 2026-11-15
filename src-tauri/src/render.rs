@@ -706,69 +706,49 @@ async fn create_clip_srt(
     Some(temp_srt)
 }
 
-/// Создает один клип из исходного видео с нарезкой, субтитрами и фильтрами.
-pub async fn render_clip(
-    video_path: PathBuf,
+/// Внутренний исполнитель FFmpeg для рендера одного клипа с заданным выражением горизонтального кропа `crop_x_expr`
+async fn execute_ffmpeg_clip_render(
+    video_path: &Path,
     start_sec: f64,
     duration_sec: f64,
-    output_path: PathBuf,
-    srt_path: Option<PathBuf>,
-    config: RenderConfig,
-    app_handle: AppHandle,
+    output_path: &Path,
+    temp_clip_srt: Option<&Path>,
+    config: &RenderConfig,
+    crop_x_expr: Option<&str>,
+    app_handle: &AppHandle,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<()> {
-    log::info!("Запуск рендеринга клипа: {}", output_path.display());
-
-    // Гарантируем существование родительской папки для сохранения
-    if let Some(parent) = output_path.parent() {
-        if !parent.exists() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-    }
-    
     let shell = app_handle.shell();
-    
+
     // Формируем аргументы для FFmpeg (-accurate_seek + -avoid_negative_ts make_zero для идеальной синхронизации аудио, видео и фильтра subtitles)
     let mut args = vec![
         "-hide_banner".to_string(),
         "-nostdin".to_string(),
         "-y".to_string(),
         "-accurate_seek".to_string(),
-        "-ss".to_string(), format!("{:.3}", start_sec),
-        "-i".to_string(), video_path.to_string_lossy().to_string(),
-        "-t".to_string(), format!("{:.3}", duration_sec),
-        "-avoid_negative_ts".to_string(), "make_zero".to_string(),
+        "-ss".to_string(),
+        format!("{:.3}", start_sec),
+        "-i".to_string(),
+        video_path.to_string_lossy().to_string(),
+        "-t".to_string(),
+        format!("{:.3}", duration_sec),
+        "-avoid_negative_ts".to_string(),
+        "make_zero".to_string(),
     ];
 
-    let mut vf_filters = vec![];
-    
-    // Преобразование в вертикальный формат 9:16 (Shorts / Reels / TikTok) с динамическим ведением лиц внутри клипа
+    let mut vf_filters = Vec::new();
+
     if config.vertical_format {
-        let (crop_x_expr, tracking_summary) =
-            build_dynamic_face_crop_expr(&video_path, start_sec, duration_sec, &app_handle).await;
-        crate::logger::emit_log(
-            &app_handle,
-            "Render",
-            "info",
-            &format!("Smart Face Tracking: {}", tracking_summary),
-        );
-        // Формула динамического сдвига окна 9:16 во времени t: следует за персонажем и переключается при смене ракурса внутри клипа
+        let expr = crop_x_expr
+            .unwrap_or("min(max(0, iw*0.500 - (ih*(9/16))/2), iw-(ih*(9/16)))");
         let crop_filter = format!(
             "crop=w='ih*(9/16)':h='ih':x='{}':y=0,scale=1080:1920:flags=lanczos",
-            crop_x_expr
+            expr
         );
         vf_filters.push(crop_filter);
     }
 
-    // Формируем индивидуальный синхронизированный SRT-файл для таймкода данного клипа [start_sec .. start_sec + duration_sec]
-    let mut temp_clip_srt: Option<PathBuf> = None;
-    if let Some(ref srt) = srt_path {
-        if srt.exists() {
-            temp_clip_srt = create_clip_srt(srt, start_sec, duration_sec).await;
-        }
-    }
-
-    if let Some(ref clip_srt) = temp_clip_srt {
+    if let Some(clip_srt) = temp_clip_srt {
         let srt_escaped = clip_srt
             .to_string_lossy()
             .replace('\\', "/")
@@ -776,15 +756,15 @@ pub async fn render_clip(
             .replace('\'', "\\'")
             .replace('[', "\\[")
             .replace(']', "\\]");
-        
+
         let mut sub_filter = format!("subtitles='{}'", srt_escaped);
-        
-        if let Some(style) = config.subtitle_style {
+
+        if let Some(ref style) = config.subtitle_style {
             // Заменяем веб-шрифт Inter на системный Arial, чтобы libass не тратил время на поиск fallback-шрифтов
             let font = if style.font_name.is_empty() || style.font_name.eq_ignore_ascii_case("Inter") {
                 "Arial".to_string()
             } else {
-                style.font_name
+                style.font_name.clone()
             };
             let font_size = if style.font_size <= 0 { 18 } else { style.font_size.min(28) };
             let primary_color = to_ass_color(&style.color);
@@ -794,7 +774,7 @@ pub async fn render_clip(
                 _ => 2, // bottom center
             };
             sub_filter.push_str(&format!(
-                ":force_style='FontName={},FontSize={},PrimaryColour={},OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment={},MarginV=38'", 
+                ":force_style='FontName={},FontSize={},PrimaryColour={},OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Bold=1,Alignment={},MarginV=38'",
                 font, font_size, primary_color, alignment
             ));
         } else {
@@ -834,26 +814,16 @@ pub async fn render_clip(
     args.push("aac".to_string());
     args.push("-b:a".to_string());
     args.push("192k".to_string());
-    
-    args.push(output_path.to_string_lossy().to_string());
 
-    crate::logger::emit_log(
-        &app_handle,
-        "Render",
-        "info",
-        &format!("Рендеринг клипа: [{:.2}с - {:.2}с] -> '{}' (вертикально={}, субтитры={}, микро-фейд=40мс)", start_sec, start_sec + duration_sec, output_path.display(), config.vertical_format, temp_clip_srt.is_some()),
-    );
+    args.push(output_path.to_string_lossy().to_string());
 
     let command = match shell.sidecar("ffmpeg") {
         Ok(cmd) => cmd
-            .env("PATH", crate::logger::build_sidecar_env_path(&app_handle))
+            .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
             .args(args),
         Err(e) => {
-            if let Some(ref tmp) = temp_clip_srt {
-                let _ = tokio::fs::remove_file(tmp).await;
-            }
             let err = format!("FFmpeg (render) не обнаружен: {}", e);
-            crate::logger::emit_log(&app_handle, "Render", "error", &err);
+            crate::logger::emit_log(app_handle, "Render", "error", &err);
             return Err(AppError::Pipeline(err));
         }
     };
@@ -861,11 +831,8 @@ pub async fn render_clip(
     let (mut rx, child) = match command.spawn() {
         Ok(pair) => pair,
         Err(e) => {
-            if let Some(ref tmp) = temp_clip_srt {
-                let _ = tokio::fs::remove_file(tmp).await;
-            }
             let err = format!("Не удалось запустить FFmpeg при рендере: {}", e);
-            crate::logger::emit_log(&app_handle, "Render", "error", &err);
+            crate::logger::emit_log(app_handle, "Render", "error", &err);
             return Err(AppError::Pipeline(err));
         }
     };
@@ -873,14 +840,16 @@ pub async fn render_clip(
     let app_handle_clone = app_handle.clone();
     let out_display = output_path.display().to_string();
     let render_future = async move {
-        let _ = app_handle_clone.emit("render-progress", RenderProgressPayload { 
-            percent: 0.0, 
-            stage: "rendering started".to_string() 
-        });
+        let _ = app_handle_clone.emit(
+            "render-progress",
+            RenderProgressPayload {
+                percent: 0.0,
+                stage: "rendering started".to_string(),
+            },
+        );
 
         let mut max_cur_secs: f64 = 0.0;
 
-        // Чтение stderr, где ffmpeg отдает прогресс и статус кодирования
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stderr(bytes) => {
@@ -888,19 +857,33 @@ pub async fn render_clip(
                     let log_line = String::from_utf8_lossy(&bytes);
                     if let Some(pos) = log_line.rfind("time=") {
                         let time_part = &log_line[pos + 5..];
-                        let space_pos = time_part.find(|c: char| c.is_whitespace()).unwrap_or(time_part.len());
+                        let space_pos = time_part
+                            .find(|c: char| c.is_whitespace())
+                            .unwrap_or(time_part.len());
                         let time_str = &time_part[..space_pos];
                         let parts: Vec<&str> = time_str.trim().split(':').collect();
                         if parts.len() == 3 {
-                            if let (Ok(h), Ok(m), Ok(s)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
+                            if let (Ok(h), Ok(m), Ok(s)) = (
+                                parts[0].parse::<f64>(),
+                                parts[1].parse::<f64>(),
+                                parts[2].parse::<f64>(),
+                            ) {
                                 let cur_secs = (h * 3600.0 + m * 60.0 + s).min(duration_sec);
                                 if cur_secs > max_cur_secs && duration_sec > 0.0 {
                                     max_cur_secs = cur_secs;
-                                    let pct = (max_cur_secs / duration_sec * 100.0).min(99.0).max(0.0);
-                                    let _ = app_handle_clone.emit("render-progress", RenderProgressPayload { 
-                                        percent: pct, 
-                                        stage: format!("{:.1}с / {:.1}с", max_cur_secs, duration_sec) 
-                                    });
+                                    let pct = (max_cur_secs / duration_sec * 100.0)
+                                        .min(99.0)
+                                        .max(0.0);
+                                    let _ = app_handle_clone.emit(
+                                        "render-progress",
+                                        RenderProgressPayload {
+                                            percent: pct,
+                                            stage: format!(
+                                                "{:.1}с / {:.1}с",
+                                                max_cur_secs, duration_sec
+                                            ),
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -917,13 +900,17 @@ pub async fn render_clip(
                             "info",
                             &format!("Клип успешно создан: '{}'", out_display),
                         );
-                        let _ = app_handle_clone.emit("render-progress", RenderProgressPayload { 
-                            percent: 100.0, 
-                            stage: "rendering complete".to_string() 
-                        });
+                        let _ = app_handle_clone.emit(
+                            "render-progress",
+                            RenderProgressPayload {
+                                percent: 100.0,
+                                stage: "rendering complete".to_string(),
+                            },
+                        );
                         return Ok(());
                     } else {
-                        let err_msg = format!("Рендер завершился с ошибкой, код: {:?}", payload.code);
+                        let err_msg =
+                            format!("Рендер завершился с ошибкой, код: {:?}", payload.code);
                         crate::logger::emit_log(&app_handle_clone, "Render", "error", &err_msg);
                         return Err(AppError::Pipeline(err_msg));
                     }
@@ -936,20 +923,871 @@ pub async fn render_clip(
         Err(AppError::Pipeline(err_msg))
     };
 
-    // Ожидаем окончания или отмены
-    let res = tokio::select! {
+    tokio::select! {
         r = render_future => r,
         _ = cancel_rx.recv() => {
             let _ = child.kill();
             Err(AppError::Pipeline("Отрисовка отменена пользователем.".to_string()))
         }
-    };
+    }
+}
+
+/// Создает один клип из исходного видео с нарезкой, субтитрами, фильтрами и финальной контрольной проверкой наличия лиц в 9:16 шортсе.
+pub async fn render_clip(
+    video_path: PathBuf,
+    start_sec: f64,
+    duration_sec: f64,
+    output_path: PathBuf,
+    srt_path: Option<PathBuf>,
+    config: RenderConfig,
+    app_handle: AppHandle,
+    cancel_rx: Receiver<()>,
+) -> AppResult<()> {
+    log::info!("Запуск рендеринга клипа: {}", output_path.display());
+
+    // Гарантируем существование родительской папки для сохранения
+    if let Some(parent) = output_path.parent() {
+        if !parent.exists() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+    }
+
+    // Преобразование в вертикальный формат 9:16 (Shorts / Reels / TikTok) с динамическим ведением лиц внутри клипа
+    let mut initial_crop_expr: Option<String> = None;
+    let mut used_ratios: Vec<f64> = Vec::new();
+    if config.vertical_format {
+        let (crop_x_expr, tracking_summary, track_ratios) =
+            build_dynamic_face_crop_expr(&video_path, start_sec, duration_sec, &app_handle).await;
+        crate::logger::emit_log(
+            &app_handle,
+            "Render",
+            "info",
+            &format!("Smart Face Tracking: {}", tracking_summary),
+        );
+        initial_crop_expr = Some(crop_x_expr);
+        used_ratios = track_ratios;
+    }
+
+    // Формируем индивидуальный синхронизированный SRT-файл для таймкода данного клипа [start_sec .. start_sec + duration_sec]
+    let mut temp_clip_srt: Option<PathBuf> = None;
+    if let Some(ref srt) = srt_path {
+        if srt.exists() {
+            temp_clip_srt = create_clip_srt(srt, start_sec, duration_sec).await;
+        }
+    }
+
+    crate::logger::emit_log(
+        &app_handle,
+        "Render",
+        "info",
+        &format!(
+            "Рендеринг клипа: [{:.2}с - {:.2}с] -> '{}' (вертикально={}, субтитры={}, микро-фейд=40мс)",
+            start_sec,
+            start_sec + duration_sec,
+            output_path.display(),
+            config.vertical_format,
+            temp_clip_srt.is_some()
+        ),
+    );
+
+    let res = execute_ffmpeg_clip_render(
+        &video_path,
+        start_sec,
+        duration_sec,
+        &output_path,
+        temp_clip_srt.as_deref(),
+        &config,
+        initial_crop_expr.as_deref(),
+        &app_handle,
+        cancel_rx.resubscribe(),
+    )
+    .await;
+
+    // ФИНАЛЬНЫЙ КОНТРОЛЬ ЛИЦ В ГОТОВОМ 9:16 ШОРТСЕ:
+    // Если в отрендеренной вертикальной обрезке не зафиксировано ни одного лица (0 кадров с лицом),
+    // значит окно кропа промахнулось мимо персонажа. Выполняем глубокое сканирование полноценного 16:9 оригинала
+    // и, если в оригинале есть лица, автоматически пересобираем шортс с исправленной траекторией кадрирования!
+    if res.is_ok() && config.vertical_format && output_path.exists() {
+        verify_and_repair_cropped_short_faces(
+            &video_path,
+            start_sec,
+            duration_sec,
+            &output_path,
+            temp_clip_srt.as_deref(),
+            &config,
+            &used_ratios,
+            &app_handle,
+            cancel_rx.resubscribe(),
+        )
+        .await;
+    }
 
     if let Some(ref tmp) = temp_clip_srt {
         let _ = tokio::fs::remove_file(tmp).await;
     }
 
     res
+}
+
+/// Выполняет финальную проверку готового 9:16 шортса на наличие лиц.
+/// Если в финальной обрезке не найдено ни одного лица (`0` кадров), проверяет оригинальное полноценное 16:9 видео
+/// и при обнаружении лиц в оригинале автоматически исправляет (перерендеривает) шортс с точным наведением на лицо.
+#[allow(clippy::too_many_arguments)]
+async fn verify_and_repair_cropped_short_faces(
+    source_video_path: &Path,
+    start_sec: f64,
+    duration_sec: f64,
+    cropped_short_path: &Path,
+    temp_clip_srt: Option<&Path>,
+    config: &RenderConfig,
+    used_ratios: &[f64],
+    app_handle: &AppHandle,
+    cancel_rx: Receiver<()>,
+) {
+    let short_name = cropped_short_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("clip.mp4");
+
+    let (face_frames, total_frames, max_score) =
+        detect_faces_in_cropped_short(cropped_short_path, duration_sec, app_handle).await;
+
+    if total_frames == 0 {
+        return;
+    }
+
+    if face_frames >= 1 {
+        crate::logger::emit_log(
+            app_handle,
+            "Render",
+            "info",
+            &format!(
+                "✓ [Финальный контроль лиц 9:16] В готовом шортсе '{}' подтверждены лица в кадре ({}/{} проверочных кадров, четкость: {:.2})",
+                short_name, face_frames, total_frames, max_score
+            ),
+        );
+        return;
+    }
+
+    crate::logger::emit_log(
+        app_handle,
+        "Render",
+        "warn",
+        &format!(
+            "⚠ [Финальный контроль лиц 9:16] В финальной обрезке '{}' НЕ зафиксировано ни одного лица (0/{} кадров)! Запуск глубокой проверки полноценного оригинального 16:9 видео [{:.1}с - {:.1}с]...",
+            short_name,
+            total_frames,
+            start_sec,
+            start_sec + duration_sec
+        ),
+    );
+
+    if let Some((repaired_expr, repaired_summary, orig_face_frames, orig_best_score)) =
+        deep_scan_original_video_for_faces(
+            source_video_path,
+            start_sec,
+            duration_sec,
+            used_ratios,
+            app_handle,
+        )
+        .await
+    {
+        crate::logger::emit_log(
+            app_handle,
+            "Render",
+            "info",
+            &format!(
+                "⟳ [Авто-исправление шортса 9:16] В оригинальном 16:9 видео обнаружены лица ({} кадров, четкость {:.2} -> {}). Пересборка '{}' с исправленной обрезкой...",
+                orig_face_frames, orig_best_score, repaired_summary, short_name
+            ),
+        );
+
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let repaired_tmp =
+            cropped_short_path.with_extension(format!("face_repaired_{}.tmp.mp4", ts));
+
+        let rerender_res = execute_ffmpeg_clip_render(
+            source_video_path,
+            start_sec,
+            duration_sec,
+            &repaired_tmp,
+            temp_clip_srt,
+            config,
+            Some(&repaired_expr),
+            app_handle,
+            cancel_rx,
+        )
+        .await;
+
+        let repaired_ok = rerender_res.is_ok()
+            && std::fs::metadata(&repaired_tmp)
+                .map(|m| m.len() > 1024)
+                .unwrap_or(false);
+
+        if repaired_ok {
+            let _ = tokio::fs::remove_file(cropped_short_path).await;
+            if tokio::fs::rename(&repaired_tmp, cropped_short_path)
+                .await
+                .is_err()
+            {
+                let _ = tokio::fs::copy(&repaired_tmp, cropped_short_path).await;
+                let _ = tokio::fs::remove_file(&repaired_tmp).await;
+            }
+
+            let (new_faces, new_total, new_max) =
+                detect_faces_in_cropped_short(cropped_short_path, duration_sec, app_handle).await;
+            crate::logger::emit_log(
+                app_handle,
+                "Render",
+                "info",
+                &format!(
+                    "✓ [Финальный контроль лиц 9:16] Шортс '{}' успешно исправлен по оригинальному видео: теперь лиц в кадре {}/{} (четкость {:.2}, траектория: {})!",
+                    short_name,
+                    new_faces.max(1),
+                    new_total.max(1),
+                    new_max.max(orig_best_score),
+                    repaired_summary
+                ),
+            );
+        } else {
+            let _ = tokio::fs::remove_file(&repaired_tmp).await;
+            crate::logger::emit_log(
+                app_handle,
+                "Render",
+                "warn",
+                &format!(
+                    "Не удалось пересобрать шортс '{}' при авто-исправлении лиц, сохранен исходный файл.",
+                    short_name
+                ),
+            );
+        }
+    } else {
+        crate::logger::emit_log(
+            app_handle,
+            "Render",
+            "info",
+            &format!(
+                "ℹ [Финальный контроль лиц 9:16] Глубокая проверка оригинала подтвердила: на интервале [{:.1}с - {:.1}с] лица в кадре отсутствуют (сцена общего плана / пейзаж / деталь без лиц) — обрезка не требует правки.",
+                start_sec,
+                start_sec + duration_sec
+            ),
+        );
+    }
+}
+
+/// Извлекает кадры из уже готового вертикального 9:16 шортса (`135x240`, 1.5 FPS) и проверяет,
+/// зафиксировано ли в финальной обрезке хотя бы одно не обрезанное по краям лицо персонажа.
+async fn detect_faces_in_cropped_short(
+    cropped_short_path: &Path,
+    duration_sec: f64,
+    app_handle: &AppHandle,
+) -> (usize, usize, f64) {
+    let Ok(ffmpeg) = app_handle.shell().sidecar("ffmpeg") else {
+        return (1, 1, 0.50);
+    };
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_dir = std::env::temp_dir().join(format!(
+        "vcp_verify916_{}_{}",
+        std::process::id(),
+        ts
+    ));
+    let _ = tokio::fs::create_dir_all(&temp_dir).await;
+
+    let scan_dur = duration_sec.clamp(2.0, 28.0);
+    let out_pattern = temp_dir
+        .join("vframe_%03d.bmp")
+        .to_string_lossy()
+        .to_string();
+
+    let cmd = ffmpeg
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args([
+            "-nostdin",
+            "-y",
+            "-t",
+            &format!("{:.3}", scan_dur),
+            "-i",
+            &cropped_short_path.to_string_lossy(),
+            "-vf",
+            "fps=1.5,scale=135:240:flags=fast_bilinear",
+            "-pix_fmt",
+            "bgr24",
+            &out_pattern,
+        ]);
+
+    if let Ok((mut rx, child)) = cmd.spawn() {
+        let wait_frames = async {
+            while let Some(event) = rx.recv().await {
+                if let CommandEvent::Terminated(_) = event {
+                    break;
+                }
+            }
+        };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(7), wait_frames).await;
+        let _ = child.kill();
+    }
+
+    let max_frames = (scan_dur * 1.5).ceil() as usize + 2;
+    let mut face_frames = 0usize;
+    let mut total_frames = 0usize;
+    let mut max_score = 0.0_f64;
+
+    for idx in 1..=max_frames {
+        let frame_path = temp_dir.join(format!("vframe_{:03}.bmp", idx));
+        let Ok(bytes) = tokio::fs::read(&frame_path).await else {
+            break;
+        };
+        total_frames += 1;
+        let score = score_portrait_916_bmp_for_face(&bytes, 135, 240);
+        if score > max_score {
+            max_score = score;
+        }
+        if score >= 0.30 {
+            face_frames += 1;
+        }
+    }
+
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+    (face_frames, total_frames, max_score)
+}
+
+/// Оценивает наличие цельного (не разрезанного краем экрана) лица персонажа в портретном кадре 9:16 (`135x240` BMP BGR24).
+/// Игнорирует нижнюю зону субтитров (`y > 70%`) и угловые водяные знаки.
+fn score_portrait_916_bmp_for_face(bytes: &[u8], w: usize, h: usize) -> f64 {
+    if bytes.len() < 54 {
+        return 0.0;
+    }
+    let data_offset = u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]) as usize;
+    let row_stride = (w * 3 + 3) & !3;
+    if bytes.len() < data_offset + row_stride * h {
+        return 0.0;
+    }
+    let raw_height = i32::from_le_bytes([bytes[22], bytes[23], bytes[24], bytes[25]]);
+    let bottom_up = raw_height > 0;
+
+    let get_pixel = |x: usize, y: usize| -> (f64, f64, f64, f64) {
+        let bmp_y = if bottom_up { h - 1 - y } else { y };
+        let idx = data_offset + bmp_y * row_stride + x * 3;
+        let b = bytes[idx] as f64;
+        let g = bytes[idx + 1] as f64;
+        let r = bytes[idx + 2] as f64;
+        let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        (r, g, b, luma)
+    };
+
+    let cw = 5_usize;
+    let ch = 5_usize;
+    let gw = w / cw; // 27
+    let gh = h / ch; // 48
+
+    let mut grid_skin = vec![0.0_f64; gw * gh];
+    let mut grid_eye = vec![0.0_f64; gw * gh];
+    let mut grid_edge = vec![0.0_f64; gw * gh];
+
+    for gy in 1..(gh * 70 / 100) {
+        let py0 = gy * ch;
+        let y_norm = (py0 as f64) / (h as f64);
+        if !(0.06..=0.68).contains(&y_norm) {
+            continue;
+        }
+
+        for gx in 1..(gw - 1) {
+            let px0 = gx * cw;
+            let mut skin_pixels = 0.0_f64;
+            let mut dark_pixels = 0.0_f64;
+            let mut sclera_pixels = 0.0_f64;
+            let mut edge_sum = 0.0_f64;
+            let mut luma_min = 255.0_f64;
+            let mut luma_max = 0.0_f64;
+
+            for dy in 0..ch {
+                for dx in 0..cw {
+                    let x = px0 + dx;
+                    let y = py0 + dy;
+                    let (r, g, b, luma) = get_pixel(x, y);
+                    luma_min = luma_min.min(luma);
+                    luma_max = luma_max.max(luma);
+
+                    let (_, _, _, l_right) = get_pixel((x + 2).min(w - 1), y);
+                    let (_, _, _, l_down) = get_pixel(x, (y + 2).min(h - 1));
+                    edge_sum += (luma - l_right).abs() + (luma - l_down).abs();
+
+                    let max_c = r.max(g).max(b);
+                    let min_c = r.min(g).min(b);
+                    let sat = if max_c > 1.0 { (max_c - min_c) / max_c } else { 0.0 };
+                    let cb = 128.0 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+                    let cr = 128.0 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+
+                    let is_real_skin = luma > 45.0
+                        && luma < 240.0
+                        && (80.0..=128.0).contains(&cb)
+                        && (132.0..=176.0).contains(&cr)
+                        && r > g
+                        && g > b * 0.84
+                        && (r - b) > 14.0
+                        && (0.09..=0.62).contains(&sat);
+
+                    let is_anime_skin = luma > 95.0
+                        && luma < 248.0
+                        && r >= g * 1.01
+                        && g >= b * 0.92
+                        && (r - b) >= 9.0
+                        && (r - b) <= 70.0
+                        && (0.05..=0.46).contains(&sat);
+
+                    if is_real_skin || is_anime_skin {
+                        skin_pixels += 1.0;
+                    }
+                    if luma < 65.0 {
+                        dark_pixels += 1.0;
+                    }
+                    if luma > 190.0 && sat < 0.16 {
+                        sclera_pixels += 1.0;
+                    }
+                }
+            }
+
+            let cell_area = (cw * ch) as f64;
+            let idx = gy * gw + gx;
+            let skin_frac = skin_pixels / cell_area;
+            let local_contrast = luma_max - luma_min;
+            let avg_edge = edge_sum / cell_area;
+
+            grid_skin[idx] = skin_frac;
+            if local_contrast > 42.0 && avg_edge > 14.0 && dark_pixels >= 2.0 {
+                let sclera_bonus = if sclera_pixels >= 1.0 { 1.4 } else { 1.0 };
+                grid_eye[idx] = ((avg_edge / 38.0).min(2.2)) * sclera_bonus;
+            }
+            if avg_edge > 13.5 && local_contrast > 32.0 {
+                grid_edge[idx] = (avg_edge / 46.0).min(1.6);
+            }
+        }
+    }
+
+    let total_skin_cells = grid_skin.iter().filter(|&&v| v > 0.35).count() as f64;
+    let flood_penalty = if total_skin_cells > (gw * gh) as f64 * 0.45 {
+        0.20
+    } else {
+        1.0
+    };
+
+    let box_scales: [(usize, usize, f64); 3] = [(11, 10, 1.15), (8, 8, 1.05), (5, 6, 0.92)];
+    let mut best_score = 0.0_f64;
+
+    for &(bw, bh, scale_w) in &box_scales {
+        let max_gy = (gh * 66 / 100).saturating_sub(bh).max(2);
+        // Лицо должно целиком находиться внутри портретного окна (отступ от левого/правого края >= 2 ячейки, т.е. не разрезано пополам на границе!)
+        for gy in 2..=max_gy {
+            for gx in 2..=(gw.saturating_sub(bw + 2)) {
+                let mut skin_sum = 0.0_f64;
+                let mut eye_sum = 0.0_f64;
+                let mut edge_sum = 0.0_f64;
+                for by in gy..(gy + bh) {
+                    for bx in gx..(gx + bw) {
+                        let idx = by * gw + bx;
+                        skin_sum += grid_skin[idx];
+                        eye_sum += grid_eye[idx];
+                        edge_sum += grid_edge[idx];
+                    }
+                }
+                let area = (bw * bh) as f64;
+                let skin_d = (skin_sum / area) * flood_penalty;
+                let eye_d = eye_sum / area;
+                let edge_d = edge_sum / area;
+
+                if skin_d < 0.12 || (eye_d < 0.065 && edge_d < 0.12) {
+                    continue;
+                }
+
+                // Поддержка шеи/плеч под лицом
+                let mut under_support = 0.0_f64;
+                let uy_end = (gy + bh + 3).min(gh);
+                let mut u_cnt = 0.0_f64;
+                for uy in (gy + bh)..uy_end {
+                    for ux in gx..(gx + bw) {
+                        let u_idx = uy * gw + ux;
+                        under_support += grid_skin[u_idx] * 1.4 + grid_edge[u_idx];
+                        u_cnt += 1.0;
+                    }
+                }
+                if u_cnt > 0.0 {
+                    under_support /= u_cnt;
+                }
+                if under_support < 0.10 {
+                    continue;
+                }
+
+                let score = (skin_d * 2.4) * (1.0 + eye_d * 2.2 + edge_d * 0.8) * scale_w;
+                if score > best_score {
+                    best_score = score;
+                }
+            }
+        }
+    }
+
+    best_score
+}
+
+/// Глубокое сканирование полноценного оригинального 16:9 видео (`320x180`, 2.5 FPS) в случае,
+/// если в готовом 9:16 шортсе не оказалось ни одного лица.
+/// Ищет лица по всей ширине 16:9 кадра (`16% .. 84%`), штрафует уже проверенную пустую зону `used_ratios`,
+/// и проверяет каждое окно 9:16 портретным детектором, чтобы гарантировать попадание лица в исправленный шортс.
+async fn deep_scan_original_video_for_faces(
+    video_path: &Path,
+    start_sec: f64,
+    duration_sec: f64,
+    used_ratios: &[f64],
+    app_handle: &AppHandle,
+) -> Option<(String, String, usize, f64)> {
+    let Ok(ffmpeg) = app_handle.shell().sidecar("ffmpeg") else {
+        return None;
+    };
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_dir = std::env::temp_dir().join(format!(
+        "vcp_deepscan169_{}_{}",
+        std::process::id(),
+        ts
+    ));
+    let _ = tokio::fs::create_dir_all(&temp_dir).await;
+
+    let sample_fps = 2.5_f64;
+    let scan_dur = duration_sec.clamp(2.0, 30.0);
+    let out_pattern = temp_dir
+        .join("oframe_%03d.bmp")
+        .to_string_lossy()
+        .to_string();
+
+    let cmd = ffmpeg
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args([
+            "-nostdin",
+            "-y",
+            "-ss",
+            &format!("{:.3}", start_sec),
+            "-t",
+            &format!("{:.3}", scan_dur),
+            "-i",
+            &video_path.to_string_lossy(),
+            "-vf",
+            "fps=2.5,scale=320:180:flags=lanczos",
+            "-pix_fmt",
+            "bgr24",
+            &out_pattern,
+        ]);
+
+    if let Ok((mut rx, child)) = cmd.spawn() {
+        let wait_frames = async {
+            while let Some(event) = rx.recv().await {
+                if let CommandEvent::Terminated(_) = event {
+                    break;
+                }
+            }
+        };
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(9), wait_frames).await;
+        let _ = child.kill();
+    }
+
+    // 13 перекрывающихся горизонтальных окон 9:16 по всей ширине 16:9 кадра (от 16% до 84%)
+    let candidate_centers: [f64; 13] = [
+        0.16, 0.22, 0.28, 0.34, 0.40, 0.46, 0.50, 0.54, 0.60, 0.66, 0.72, 0.78, 0.84,
+    ];
+    let mut window_totals = [0.0_f64; 13];
+    let mut window_hits = [0_usize; 13];
+    let mut frame_best_ratios: Vec<(f64, f64, f64)> = Vec::new(); // (rel_time, best_ratio, best_score)
+
+    let max_frames = (scan_dur * sample_fps).ceil() as usize + 2;
+    for idx in 1..=max_frames {
+        let frame_path = temp_dir.join(format!("oframe_{:03}.bmp", idx));
+        let Ok(bytes) = tokio::fs::read(&frame_path).await else {
+            break;
+        };
+        let rel_time = ((idx - 1) as f64) / sample_fps;
+
+        let mut best_c_idx = 6_usize;
+        let mut best_c_score = 0.0_f64;
+
+        for (c_idx, &center_r) in candidate_centers.iter().enumerate() {
+            let raw_score =
+                score_16_9_frame_at_portrait_slice(&bytes, 320, 180, center_r);
+
+            // Если этот участок кадра уже использовался при первом рендере и дал 0 лиц в шортсе —
+            // штрафуем его, чтобы перевести камеру на реальное лицо в другой части 16:9 кадра!
+            let already_failed_zone = used_ratios
+                .iter()
+                .any(|&old_r| (old_r - center_r).abs() < 0.065);
+            let adjusted_score = if already_failed_zone {
+                raw_score * 0.32
+            } else {
+                raw_score
+            };
+
+            if adjusted_score >= 0.24 {
+                window_totals[c_idx] += adjusted_score;
+                window_hits[c_idx] += 1;
+            }
+            if adjusted_score > best_c_score {
+                best_c_score = adjusted_score;
+                best_c_idx = c_idx;
+            }
+        }
+
+        if best_c_score >= 0.24 {
+            frame_best_ratios.push((rel_time, candidate_centers[best_c_idx], best_c_score));
+        }
+    }
+
+    let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+    if frame_best_ratios.is_empty() {
+        return None;
+    }
+
+    // Находим глобально лучшую горизонтальную зону в оригинальном 16:9 видео
+    let mut best_global_idx = 6_usize;
+    let mut best_global_power = 0.0_f64;
+    for i in 0..candidate_centers.len() {
+        let power = window_totals[i] * (1.0 + (window_hits[i] as f64) * 0.15);
+        if power > best_global_power {
+            best_global_power = power;
+            best_global_idx = i;
+        }
+    }
+
+    let dominant_ratio = candidate_centers[best_global_idx].clamp(0.16, 0.84);
+    let max_seen_score = frame_best_ratios
+        .iter()
+        .map(|(_, _, s)| *s)
+        .fold(0.0_f64, f64::max);
+    let face_frames_found = frame_best_ratios.len();
+
+    // Проверяем, меняет ли персонаж сторону кадра между первой и второй половиной ролика
+    if frame_best_ratios.len() >= 6 && duration_sec >= 5.0 {
+        let mid = frame_best_ratios.len() / 2;
+        let first_slice = &frame_best_ratios[..mid];
+        let second_slice = &frame_best_ratios[mid..];
+
+        let w1_sum: f64 = first_slice.iter().map(|(_, _, w)| *w).sum();
+        let r1 = first_slice.iter().map(|(_, r, w)| r * w).sum::<f64>() / w1_sum.max(0.01);
+
+        let w2_sum: f64 = second_slice.iter().map(|(_, _, w)| *w).sum();
+        let r2 = second_slice.iter().map(|(_, r, w)| r * w).sum::<f64>() / w2_sum.max(0.01);
+
+        if (r1 - r2).abs() >= 0.18 {
+            let split_t = second_slice[0].0.clamp(1.5, (duration_sec - 1.5).max(1.6));
+            let segs = vec![
+                CameraSegment {
+                    start_t: 0.0,
+                    end_t: split_t,
+                    start_ratio: r1.clamp(0.16, 0.84),
+                    end_ratio: r1.clamp(0.16, 0.84),
+                },
+                CameraSegment {
+                    start_t: split_t,
+                    end_t: duration_sec,
+                    start_ratio: r2.clamp(0.16, 0.84),
+                    end_ratio: r2.clamp(0.16, 0.84),
+                },
+            ];
+            let ratio_expr = build_ffmpeg_piecewise_ratio_expr(&segs);
+            let full_expr = format!(
+                "min(max(0, iw*({}) - (ih*(9/16))/2), iw-(ih*(9/16)))",
+                ratio_expr
+            );
+            let summary = format!(
+                "восстановленный 2-ракурсный фокус на лицах [{:.0}% -> {:.0}%]",
+                r1 * 100.0,
+                r2 * 100.0
+            );
+            return Some((full_expr, summary, face_frames_found, max_seen_score));
+        }
+    }
+
+    let expr = format!(
+        "min(max(0, iw*{:.4} - (ih*(9/16))/2), iw-(ih*(9/16)))",
+        dominant_ratio
+    );
+    let summary = format!(
+        "восстановленный фокус на лице {:.1}% ширины оригинала",
+        dominant_ratio * 100.0
+    );
+    Some((expr, summary, face_frames_found, max_seen_score))
+}
+
+/// Вырезает в памяти портретное окно 9:16 с центром `center_ratio` из полноразмерного 16:9 кадра (`320x180`)
+/// и оценивает наличие в нем лица с повышенной чувствительностью (включая ночные/контрастные сцены и лица у краев 16:9 кадра).
+fn score_16_9_frame_at_portrait_slice(
+    bytes: &[u8],
+    w: usize,
+    h: usize,
+    center_ratio: f64,
+) -> f64 {
+    if bytes.len() < 54 {
+        return 0.0;
+    }
+    let data_offset = u32::from_le_bytes([bytes[10], bytes[11], bytes[12], bytes[13]]) as usize;
+    let row_stride = (w * 3 + 3) & !3;
+    if bytes.len() < data_offset + row_stride * h {
+        return 0.0;
+    }
+    let raw_height = i32::from_le_bytes([bytes[22], bytes[23], bytes[24], bytes[25]]);
+    let bottom_up = raw_height > 0;
+
+    let get_pixel = |x: usize, y: usize| -> (f64, f64, f64, f64) {
+        let bmp_y = if bottom_up { h - 1 - y } else { y };
+        let idx = data_offset + bmp_y * row_stride + x * 3;
+        let b = bytes[idx] as f64;
+        let g = bytes[idx + 1] as f64;
+        let r = bytes[idx + 2] as f64;
+        let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        (r, g, b, luma)
+    };
+
+    // Ширина окна 9:16 внутри 320x180 равна 180 * 9 / 16 = 101 пиксель (~20 ячеек по 5 пикселей)
+    let slice_w = (h * 9 / 16).clamp(60, w);
+    let center_px = ((center_ratio * (w as f64)).round() as isize).clamp(0, w as isize);
+    let x_start = (center_px - (slice_w as isize) / 2)
+        .clamp(0, (w - slice_w) as isize) as usize;
+
+    let cw = 5_usize;
+    let ch = 5_usize;
+    let gw = slice_w / cw; // 20
+    let gh = h / ch; // 36
+
+    let mut grid_skin = vec![0.0_f64; gw * gh];
+    let mut grid_eye = vec![0.0_f64; gw * gh];
+    let mut grid_edge = vec![0.0_f64; gw * gh];
+
+    for gy in 1..(gh * 76 / 100) {
+        let py0 = gy * ch;
+        for gx in 1..(gw - 1) {
+            let px0 = x_start + gx * cw;
+            let mut skin_pixels = 0.0_f64;
+            let mut dark_pixels = 0.0_f64;
+            let mut sclera_pixels = 0.0_f64;
+            let mut edge_sum = 0.0_f64;
+            let mut luma_min = 255.0_f64;
+            let mut luma_max = 0.0_f64;
+
+            for dy in 0..ch {
+                for dx in 0..cw {
+                    let x = (px0 + dx).min(w - 1);
+                    let y = (py0 + dy).min(h - 1);
+                    let (r, g, b, luma) = get_pixel(x, y);
+                    luma_min = luma_min.min(luma);
+                    luma_max = luma_max.max(luma);
+
+                    let (_, _, _, l_right) = get_pixel((x + 2).min(w - 1), y);
+                    let (_, _, _, l_down) = get_pixel(x, (y + 2).min(h - 1));
+                    edge_sum += (luma - l_right).abs() + (luma - l_down).abs();
+
+                    let max_c = r.max(g).max(b);
+                    let min_c = r.min(g).min(b);
+                    let sat = if max_c > 1.0 { (max_c - min_c) / max_c } else { 0.0 };
+                    let cb = 128.0 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+                    let cr = 128.0 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+
+                    // Расширенный детектор кожи (включая затененные/вечерние сцены и бледные/контрастные лица аниме)
+                    let is_real_or_warm_skin = luma > 38.0
+                        && luma < 244.0
+                        && (76.0..=132.0).contains(&cb)
+                        && (128.0..=180.0).contains(&cr)
+                        && r >= g * 0.98
+                        && g >= b * 0.82
+                        && (r - b) >= 10.0
+                        && (0.06..=0.65).contains(&sat);
+
+                    let is_anime_or_pale_skin = luma > 75.0
+                        && luma < 248.0
+                        && r >= g * 0.99
+                        && g >= b * 0.90
+                        && (r - b) >= 6.0
+                        && (r - b) <= 75.0
+                        && (0.04..=0.48).contains(&sat);
+
+                    if is_real_or_warm_skin || is_anime_or_pale_skin {
+                        skin_pixels += 1.0;
+                    }
+                    if luma < 68.0 {
+                        dark_pixels += 1.0;
+                    }
+                    if luma > 182.0 && sat < 0.18 {
+                        sclera_pixels += 1.0;
+                    }
+                }
+            }
+
+            let area = (cw * ch) as f64;
+            let idx = gy * gw + gx;
+            grid_skin[idx] = skin_pixels / area;
+            let local_contrast = luma_max - luma_min;
+            let avg_edge = edge_sum / area;
+
+            if local_contrast > 38.0 && avg_edge > 12.5 && dark_pixels >= 1.5 {
+                let sclera_bonus = if sclera_pixels >= 1.0 { 1.4 } else { 1.0 };
+                grid_eye[idx] = ((avg_edge / 36.0).min(2.2)) * sclera_bonus;
+            }
+            if avg_edge > 12.0 && local_contrast > 28.0 {
+                grid_edge[idx] = (avg_edge / 44.0).min(1.6);
+            }
+        }
+    }
+
+    let box_scales: [(usize, usize, f64); 3] = [(9, 8, 1.18), (6, 6, 1.06), (4, 5, 0.92)];
+    let mut best_score = 0.0_f64;
+
+    for &(bw, bh, scale_w) in &box_scales {
+        let max_gy = (gh * 72 / 100).saturating_sub(bh).max(2);
+        // Требуем, чтобы лицо в этом срезе 9:16 не прижималось вплотную к краям среза (отступ >= 2 ячейки),
+        // чтобы в итоговом шортсе оно стояло ровно по центру!
+        for gy in 1..=max_gy {
+            for gx in 2..=(gw.saturating_sub(bw + 2)) {
+                let mut skin_sum = 0.0_f64;
+                let mut eye_sum = 0.0_f64;
+                let mut edge_sum = 0.0_f64;
+                for by in gy..(gy + bh) {
+                    for bx in gx..(gx + bw) {
+                        let idx = by * gw + bx;
+                        skin_sum += grid_skin[idx];
+                        eye_sum += grid_eye[idx];
+                        edge_sum += grid_edge[idx];
+                    }
+                }
+                let area = (bw * bh) as f64;
+                let skin_d = skin_sum / area;
+                let eye_d = eye_sum / area;
+                let edge_d = edge_sum / area;
+
+                if skin_d < 0.10 || (eye_d < 0.055 && edge_d < 0.10) {
+                    continue;
+                }
+
+                // Бонус за расположение лица ближе к горизонтальному центру выбранного окна 9:16
+                let box_cx = (gx as f64 + (bw as f64) * 0.5) / (gw as f64);
+                let center_align = (1.0 - (box_cx - 0.50).abs() * 1.1).clamp(0.55, 1.0);
+
+                let score = (skin_d * 2.3)
+                    * (1.0 + eye_d * 2.1 + edge_d * 0.85)
+                    * scale_w
+                    * center_align;
+                if score > best_score {
+                    best_score = score;
+                }
+            }
+        }
+    }
+
+    best_score
 }
 
 #[derive(Clone, Debug)]
@@ -993,11 +1831,15 @@ async fn build_dynamic_face_crop_expr(
     start_sec: f64,
     duration_sec: f64,
     app_handle: &AppHandle,
-) -> (String, String) {
+) -> (String, String, Vec<f64>) {
     let default_expr = "min(max(0, iw*0.500 - (ih*(9/16))/2), iw-(ih*(9/16)))".to_string();
     let shell = app_handle.shell();
     let Ok(ffmpeg) = shell.sidecar("ffmpeg") else {
-        return (default_expr, "центр кадра 50.0% (дефолт)".to_string());
+        return (
+            default_expr,
+            "центр кадра 50.0% (дефолт)".to_string(),
+            vec![0.50],
+        );
     };
 
     let ts = SystemTime::now()
@@ -1067,7 +1909,11 @@ async fn build_dynamic_face_crop_expr(
     let _ = tokio::fs::remove_dir_all(&temp_dir).await;
 
     if samples.is_empty() {
-        return (default_expr, "центр кадра 50.0% (дефолт)".to_string());
+        return (
+            default_expr,
+            "центр кадра 50.0% (дефолт)".to_string(),
+            vec![0.50],
+        );
     }
 
     let multi_face_frames = samples.iter().filter(|s| s.candidates.len() >= 2).count();
@@ -1075,7 +1921,19 @@ async fn build_dynamic_face_crop_expr(
 
     let segments = segment_and_smooth_camera_track(&samples, duration_sec);
     if segments.is_empty() {
-        return (default_expr, "центр кадра 50.0% (дефолт)".to_string());
+        return (
+            default_expr,
+            "центр кадра 50.0% (дефолт)".to_string(),
+            vec![0.50],
+        );
+    }
+
+    let mut track_ratios: Vec<f64> = Vec::new();
+    for s in &segments {
+        track_ratios.push(s.start_ratio);
+        if (s.end_ratio - s.start_ratio).abs() > 0.03 {
+            track_ratios.push(s.end_ratio);
+        }
     }
 
     let multi_face_note = if multi_face_frames >= 2 {
@@ -1098,7 +1956,7 @@ async fn build_dynamic_face_crop_expr(
             r * 100.0,
             multi_face_note
         );
-        return (expr, summary);
+        return (expr, summary, track_ratios);
     }
 
     let ratio_expr = build_ffmpeg_piecewise_ratio_expr(&segments);
@@ -1136,7 +1994,7 @@ async fn build_dynamic_face_crop_expr(
         seg_descriptions.join(", ")
     );
 
-    (full_expr, summary)
+    (full_expr, summary, track_ratios)
 }
 
 /// 2D-анализатор кадра 240x135 (BMP BGR24) с поддержкой нескольких лиц в кадре и детекцией активного говорящего:

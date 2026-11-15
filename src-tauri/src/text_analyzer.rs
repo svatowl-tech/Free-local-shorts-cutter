@@ -1168,7 +1168,7 @@ pub async fn analyze_with_llama_cli(
     );
 
     let mut all_scores = Vec::with_capacity(fragments.len());
-    let batch_size = 16;
+    let batch_size = 10;
     let total_batches = (fragments.len() + batch_size - 1) / batch_size;
     let mut use_gpu = true;
     let mut gpu_succeeded_once = false;
@@ -1208,15 +1208,53 @@ pub async fn analyze_with_llama_cli(
         };
 
         if gpu_output_corrupted && use_gpu && !gpu_succeeded_once {
-            // 1. Повторяем ту же модель на CPU ТОЛЬКО если произошел аппаратный сбой CUDA/FP16 (пустой вывод, GGGGG или краш процесса).
-            // Если модель на GPU отработала штатно, но не справилась с форматом — не тратим 45с на CPU, а сразу переключаемся на резервную GGUF-модель!
-            if needs_cpu_nan_retry && !is_model_marked_broken(&model_path_str) {
+            // 1. Сначала мгновенно пробуем переключиться на другую установленную GGUF-модель на GPU!
+            // Это экономит ~15–20 секунд бессмысленного ожидания на CPU, если 1.5B модель споткнулась на формате JSON, а рядом есть 3B/Phi-3.
+            mark_model_broken(&model_path_str);
+            let mut switched_to_alt_gpu = false;
+            if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
+                let alt_str = alt_path.to_string_lossy().to_string();
+                if !is_model_marked_broken(&alt_str) && alt_str != model_path_str {
+                    crate::logger::emit_log(
+                        app_handle,
+                        "LLM",
+                        "warn",
+                        &format!(
+                            "Модель '{}' не выдала массив в первом пакете. Мгновенное переключение на резервную GGUF-модель '{}' (GPU)...",
+                            model_path.display(),
+                            alt_path.display()
+                        ),
+                    );
+                    model_path = alt_path;
+                    model_path_str = alt_str;
+                    use_gpu = true;
+                    switched_to_alt_gpu = true;
+                    prompt = format_prompt_for_gguf_model(&model_path_str, &sys_prompt, &user_prompt, "[");
+                    batch_res = run_llama_cli(
+                        app_handle,
+                        &model_path_str,
+                        &prompt,
+                        chunk.len(),
+                        true,
+                        cancel_rx.resubscribe(),
+                    )
+                    .await;
+                }
+            }
+
+            let still_corrupted = match &batch_res {
+                Ok(out) => parse_json_array(out, chunk.len()).is_none(),
+                Err(_) => true,
+            };
+
+            // 2. Только если альтернативной GPU-модели не нашлось (или она тоже дала аппаратный сбой CUDA/FP16) — проверяем на CPU
+            if still_corrupted && (needs_cpu_nan_retry || !switched_to_alt_gpu) {
                 crate::logger::emit_log(
                     app_handle,
                     "LLM",
                     "warn",
                     &format!(
-                        "Модель '{}' показала сбой CUDA/FP16 на GPU в первом пакете. Быстрая проверка на чистом CPU...",
+                        "Проверка модели '{}' на чистом CPU после сбоя GPU в первом пакете...",
                         model_path.display()
                     ),
                 );
@@ -1230,44 +1268,6 @@ pub async fn analyze_with_llama_cli(
                     cancel_rx.resubscribe(),
                 )
                 .await;
-            }
-
-            let still_corrupted_primary = match &batch_res {
-                Ok(out) => parse_json_array(out, chunk.len()).is_none(),
-                Err(_) => true,
-            };
-
-            // 2. Если выбранная модель не выдала валидный массив — мгновенно переключаемся на резервную GGUF-модель на GPU
-            if still_corrupted_primary {
-                mark_model_broken(&model_path_str);
-                if let Some(alt_path) = crate::models::resolve_any_llm_model(app_handle, None) {
-                    let alt_str = alt_path.to_string_lossy().to_string();
-                    if !is_model_marked_broken(&alt_str) && alt_str != model_path_str {
-                        crate::logger::emit_log(
-                            app_handle,
-                            "LLM",
-                            "warn",
-                            &format!(
-                                "Модель '{}' не подошла для пакетной разметки. Автоматическое переключение на резервную GGUF-модель '{}' (GPU)...",
-                                model_path.display(),
-                                alt_path.display()
-                            ),
-                        );
-                        model_path = alt_path;
-                        model_path_str = alt_str;
-                        use_gpu = true;
-                        prompt = format_prompt_for_gguf_model(&model_path_str, &sys_prompt, &user_prompt, "[");
-                        batch_res = run_llama_cli(
-                            app_handle,
-                            &model_path_str,
-                            &prompt,
-                            chunk.len(),
-                            true,
-                            cancel_rx.resubscribe(),
-                        )
-                        .await;
-                    }
-                }
             }
         }
 
@@ -2101,7 +2101,6 @@ async fn run_llama_cli(
         "-r", "<|im_end|>",
         "-r", "<|end|>",
         "-r", "<|eot_id|>",
-        "-r", "\n\n",
         "--temp", "0.22",
         "--repeat-penalty", "1.15",
         "--no-display-prompt",
@@ -3308,7 +3307,7 @@ pub async fn verify_assembled_clips_coherence(
     Ok(verdicts)
 }
 
-/// Вспомогательный поиск альтернативного связного эмоционального пика рядом с проблемным клипом (±25с)
+/// Вспомогательный поиск альтернативного связного эмоционального пика рядом с проблемным клипом (±35с)
 fn find_clean_peak_window_near(
     cand: &AssembledClipCandidate,
     fragments: &[SubtitleFragment],
@@ -3320,10 +3319,10 @@ fn find_clean_peak_window_near(
     outro_limit: f64,
     video_duration: f64,
 ) -> Option<AssembledClipCandidate> {
-    let search_min = (cand.start - 25.0).max(intro_skip).max(0.0);
-    let search_max = (cand.end + 25.0).min(outro_limit).min(video_duration);
+    let search_min = (cand.start - 35.0).max(intro_skip).max(0.0);
+    let search_max = (cand.end + 35.0).min(outro_limit).min(video_duration);
 
-    let mut best_anchor: Option<(usize, f64)> = None;
+    let mut candidate_anchors: Vec<(usize, f64)> = Vec::new();
 
     for (i, f) in fragments.iter().enumerate() {
         if f.start < search_min || f.end > search_max {
@@ -3350,110 +3349,121 @@ fn find_clean_peak_window_near(
         }
 
         let dist_from_old_center = ((f.start + f.end) / 2.0 - (cand.start + cand.end) / 2.0).abs();
-        if dist_from_old_center < 3.0 {
-            peak_val *= 0.65;
+        if dist_from_old_center < 2.5 {
+            peak_val *= 0.72;
         }
 
-        if peak_val > best_anchor.map(|(_, sc)| sc).unwrap_or(0.0) {
-            best_anchor = Some((i, peak_val));
+        if peak_val >= 0.36 {
+            candidate_anchors.push((i, peak_val));
         }
     }
 
-    if let Some((anchor_i, peak_sc)) = best_anchor {
-        if peak_sc >= 0.40 {
-            let mut start_i = anchor_i;
-            while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 5 {
-                start_i -= 1;
-            }
-            // Если стартовая реплика является зависимым ответом/реакцией или местоименным продолжением («Я пыталась её установить...», «Как именно?»),
-            // подтягиваем предыдущее предложение-сетап (если пауза <= 2.2с)
-            while start_i > 0
-                && (is_weak_clip_start(fragments, start_i)
-                    || starts_with_dialogue_response(&fragments[start_i].text)
-                    || starts_with_discourse_continuation(&fragments[start_i].text))
-                && (fragments[start_i].start - fragments[start_i - 1].end).max(0.0) <= 2.2
-            {
-                start_i -= 1;
-                while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 6 {
-                    start_i -= 1;
-                }
-            }
+    candidate_anchors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-            let desired_dur = ((min_dur + max_dur) * 0.52).clamp(min_dur + 3.5, max_dur - 1.5);
-            let mut end_i = anchor_i;
-            while end_i + 1 < fragments.len()
-                && (fragments[end_i].end - fragments[start_i].start) < min_dur
-            {
-                end_i += 1;
+    for (anchor_i, peak_sc) in candidate_anchors.into_iter().take(6) {
+        let mut start_i = anchor_i;
+        while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 5 {
+            start_i -= 1;
+        }
+        // Если стартовая реплика является зависимым ответом/реакцией или местоименным продолжением («Я пыталась её установить...», «Как именно?»),
+        // подтягиваем предыдущее предложение-сетап (если пауза <= 2.4с)
+        while start_i > 0
+            && (is_weak_clip_start(fragments, start_i)
+                || starts_with_dialogue_response(&fragments[start_i].text)
+                || starts_with_discourse_continuation(&fragments[start_i].text))
+            && (fragments[start_i].start - fragments[start_i - 1].end).max(0.0) <= 2.4
+        {
+            start_i -= 1;
+            while start_i > 0 && !is_sentence_start(fragments, start_i) && (anchor_i - start_i) < 6 {
+                start_i -= 1;
             }
-            // Доводим окно до целевой длительности (~15-16с) и захватываем панчлайн текущей сцены (например «Прошлый раз она себе челюсть поменяла.»),
-            // пока реплики идут непрерывно (gap <= 1.8с) и укладываются в max_dur
-            while end_i + 1 < fragments.len()
-                && (fragments[end_i + 1].end - fragments[start_i].start) <= max_dur
-            {
-                let gap_next = (fragments[end_i + 1].start - fragments[end_i].end).max(0.0);
-                let curr_dur = fragments[end_i].end - fragments[start_i].start;
-                let need_sentence_closure = !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i);
-                let can_include_punchline = curr_dur < desired_dur
-                    && gap_next <= 1.8
-                    && !is_new_scene_opener(&fragments[end_i + 1].text);
-                if need_sentence_closure || can_include_punchline {
-                    end_i += 1;
-                } else {
+        }
+        // Если шаг назад упёрся в большую паузу, но на следующей реплике начинается чистое самостоятельное предложение — шагаем вперёд
+        if (!is_sentence_start(fragments, start_i) || is_weak_clip_start(fragments, start_i))
+            && start_i + 1 < fragments.len()
+        {
+            for fwd_s in (start_i + 1)..=(start_i + 2).min(fragments.len() - 1) {
+                if is_sentence_start(fragments, fwd_s) && !is_weak_clip_start(fragments, fwd_s) {
+                    start_i = fwd_s;
                     break;
                 }
             }
+        }
 
-            if !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i) {
-                for back_e in ((start_i + 1)..=end_i).rev() {
-                    if is_sentence_end(fragments, back_e)
-                        && !is_weak_clip_ending(fragments, back_e)
-                        && (fragments[back_e].end - fragments[start_i].start) >= min_dur - 0.35
-                    {
-                        end_i = back_e;
-                        break;
-                    }
+        let desired_dur = ((min_dur + max_dur) * 0.52).clamp(min_dur + 3.5, max_dur - 1.5);
+        let mut end_i = anchor_i.max(start_i);
+        while end_i + 1 < fragments.len()
+            && (fragments[end_i].end - fragments[start_i].start) < min_dur
+        {
+            end_i += 1;
+        }
+        // Доводим окно до целевой длительности (~15-16с) и захватываем панчлайн текущей сцены,
+        // пока реплики идут непрерывно (gap <= 1.8с) и укладываются в max_dur
+        while end_i + 1 < fragments.len()
+            && (fragments[end_i + 1].end - fragments[start_i].start) <= max_dur + 0.8
+        {
+            let gap_next = (fragments[end_i + 1].start - fragments[end_i].end).max(0.0);
+            let curr_dur = fragments[end_i].end - fragments[start_i].start;
+            let need_sentence_closure = !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i);
+            let can_include_punchline = curr_dur < desired_dur
+                && gap_next <= 1.8
+                && !is_new_scene_opener(&fragments[end_i + 1].text);
+            if need_sentence_closure || can_include_punchline {
+                end_i += 1;
+            } else {
+                break;
+            }
+        }
+
+        if !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i) {
+            for back_e in ((start_i + 1)..=end_i).rev() {
+                if is_sentence_end(fragments, back_e)
+                    && !is_weak_clip_ending(fragments, back_e)
+                    && (fragments[back_e].end - fragments[start_i].start) >= min_dur - 0.35
+                {
+                    end_i = back_e;
+                    break;
                 }
             }
+        }
 
-            if !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i) {
-                return None;
-            }
+        if !is_sentence_end(fragments, end_i) || is_weak_clip_ending(fragments, end_i) {
+            continue;
+        }
 
-            let new_start = (fragments[start_i].start - 0.25).max(intro_skip).max(0.0);
-            let new_end = (fragments[end_i].end + 0.35).min(outro_limit).min(video_duration);
-            let new_dur = new_end - new_start;
+        let new_start = (fragments[start_i].start - 0.25).max(intro_skip).max(0.0);
+        let new_end = (fragments[end_i].end + 0.35).min(outro_limit).min(video_duration);
+        let new_dur = new_end - new_start;
 
-            let shift = (new_start - cand.start).abs() + (new_end - cand.end).abs();
-            if shift >= 2.5 && new_dur >= min_dur - 0.15 && new_dur <= max_dur + 1.0 {
-                let mut dialogue_parts: Vec<String> = Vec::new();
-                for f in &fragments[start_i..=end_i] {
-                    let trimmed = f.text.trim();
-                    if !trimmed.is_empty() {
-                        dialogue_parts.push(trimmed.to_string());
-                    }
+        let shift = (new_start - cand.start).abs() + (new_end - cand.end).abs();
+        if shift >= 1.2 && new_dur >= min_dur - 0.25 && new_dur <= max_dur + 1.2 {
+            let mut dialogue_parts: Vec<String> = Vec::new();
+            for f in &fragments[start_i..=end_i] {
+                let trimmed = f.text.trim();
+                if !trimmed.is_empty() {
+                    dialogue_parts.push(trimmed.to_string());
                 }
-                let first_p = format_preview_text_68(&fragments[start_i].text);
-                let last_p = format_preview_text_68(&fragments[end_i].text);
-                let full_dialogue = dialogue_parts.join(" — ");
-
-                return Some(AssembledClipCandidate {
-                    start: new_start,
-                    end: new_end,
-                    initial_score: (cand.initial_score * 0.5 + peak_sc * 0.5).clamp(0.40, 0.95),
-                    first_phrase: first_p,
-                    last_phrase: last_p,
-                    full_dialogue,
-                    first_cue_idx: Some(start_i),
-                    last_cue_idx: Some(end_i),
-                    cue_count: dialogue_parts.len(),
-                    round: 2,
-                    repair_note: Some(format!(
-                        "Фокус сцены перенесен на яркий эмоциональный пик на {:.1}с",
-                        fragments[anchor_i].start
-                    )),
-                });
             }
+            let first_p = format_preview_text_68(&fragments[start_i].text);
+            let last_p = format_preview_text_68(&fragments[end_i].text);
+            let full_dialogue = dialogue_parts.join(" — ");
+
+            return Some(AssembledClipCandidate {
+                start: new_start,
+                end: new_end,
+                initial_score: (cand.initial_score * 0.5 + peak_sc * 0.5).clamp(0.40, 0.95),
+                first_phrase: first_p,
+                last_phrase: last_p,
+                full_dialogue,
+                first_cue_idx: Some(start_i),
+                last_cue_idx: Some(end_i),
+                cue_count: dialogue_parts.len(),
+                round: 2,
+                repair_note: Some(format!(
+                    "Фокус сцены перенесен на яркий эмоциональный пик на {:.1}с",
+                    fragments[anchor_i].start
+                )),
+            });
         }
     }
 
@@ -3489,21 +3499,39 @@ pub fn repair_clip_candidate(
                 return None;
             }
 
-            // А. Проверяем начало: если фраза начинается на полуслове / со строчной / союзе продолжения, сдвигаем назад
+            let max_repaired_dur = (max_dur + 1.2).min(video_duration);
+
+            // А. Проверяем начало: если фраза начинается на полуслове / со строчной / союзе продолжения,
+            // сначала пробуем сдвинуть назад, а если это раздувает длительность свыше max_dur — сдвигаем на 1–3 реплики вперед к чистому началу предложения
             let mut repaired_first_idx = first_idx;
-            if first_idx > 0 && (!is_sentence_start(fragments, first_idx) || is_weak_clip_start(fragments, first_idx)) {
-                let start_bound = first_idx.saturating_sub(5);
-                for back_i in (start_bound..first_idx).rev() {
-                    if is_sentence_start(fragments, back_i) && !is_weak_clip_start(fragments, back_i) {
-                        repaired_first_idx = back_i;
-                        break;
+            if !is_sentence_start(fragments, first_idx) || is_weak_clip_start(fragments, first_idx) {
+                let mut found_back = false;
+                if first_idx > 0 {
+                    let start_bound = first_idx.saturating_sub(5);
+                    for back_i in (start_bound..first_idx).rev() {
+                        if is_sentence_start(fragments, back_i) && !is_weak_clip_start(fragments, back_i) {
+                            let tentative_dur = fragments[last_idx].end - fragments[back_i].start;
+                            if tentative_dur <= max_repaired_dur {
+                                repaired_first_idx = back_i;
+                                found_back = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+                if !found_back {
+                    let fwd_start_limit = (first_idx + 3).min(last_idx);
+                    for fwd_s in (first_idx + 1)..=fwd_start_limit {
+                        if is_sentence_start(fragments, fwd_s) && !is_weak_clip_start(fragments, fwd_s) {
+                            repaired_first_idx = fwd_s;
+                            break;
+                        }
                     }
                 }
             }
 
             // Б. Проверяем финал: сканируем вперед до точки/восклицания/панчлайна в пределах допустимого лимита max_dur
             let mut repaired_last_idx = last_idx;
-            let max_repaired_dur = (max_dur + 1.0).min(video_duration);
             let forward_bound = (last_idx + 10).min(fragments.len().saturating_sub(1));
             for fwd_i in (last_idx + 1)..=forward_bound {
                 let dur = fragments[fwd_i].end - fragments[repaired_first_idx].start;
@@ -3518,11 +3546,14 @@ pub fn repair_clip_candidate(
                 }
             }
 
-            // Б2. Если финал всё ещё не закрыт (не хватило лимита длительности вперед):
+            // Б2. Если финал всё ещё не закрыт (не хватило лимита длительности вперед) или длительность меньше min_dur после подрезки старта:
             // 1) пробуем сдвинуть старт чуть вперед к следующему чистому началу предложения, чтобы освободить место под панчлайн;
-            if !is_sentence_end(fragments, repaired_last_idx) || is_weak_clip_ending(fragments, repaired_last_idx) {
+            if !is_sentence_end(fragments, repaired_last_idx)
+                || is_weak_clip_ending(fragments, repaired_last_idx)
+                || (fragments[repaired_last_idx].end - fragments[repaired_first_idx].start) < min_dur - 0.25
+            {
                 let shift_limit = (repaired_first_idx + 4).min(last_idx);
-                for cand_first in (repaired_first_idx + 1)..=shift_limit {
+                for cand_first in repaired_first_idx..=shift_limit {
                     if !is_sentence_start(fragments, cand_first) || is_weak_clip_start(fragments, cand_first) {
                         continue;
                     }
@@ -3565,7 +3596,7 @@ pub fn repair_clip_candidate(
             let start_ok = is_sentence_start(fragments, repaired_first_idx) && !is_weak_clip_start(fragments, repaired_first_idx);
             let end_ok = is_sentence_end(fragments, repaired_last_idx) && !is_weak_clip_ending(fragments, repaired_last_idx);
             if !start_ok || !end_ok {
-                // Если даже после коррекции границ мысль не замкнулась — переносим окно на соседний цельный пик в ±25с
+                // Если даже после коррекции границ мысль не замкнулась — переносим окно на соседний цельный пик в ±35с
                 return find_clean_peak_window_near(
                     cand,
                     fragments,
@@ -3583,7 +3614,7 @@ pub fn repair_clip_candidate(
             let new_end = (fragments[repaired_last_idx].end + 0.35).min(outro_limit).min(video_duration);
             let new_dur = new_end - new_start;
 
-            if new_dur < min_dur - 0.15 || new_dur > max_dur + 1.2 {
+            if new_dur < min_dur - 0.25 || new_dur > max_dur + 1.2 {
                 return find_clean_peak_window_near(
                     cand,
                     fragments,
@@ -4297,9 +4328,17 @@ fn extract_scene_topic_label(lower_dlg: &str) -> &'static str {
         "грани киберпсихоза и потери контроля над хромом"
     } else if lower_dlg.contains("полиц") || lower_dlg.contains("коп") || lower_dlg.contains("арест") || lower_dlg.contains("допрос") || lower_dlg.contains("корпорац") || lower_dlg.contains("арасак") || lower_dlg.contains("кантао") || lower_dlg.contains("макс-так") {
         "жесткого столкновения с корпорациями и спецназом"
+    } else if lower_dlg.contains("мама") || lower_dlg.contains("сынок") || lower_dlg.contains("спрячься в лесу") || lower_dlg.contains("не грусти") {
+        "отчаянного спасения близких посреди ночного пожара"
+    } else if lower_dlg.contains("третью ступен") || lower_dlg.contains("бога войн") || lower_dlg.contains("мошенничеств") || lower_dlg.contains("ловкость рук") || lower_dlg.contains("сопляк") {
+        "смертельной дуэли с пробудившейся Маской Бога войны"
+    } else if lower_dlg.contains("обижал малыша") || lower_dlg.contains("размазн") || lower_dlg.contains("отомстил") || lower_dlg.contains("соплежу") {
+        "дерзкого реванша и защиты младшего товарища"
+    } else if lower_dlg.contains("примет с распростерт") || lower_dlg.contains("чудовищ") || lower_dlg.contains("королевств") || lower_dlg.contains("жител") || lower_dlg.contains("народ") {
+        "страха горожан перед проклятой силой и непростого возвращения"
     } else if lower_dlg.contains("доктор") || lower_dlg.contains("обезбол") || lower_dlg.contains("боль") || lower_dlg.contains("больно") || lower_dlg.contains("ран") || lower_dlg.contains("таблетк") {
         "послебоевой перевязки и упрямого характера"
-    } else if lower_dlg.contains("поеду с тобой") || lower_dlg.contains("поеду с ") || lower_dlg.contains("бывайте") || lower_dlg.contains("проща") || lower_dlg.contains("отблагодар") {
+    } else if lower_dlg.contains("поеду с тобой") || lower_dlg.contains("поеду с ") || lower_dlg.contains("бывайте") || lower_dlg.contains("проща") || lower_dlg.contains("отблагодар") || lower_dlg.contains("увязаться") {
         "непростого расставания и упрямого выбора пути"
     } else if lower_dlg.contains("плач") || lower_dlg.contains("слез") || lower_dlg.contains("потеря") {
         "тихой боли и искренней поддержки в трудную минуту"
@@ -4311,10 +4350,10 @@ fn extract_scene_topic_label(lower_dlg: &str) -> &'static str {
         "бунта против наследия наставника"
     } else if lower_dlg.contains("сдохн") || lower_dlg.contains("умр") || lower_dlg.contains("выиграть время") || lower_dlg.contains("подальше") {
         "рискованного расчёта и отчаянной попытки выстоять"
-    } else if lower_dlg.contains("монстр") || lower_dlg.contains("чудовищ") || lower_dlg.contains("демон") || lower_dlg.contains("проклят") {
+    } else if lower_dlg.contains("монстр") || lower_dlg.contains("демон") || lower_dlg.contains("проклят") {
         "пробуждения опасного проклятия"
     } else if lower_dlg.contains("оружи") || lower_dlg.contains("меч") || lower_dlg.contains("клин") || lower_dlg.contains("удар") || lower_dlg.contains("бой") || lower_dlg.contains("атак") || lower_dlg.contains("стрел") || lower_dlg.contains("прицел") || lower_dlg.contains("меткост") {
-        "решающей перестрелки на пределе возможностей"
+        "решающей схватки на пределе возможностей"
     } else if lower_dlg.contains("секрет") || lower_dlg.contains("тайн") || lower_dlg.contains("правд") || lower_dlg.contains("скры") {
         "раскрытия неудобной правды"
     } else if lower_dlg.contains("план") || lower_dlg.contains("ловушк") || lower_dlg.contains("хитр") || lower_dlg.contains("взлом") {
@@ -4382,6 +4421,22 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         || lower_dlg.contains("отключ")
         || lower_dlg.contains("взлом")
         || lower_dlg.contains("сеть");
+    let is_tragic_rescue = lower_dlg.contains("мама")
+        || lower_dlg.contains("сынок")
+        || lower_dlg.contains("спрячься в лесу")
+        || lower_dlg.contains("не грусти");
+    let is_mask_duel = lower_dlg.contains("третью ступен")
+        || lower_dlg.contains("бога войн")
+        || lower_dlg.contains("мошенничеств")
+        || lower_dlg.contains("ловкость рук")
+        || lower_dlg.contains("сопляк");
+    let is_kid_payback = lower_dlg.contains("обижал малыша")
+        || lower_dlg.contains("размазн")
+        || lower_dlg.contains("отомстил")
+        || lower_dlg.contains("соплежу");
+    let is_outcast_return = lower_dlg.contains("примет с распростерт")
+        || lower_dlg.contains("королевств")
+        || (lower_dlg.contains("чудовищ") && lower_dlg.contains("слух"));
     let is_doctor_or_pain = lower_dlg.contains("доктор")
         || lower_dlg.contains("обезбол")
         || lower_dlg.contains("невыносимо больн")
@@ -4394,6 +4449,7 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         || lower_dlg.contains("бывайте")
         || lower_dlg.contains("пройти мимо")
         || lower_dlg.contains("отблагодар")
+        || lower_dlg.contains("увязаться")
         || lower_dlg.contains("вот и все");
     let is_revenge_or_destruction = lower_dlg.contains("уничтож")
         || lower_dlg.contains("разруш")
@@ -4410,7 +4466,6 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
         || lower_dlg.contains("святилищ")
         || lower_dlg.contains("необычн")
         || lower_dlg.contains("древн")
-        || lower_dlg.contains("бога войн")
         || lower_dlg.contains("проклят");
     let is_combat_or_danger = lower_dlg.contains("атак")
         || lower_dlg.contains("бой")
@@ -4482,6 +4537,34 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             "Секретный носитель в чужих руках: почему за ним гоняется весь город",
         ];
         variants[seed % variants.len()]
+    } else if is_tragic_rescue {
+        let variants = [
+            "Улыбка сквозь пламя: когда остаётся секунда, чтобы спасти близких",
+            "Прощание посреди огненного ада: цена одного спасённого детства",
+            "Когда времени на побег уже нет и приходится принимать удар на себя",
+        ];
+        variants[seed % variants.len()]
+    } else if is_mask_duel {
+        let variants = [
+            "Маска Бога войны вышла на новый уровень: трюк, который враг не просчитал",
+            "Когда древний артефакт пробуждает третью ступень силы посреди боя",
+            "Дерзкий блеф против смертоносной маски: кто кого перехитрил в дуэли",
+        ];
+        variants[seed % variants.len()]
+    } else if is_kid_payback {
+        let variants = [
+            "Красивый реванш за младшего: когда обидчик недооценил противника",
+            "Мгновенная карма в бою: почему не стоило трогать слабых",
+            "Отпор без лишних сантиментов: когда пришло время вернуть должок",
+        ];
+        variants[seed % variants.len()]
+    } else if is_outcast_return {
+        let variants = [
+            "Герой или чудовище: почему возвращение домой опаснее самой битвы",
+            "Когда спасителя боятся сильнее врагов: обратная сторона проклятой силы",
+            "Слухи бегут впереди клинка: как встретит город того, кто носит маску",
+        ];
+        variants[seed % variants.len()]
     } else if is_doctor_or_pain {
         let variants = [
             "Медицина бессильна, когда на анестезии решили сэкономить",
@@ -4520,7 +4603,7 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     } else if is_combat_or_danger {
         let variants = [
             "Секунда до бури: когда переговоры официально зашли в тупик",
-            "Никаких прелюдий — сразу в эпицентр перестрелки на выживание",
+            "Никаких прелюдий — сразу в эпицентр схватки на выживание",
             "Момент, когда инстинкт самосохранения окончательно взял выходной",
         ];
         variants[seed % variants.len()]
@@ -4625,6 +4708,30 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
                     "Режим инкогнито 2077 уровня: чем меньше лишних свидетелей у данных, тем крепче сон.",
                 ];
                 jokes[seed % jokes.len()]
+            } else if is_tragic_rescue {
+                let jokes = [
+                    "Сценаристы решили не ждать финала сезона и выкрутили драму на максимум уже в первые минуты.",
+                    "Тот случай, когда запас бумажных платков зрителю стоит приготовить заранее.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_mask_duel {
+                let jokes = [
+                    "Когда у босса внезапно включается третья фаза, а в рукаве осталась только наглость и импровизация.",
+                    "Классика аниме-дуэлей: кто громче объявил новый уровень силы, тот и задаёт правила боя.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_kid_payback {
+                let jokes = [
+                    "Воспитательная беседа прошла успешно: хулиганы усвоили урок физики на собственном примере.",
+                    "Правило любого экшена: никогда не списывай со счетов того, кто только что встал после удара.",
+                ];
+                jokes[seed % jokes.len()]
+            } else if is_outcast_return {
+                let jokes = [
+                    "Пиар-служба в королевстве работает своеобразно: сначала спас всех вокруг, а потом доказывай, что ты не финальный босс.",
+                    "С такой репутацией даже за хлебом в соседний город приходится выезжать инкогнито.",
+                ];
+                jokes[seed % jokes.len()]
             } else if is_doctor_or_pain {
                 let jokes = [
                     "Бесплатная медицина в действии: бинты по талонам, а сочувствие только по премиум-подписке.",
@@ -4710,6 +4817,26 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
     } else if is_gps_or_hacking {
         format!(
             "Внутри момента — напряжённая разборка вокруг {}, где герои ищут способ обойти корпоративный контроль",
+            topic_label
+        )
+    } else if is_tragic_rescue {
+        format!(
+            "Внутри сцены — пронзительный драматический эпизод вокруг {}, где на счету каждое мгновение",
+            topic_label
+        )
+    } else if is_mask_duel {
+        format!(
+            "Внутри момента — яростное столкновение вокруг {}, где хитрость и холодный расчёт сталкиваются с подавляющей мощью",
+            topic_label
+        )
+    } else if is_kid_payback {
+        format!(
+            "Внутри фрагмента — эмоциональная развязка вокруг {}, когда герой возвращает уверенность и ставит обидчика на место",
+            topic_label
+        )
+    } else if is_outcast_return {
+        format!(
+            "Внутри сцены — непростой разговор вокруг {}, раскрывающий пропасть между подвигом героя и страхом окружающих",
             topic_label
         )
     } else if is_doctor_or_pain {
@@ -4913,7 +5040,7 @@ fn has_leaked_smm_template(text: &str) -> bool {
 }
 
 /// Очищает сгенерированный LLM заголовок от дублирующегося префикса/суффикса названия тайтла
-/// (например, «Киберпанк Бегущие по краю: Зачем нужен чип?» -> «Зачем нужен чип?»),
+/// (например, «Киберпанк Бегущие по краю: Зачем нужен чип?» или «Маска вермильона, где страх...» -> «Зачем нужен чип?»),
 /// чтобы при финальном форматировании не получалось двойное название
 fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> String {
     let mut s = candidate.trim().to_string();
@@ -4926,7 +5053,7 @@ fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> Str
         }
     }
 
-    // 2. Базовое имя тайтла без `(3 серия)`
+    // 2. Базовое имя тайтла без `(2 серия)`
     let base_title = video_title
         .split('(')
         .next()
@@ -4938,14 +5065,14 @@ fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> Str
         .unwrap_or("")
         .trim_matches(|c: char| !c.is_alphanumeric());
 
-    // Проверяем двоеточие или тире в начале заголовка, если левая часть состоит из слов названия тайтла
-    for sep in [": ", " — ", " - "] {
+    // Проверяем двоеточие, тире или запятую в начале заголовка, если левая часть состоит из названия тайтла
+    for sep in [": ", " — ", " - ", ", "] {
         if let Some((prefix, rest)) = s.split_once(sep) {
             let p_low = prefix.trim().to_lowercase().replace('ё', "е");
             let b_low = base_title.to_lowercase().replace('ё', "е");
             let fw_low = first_title_word.to_lowercase().replace('ё', "е");
             if (!b_low.is_empty() && (p_low == b_low || b_low.starts_with(&p_low) || p_low.starts_with(&b_low)))
-                || (fw_low.chars().count() >= 5 && p_low == fw_low)
+                || (sep != ", " && fw_low.chars().count() >= 5 && p_low == fw_low)
             {
                 let clean_rest = rest.trim().trim_matches(['"', '«', '»']);
                 if clean_rest.chars().count() >= 8 {
@@ -4964,9 +5091,14 @@ fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> Str
     s.trim().to_string()
 }
 
-/// Проверяет, является ли сгенерированный LLM заголовок полноценным осмысленным хуком (минимум 4 собственных слова без учета названия тайтла),
+/// Проверяет, является ли сгенерированный LLM заголовок полноценным осмысленным хуком (минимум 4 собственных слова без учета названия тайтла и имен героев),
 /// грамматически корректным и семантически привязанным к теме сцены
-fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str, inside_dialogue: &str) -> bool {
+fn is_meaningful_smm_hook_title(
+    candidate: &str,
+    video_title: &str,
+    inside_dialogue: &str,
+    characters: &[String],
+) -> bool {
     let lower_cand = candidate.to_lowercase().replace('ё', "е");
     let lower_video = video_title.to_lowercase().replace('ё', "е");
     let lower_dlg = inside_dialogue.to_lowercase().replace('ё', "е");
@@ -4996,16 +5128,41 @@ fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str, inside_dialo
         "кавидя",
         "стох,",
         "стох ",
+        "болевые чувства",
+        "переходит в смех",
+        "через дворец",
+        "маскапук",
+        "сделала себе маску",
+        "вот-вот перевернется",
+        "вот-вот перевернётся",
     ];
     if BANNED_TITLE_ECHO_WORDS.iter().any(|&w| lower_cand.contains(w)) {
         return false;
     }
 
-    // 2. Вычисляем слова, которые НЕ входят в само название исходного видео (`video_title`)
+    // 2. Вычисляем слова, которые НЕ входят ни в название исходного видео (`video_title`), ни в список имен персонажей (`characters`)
     let video_words: Vec<String> = lower_video
         .split(|c: char| !c.is_alphabetic())
         .filter(|w| w.chars().count() >= 3)
         .map(|w| w.to_string())
+        .collect();
+
+    let char_stems: Vec<String> = characters
+        .iter()
+        .flat_map(|c| {
+            c.to_lowercase()
+                .replace('ё', "е")
+                .split(|ch: char| !ch.is_alphabetic())
+                .filter_map(|w| {
+                    let chs: Vec<char> = w.chars().collect();
+                    if chs.len() >= 3 {
+                        Some(chs.into_iter().take(4).collect::<String>())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<String>>()
+        })
         .collect();
 
     let own_hook_words: Vec<&str> = lower_cand
@@ -5021,7 +5178,11 @@ fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str, inside_dialo
             ) {
                 return false;
             }
-            !video_words.iter().any(|vw| vw == w)
+            if video_words.iter().any(|vw| vw == w) {
+                return false;
+            }
+            let w_stem: String = w.chars().take(4).collect();
+            !char_stems.iter().any(|cs| cs == &w_stem)
         })
         .collect();
 
@@ -5029,8 +5190,8 @@ fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str, inside_dialo
         return false;
     }
 
-    // 3. Проверяем семантическую привязку к реальной сцене: хотя бы один 4-буквенный корень из хука
-    // должен перекликаться либо с диалогом, либо с тематическим ярлыком сцены
+    // 3. Проверяем семантическую привязку к реальной сцене: хотя бы один 4-буквенный корень из содержательных слов хука
+    // (кроме имен персонажей!) должен перекликаться либо с диалогом, либо с тематическим ярлыком сцены
     let topic_label = extract_scene_topic_label(&lower_dlg);
     let reference_corpus = format!("{} {}", lower_dlg, topic_label);
     let ref_stems: Vec<String> = reference_corpus
@@ -5038,7 +5199,12 @@ fn is_meaningful_smm_hook_title(candidate: &str, video_title: &str, inside_dialo
         .filter_map(|w| {
             let chs: Vec<char> = w.chars().collect();
             if chs.len() >= 4 {
-                Some(chs.into_iter().take(4).collect::<String>())
+                let stem: String = chs.into_iter().take(4).collect();
+                if char_stems.iter().any(|cs| cs == &stem) {
+                    None
+                } else {
+                    Some(stem)
+                }
             } else {
                 None
             }
@@ -5207,7 +5373,12 @@ fn parse_smm_llm_output(
     let title_valid = cleaned_hook.chars().count() >= 18
         && cleaned_hook.chars().count() <= 110
         && cyrillic_word_count(&cleaned_hook) >= 4
-        && is_meaningful_smm_hook_title(&cleaned_hook, &input.video_title, &input.inside_dialogue)
+        && is_meaningful_smm_hook_title(
+            &cleaned_hook,
+            &input.video_title,
+            &input.inside_dialogue,
+            &input.characters,
+        )
         && !has_leaked_smm_template(&cleaned_hook)
         && !has_hallucinated_title_stem(&cleaned_hook, &input.video_title, &input.inside_dialogue)
         && !is_verbatim_subtitle_copy(&cleaned_hook, &input.inside_dialogue);
