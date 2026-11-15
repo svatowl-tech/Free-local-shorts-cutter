@@ -182,8 +182,24 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "шепот",
         "вздохи",
         "тихие звуки",
+        "вскрик",
+        "вскрики",
+        "громкий",
+        "громкий громкий",
+        "тихий",
     ];
     if exact_tags.contains(&clean_exact) {
+        return true;
+    }
+
+    // Строки с вокальными ремарками в звездочках («*поет* ...», «*поёт* ...», «*музыка*»)
+    if lower.starts_with("*поет*")
+        || lower.starts_with("*поёт*")
+        || lower.starts_with("*музыка*")
+        || lower.starts_with("*песня*")
+        || lower.contains("*поет*")
+        || lower.contains("*поёт*")
+    {
         return true;
     }
 
@@ -251,6 +267,12 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "по-симки",
         "звук шлифов",
         "играет тревожная музыка",
+        "я ищу на фоне",
+        "джунжер",
+        "не делаешь, как идиот",
+        "блок, мэм, салф",
+        "ауэй, лайс",
+        "\"баке\"",
         "amara.org",
         "амара.орг",
         "opensubtitles",
@@ -854,17 +876,104 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
         ("сарян.", "сорян."),
         ("свежи с тобой", "свяжусь с тобой"),
         ("еда это не отравлена", "еда эта не отравлена"),
+        // Защита от ложного разрыва корня на предлог («о томщу» -> «отомщу»)
+        ("о томщу", "отомщу"),
+        ("о томстил", "отомстил"),
+        ("о томстить", "отомстить"),
+        ("о томстим", "отомстим"),
+        // 3 серия Маски вермильона и общие фонетические искажения дубляжа
+        ("влады когоон", "Владыка Гоон"),
+        ("владу гугона", "Владыку Гоона"),
+        ("гоуны подчинил", "Гоон и подчинил"),
+        ("гооны пошел покривой дорожки", "Гоон и пошёл по кривой дорожке"),
+        ("покривой дорожки", "по кривой дорожке"),
+        ("тоток, айрон", "Тото, Кайрон"),
+        ("массочник", "Масочник"),
+        ("масокника", "масочника"),
+        ("масокник", "масочник"),
+        ("глиди перу", "Гляди, Беро"),
+        ("лиди перо", "Гляди, Беро"),
+        ("терру! сонаруэ!", "Беро! Сонаруэ!"),
+        ("так ей подозревал", "так я и подозревал"),
+        ("исполняли его приказа.", "исполняли его приказы."),
+        ("исполняли его приказа,", "исполняли его приказы,"),
+        ("действует по собственной воле", "действуют по собственной воле"),
+        ("чему жества мы силы восхищались", "чьим мужеством и силой восхищались"),
+        ("чему жества мы силы", "чьим мужеством и силой"),
+        ("спыл у жару", "с пылу с жару"),
+        ("по зарез", "позарез"),
+        ("достался ты мне?", "Да сдался ты мне!"),
+        ("и бит в лицу гостю", "дымит в лицо гостю"),
+        ("без курива", "без курева"),
+        ("денышки", "денежки"),
+        ("испорились", "испарились"),
+        ("пульса приносят", "пользу приносят"),
+        ("отликнуть сама", "отлипнуть сама"),
+        ("ходят с опасные", "охотятся опасные"),
+        ("маск огнедыщего", "Маска огнедышащего"),
+        ("огнетышащего", "огнедышащего"),
+        ("огнедыщего", "огнедышащего"),
+        ("оталеть", "одолеть"),
+        ("и на ва-пути", "иного пути"),
+        ("коры господней", "кары Господней"),
+        ("заблудший огнец", "заблудший агнец"),
+        ("маска горшина", "Маска Коршуна"),
+        ("тропыхаешься", "трепыхаешься"),
+        ("огненный город, кар и небес, най!", "огненный град кары небесной!"),
+        ("огненный город, кар и небес", "огненный град кары небесной"),
+        ("не подчиняться его приказан", "не подчиняться его приказам"),
+        ("это во времени мне как так расхватит", "этого времени мне как раз хватит"),
+        ("да подсказ. растоящий я", "дам подсказку. Настоящий я"),
+        ("домовых клонов", "дымовых клонов"),
+        ("такого-то бой!", "такого-то боя!"),
+        ("троём с моком", "втроём с Моком"),
+        ("троем с моком", "втроём с Моком"),
+        ("голлафана", "Галафана"),
+        ("муфеозных", "мафиозных"),
+    ];
+
+    // Короткие предложно-местоименные склейки, которые должны заменяться ТОЛЬКО как отдельные слова целиком
+    // (иначе «отом» внутри слова «отомщу» превращает его в «о томщу», а «втом» внутри «автомат» — в «ав томат»!)
+    let whole_word_only = [
+        "втот", "втом", "вэтом", "вэтих", "вэтой", "втех", "споля", "спола", "содного",
+        "содной", "кнам", "квам", "отом", "обэтом", "нанас", "навас", "изза", "изпод",
     ];
 
     let mut result = text.to_string();
     for &(glued, fixed) in glued_patterns {
+        let glued_norm = glued.replace('ё', "е");
+        let require_word_bounds = whole_word_only.contains(&glued);
         let mut loop_count = 0;
+        let mut search_from = 0usize;
         while loop_count < 6 {
             let lower = result.to_lowercase().replace('ё', "е");
-            let glued_norm = glued.replace('ё', "е");
-            if let Some(pos) = lower.find(&glued_norm) {
-                if pos <= result.len() && pos + glued.len() <= result.len() {
-                    let is_capitalized = result[pos..].chars().next().map_or(false, |c| c.is_uppercase());
+            if search_from >= lower.len() {
+                break;
+            }
+            if let Some(rel_pos) = lower[search_from..].find(&glued_norm) {
+                let pos = search_from + rel_pos;
+                let end_pos = pos + glued.len();
+                if pos <= result.len() && end_pos <= result.len() {
+                    if require_word_bounds {
+                        let prev_is_alpha = result[..pos]
+                            .chars()
+                            .last()
+                            .map_or(false, |c| c.is_alphabetic());
+                        let next_is_alpha = result[end_pos..]
+                            .chars()
+                            .next()
+                            .map_or(false, |c| c.is_alphabetic());
+                        if prev_is_alpha || next_is_alpha {
+                            search_from = end_pos;
+                            loop_count += 1;
+                            continue;
+                        }
+                    }
+
+                    let is_capitalized = result[pos..]
+                        .chars()
+                        .next()
+                        .map_or(false, |c| c.is_uppercase());
                     let replacement = if is_capitalized {
                         let mut chars = fixed.chars();
                         match chars.next() {
@@ -874,7 +983,9 @@ pub fn fix_common_whisper_glued_words(text: &str) -> String {
                     } else {
                         fixed.to_string()
                     };
-                    result = result[..pos].to_string() + &replacement + &result[pos + glued.len()..];
+                    let next_search = pos + replacement.len();
+                    result = result[..pos].to_string() + &replacement + &result[end_pos..];
+                    search_from = next_search;
                     loop_count += 1;
                     continue;
                 }
@@ -1537,9 +1648,16 @@ fn repair_split_words_and_orphans(
                     continue;
                 }
 
+                let prev_ends_comma = prev.text.trim_end().ends_with(',');
                 let is_short_orphan_tail = !starts_dialog
                     && (curr_has_punct || (!starts_subordinate && curr_words == 1))
-                    && ((starts_lower && curr_words <= 4 && curr_chars <= 34 && curr_dur <= 2.6)
+                    && ((starts_lower && curr_words <= 4 && curr_chars <= 36 && curr_dur <= 2.7)
+                        || (starts_lower
+                            && prev_ends_comma
+                            && curr_has_punct
+                            && curr_words <= 6
+                            && curr_chars <= 48
+                            && curr_dur <= 3.2)
                         || (curr_words == 1 && curr_chars <= 14 && curr_dur <= 1.0 && gap <= 0.08));
 
                 if is_short_orphan_tail && (prev.text.chars().count() + 1 + curr_chars) <= 105 {
@@ -1675,7 +1793,44 @@ pub fn tighten_subtitle_timestamps(
             && crate::text_analyzer::starts_with_dialogue_response(&fragments[i].text)
             && crate::text_analyzer::is_new_scene_opener(&fragments[i + 1].text);
 
-        if touches_next_cue && !prev_continues_into_curr && !is_closing_reply_before_new_scene {
+        // Если текущая реплика вплотную продолжает предыдущую (`orig_start - prev.end <= 0.25`) и начинается с союзного связующего оборота
+        // («Но ведь...», «Однако...», «Поэтому...», «Зато...», «Ведь...», «И тогда...»), то диктор НЕ молчал 3–4 секунды перед ней,
+        // а продолжил говорить сразу после `prev.end`, а пауза/тишина находится ПОСЛЕ реплики (или между её частями)!
+        let curr_lower_trim = fragments[i]
+            .text
+            .trim()
+            .trim_start_matches(['-', '—', '«', '"'])
+            .trim()
+            .to_lowercase()
+            .replace('ё', "е");
+        let starts_with_discourse_continuation = i > 0
+            && (orig_start - raw_bounds[i - 1].1).abs() <= 0.25
+            && [
+                "но ведь ",
+                "но когда ",
+                "но если ",
+                "но даже ",
+                "но все ",
+                "но всё ",
+                "однако ",
+                "поэтому ",
+                "зато ",
+                "ведь ",
+                "причем ",
+                "притом ",
+                "хотя ",
+                "даже ",
+                "и все же ",
+                "и тем не менее ",
+            ]
+            .iter()
+            .any(|p| curr_lower_trim.starts_with(p));
+
+        if touches_next_cue
+            && !prev_continues_into_curr
+            && !is_closing_reply_before_new_scene
+            && !starts_with_discourse_continuation
+        {
             let new_end = orig_end;
             let new_start = (new_end - spoken_dur)
                 .max(orig_start)
@@ -2086,7 +2241,7 @@ fn deduplicate_multiline_loops(
 
             if !recent_prev_words.is_empty() {
                 let raw_txt = fragments[i].text.trim().to_string();
-                let mut best_remainder: Option<String> = None;
+                let mut best_remainder: Option<(String, usize)> = None;
 
                 for (byte_idx, ch) in raw_txt.char_indices() {
                     if matches!(ch, '.' | '!' | '?') {
@@ -2107,12 +2262,26 @@ fn deduplicate_multiline_loops(
                                 .iter()
                                 .all(|&pw| recent_prev_words.iter().any(|&rw| words_match_fuzzy(pw, rw)))
                         {
-                            best_remainder = Some(remainder_part.to_string());
+                            best_remainder = Some((remainder_part.to_string(), prefix_words.len()));
                         }
                     }
                 }
 
-                if let Some(clean_rem) = best_remainder {
+                if let Some((clean_rem, stripped_word_cnt)) = best_remainder {
+                    // Если начало текущей строки вплотную стыковалось с концом предыдущей (`gap <= 0.35с`) и дублировало её последнее слово
+                    // (например `[276.66..279.66] ...по собственной воле.` + `[279.66..286.97] воле. Но ведь когда-то...`),
+                    // то в реальном аудио это слово дозвучало в первые ~0.35–0.45с второго сегмента!
+                    // Продлеваем `prev.end` на естественную длительность срезанного эхо-префикса, чтобы не обрезать последнее слово `prev`!
+                    if let Some(prev_frag) = out.last_mut() {
+                        let boundary_gap = (fragments[i].start - prev_frag.end).abs();
+                        let curr_span = (fragments[i].end - fragments[i].start).max(0.0);
+                        if boundary_gap <= 0.35 && curr_span >= 1.4 {
+                            let tail_allowance = ((stripped_word_cnt as f64) * 0.36)
+                                .clamp(0.32, (curr_span * 0.25).min(0.85));
+                            prev_frag.end = (prev_frag.end + tail_allowance).min(fragments[i].end - 0.70);
+                            fragments[i].start = (prev_frag.end + 0.04).min(fragments[i].end - 0.65);
+                        }
+                    }
                     fragments[i].text = clean_rem;
                     norms[i] = norm_alpha(&fragments[i].text);
                 }
@@ -2577,3 +2746,76 @@ pub fn process_custom_subtitles_into_project(
 
     Ok(())
 }
+
+/// Быстрая контрольная транскрибация готового короткого WAV-файла (15–90с) через `whisper.cpp`
+/// для финальной пост-рендер верификации сгенерированного вертикального шортса.
+/// Возвращает распознанные фразы с таймкодами внутри шортса (0.0 .. short_duration).
+pub async fn transcribe_short_wav_with_whisper(
+    wav_path: &Path,
+    app_handle: &AppHandle,
+) -> AppResult<Vec<crate::text_analyzer::SubtitleFragment>> {
+    let shell = app_handle.shell();
+    let command = shell.sidecar("whisper").map_err(|e| {
+        AppError::Pipeline(format!(
+            "Бинарник whisper.cpp не найден для пост-рендер проверки шортса: {}",
+            e
+        ))
+    })?;
+
+    let model = crate::models::resolve_any_whisper_model(app_handle, None).ok_or_else(|| {
+        AppError::Pipeline("Модель Whisper не найдена для пост-рендер проверки шортса.".to_string())
+    })?;
+
+    let srt_base = wav_path.with_extension("");
+    let base_out = srt_base.to_string_lossy().to_string();
+    let expected_srt = PathBuf::from(format!("{}.srt", base_out));
+    let _ = tokio::fs::remove_file(&expected_srt).await;
+
+    let output = command
+        .env("PATH", crate::logger::build_sidecar_env_path(app_handle))
+        .args([
+            "-m",
+            &model.to_string_lossy(),
+            "-l",
+            "ru",
+            "-mc",
+            "0",
+            "-et",
+            "2.2",
+            "-wt",
+            "0.05",
+            "-ml",
+            "90",
+            "-sow",
+            "-osrt",
+            "-of",
+            &base_out,
+            &wav_path.to_string_lossy(),
+        ])
+        .output()
+        .await
+        .map_err(|e| {
+            AppError::Pipeline(format!(
+                "Не удалось запустить whisper.cpp для проверки шортса: {}",
+                e
+            ))
+        })?;
+
+    if !output.status.success() && !expected_srt.exists() {
+        return Err(AppError::Pipeline(
+            "Контрольный прогон whisper.cpp на шортсе завершился без SRT.".to_string(),
+        ));
+    }
+
+    if expected_srt.exists() {
+        let _ = sanitize_srt_file(&expected_srt, app_handle).await;
+        let content = tokio::fs::read_to_string(&expected_srt)
+            .await
+            .unwrap_or_default();
+        let _ = tokio::fs::remove_file(&expected_srt).await;
+        Ok(crate::text_analyzer::parse_srt(&content))
+    } else {
+        Ok(Vec::new())
+    }
+}
+

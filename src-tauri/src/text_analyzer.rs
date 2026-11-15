@@ -5075,7 +5075,24 @@ fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> Str
                 || (sep != ", " && fw_low.chars().count() >= 5 && p_low == fw_low)
             {
                 let clean_rest = rest.trim().trim_matches(['"', '«', '»']);
-                if clean_rest.chars().count() >= 8 {
+                let rest_low = clean_rest.to_lowercase().replace('ё', "е");
+                // Не отрезаем определяемое слово перед запятой, если дальше идет придаточное определительное («Маска вермильона, которая...»)
+                let starts_relative_clause = sep == ", "
+                    && [
+                        "котор",
+                        "чтобы ",
+                        "потому ",
+                        "а также ",
+                        "но и ",
+                        "чей ",
+                        "чья ",
+                        "чье ",
+                        "чьи ",
+                    ]
+                    .iter()
+                    .any(|rel| rest_low.starts_with(rel));
+
+                if !starts_relative_clause && clean_rest.chars().count() >= 8 {
                     let mut chars = clean_rest.chars();
                     if let Some(first_ch) = chars.next() {
                         s = format!("{}{}", first_ch.to_uppercase(), chars.as_str());
@@ -5088,7 +5105,16 @@ fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> Str
         }
     }
 
-    s.trim().to_string()
+    // Точечная нормализация типичных морфологических опечаток малых 3B GGUF моделей в заголовках
+    let s_fixed = s
+        .replace("масокника", "масочника")
+        .replace("Масокника", "Масочника")
+        .replace("масокник", "масочник")
+        .replace("Масокник", "Масочник")
+        .replace("перепутавшимся героями", "перепутанными героями")
+        .replace("о томщу", "отомщу");
+
+    s_fixed.trim().to_string()
 }
 
 /// Проверяет, является ли сгенерированный LLM заголовок полноценным осмысленным хуком (минимум 4 собственных слова без учета названия тайтла и имен героев),
@@ -5099,9 +5125,27 @@ fn is_meaningful_smm_hook_title(
     inside_dialogue: &str,
     characters: &[String],
 ) -> bool {
-    let lower_cand = candidate.to_lowercase().replace('ё', "е");
+    let lower_cand = candidate.trim().to_lowercase().replace('ё', "е");
     let lower_video = video_title.to_lowercase().replace('ё', "е");
     let lower_dlg = inside_dialogue.to_lowercase().replace('ё', "е");
+
+    // Запрещаем заголовки, начинающиеся с оторванного союзного слова («Которая...», «Который...», «Которые...»)
+    if [
+        "которая ",
+        "который ",
+        "которые ",
+        "которого ",
+        "которой ",
+        "которому ",
+        "которым ",
+        "о котором ",
+        "о которой ",
+    ]
+    .iter()
+    .any(|p| lower_cand.starts_with(p))
+    {
+        return false;
+    }
 
     // 1. Запрещаем эхо-слова из промпта и типичные корявые конструкции малых 3B-моделей
     const BANNED_TITLE_ECHO_WORDS: &[&str] = &[
@@ -5135,6 +5179,8 @@ fn is_meaningful_smm_hook_title(
         "сделала себе маску",
         "вот-вот перевернется",
         "вот-вот перевернётся",
+        "перепутавшимся",
+        "сцена с ",
     ];
     if BANNED_TITLE_ECHO_WORDS.iter().any(|&w| lower_cand.contains(w)) {
         return false;
