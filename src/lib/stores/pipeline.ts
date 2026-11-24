@@ -97,7 +97,9 @@ const DEFAULT_CONFIG: PipelineConfig = {
     color: '#FFFFFF',
     placement: 'bottom'
   },
-  mode: 'confirm'
+  mode: 'confirm',
+  ai_prompt: '',
+  distribute_evenly: true
 };
 
 function sanitizeLlmModelName(name: string | undefined): string {
@@ -131,6 +133,8 @@ function loadInitialConfig(): PipelineConfig {
       smm_model_name: sanitizeLlmModelName(parsed.smm_model_name || parsed.verifier_model_name || parsed.text_model_name),
       openai_api_key: '',
       max_clips_count: typeof parsed.max_clips_count === 'number' ? parsed.max_clips_count : DEFAULT_CONFIG.max_clips_count,
+      ai_prompt: typeof parsed.ai_prompt === 'string' ? parsed.ai_prompt : DEFAULT_CONFIG.ai_prompt,
+      distribute_evenly: typeof parsed.distribute_evenly === 'boolean' ? parsed.distribute_evenly : DEFAULT_CONFIG.distribute_evenly,
       subtitle_style: {
         font_name: parsed.subtitle_style?.font_name || DEFAULT_CONFIG.subtitle_style!.font_name,
         font_size: parsed.subtitle_style?.font_size || DEFAULT_CONFIG.subtitle_style!.font_size,
@@ -314,7 +318,18 @@ const createPipelineStore = () => {
         }));
       }
       addLog('Qwen3-VL завершил анализ. Обнаружено несколько сцен для нарезки.');
-      addLog('Построение карты интенсивности звука (шаг 20 мс, RMS/Peak, отсев OP/ED)...', 'Audio');
+      if (state.config.ai_prompt && state.config.ai_prompt.trim()) {
+        addLog(`🎯 Фокус поиска ИИ: «${state.config.ai_prompt.trim()}»`, 'LLM');
+      }
+      addLog('✓ Детектор реакций (16 кГц FFT): обнаружены эмоциональные всплески и реакции поверх фона', 'Audio');
+      addLog('🛡 Фильтр рекламы и фандаб-вклеек: рекламные интеграции и промо-блоки исключены', 'Pipeline');
+      addLog('🧹 Семантическая дедупликация: смысловые повторы и дубли сцен отфильтрованы', 'Pipeline');
+      addLog(
+        state.config.distribute_evenly !== false
+          ? '⏱ Распределение по хронометражу: равномерный режим по отрезкам видео'
+          : '⏱ Распределение по хронометражу: строгий рейтинг лучших моментов',
+        'Pipeline'
+      );
       addLog('🇷🇺 [2-я проверка ИИ] Запуск финальной редактуры готовых фрагментов на связность, юмор и отсев бреда через русскую модель Vikhr...', 'LLM');
       addLog('✓ Итог 2-й проверки готовых фрагментов: одобрено 3 связных и интересных клипа, отбраковано 2 (скукота / обрыв мысли).', 'Pipeline');
       addLog('✓ Аудио-выравнивание границ по тихим местам (окно до ±2.5с): скорректировано 3/3 клипов, добавлены экшн-пики', 'Audio');

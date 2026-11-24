@@ -481,6 +481,7 @@ pub async fn render_clips_from_fragments(
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+            ai_prompt: config.ai_prompt.clone(),
         };
 
         let smm_results = crate::text_analyzer::generate_and_save_smm_bundle(
@@ -1392,6 +1393,7 @@ pub async fn regenerate_clip_smm(
             .clone()
             .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
         openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+        ai_prompt: config.ai_prompt.clone(),
     };
 
     let input = crate::text_analyzer::build_smm_input_for_clip(

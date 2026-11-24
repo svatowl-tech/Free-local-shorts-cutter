@@ -474,6 +474,40 @@
     pipelineStore.updateConfig({ ollama_url: value });
   }
 
+  const GENERAL_TOPIC_PRESETS = [
+    { label: 'Юмор и панчлайны', prompt: 'Юмор, сарказм, смешные панчлайны и абсурдные ситуации' },
+    { label: 'Деньги и цифры', prompt: 'Деньги, цифры, бизнес-кейсы, доходы и провалы' },
+    { label: 'Споры и интрига', prompt: 'Острые споры, конфликты, неожиданные противоречия и интрига' },
+    { label: 'Советы и лайфхаки', prompt: 'Практические советы, правила, инсайты и пошаговые выводы' }
+  ];
+
+  const ANIME_TOPIC_PRESETS = [
+    { label: 'Шутки', prompt: 'Аниме: шутки, комедийные сценки, подколы и нелепые реакции' },
+    { label: 'Экшен', prompt: 'Аниме: экшен, напряженные бои, атаки, техники и боевые крики' },
+    { label: 'Драма', prompt: 'Аниме: сильная драма, клятвы, слезы, признания и эмоциональный накал' },
+    { label: 'Повороты', prompt: 'Аниме: неожиданные сюжетные повороты, тайны, предательства и раскрытия' }
+  ];
+
+  function handleAiPromptInput(e: Event) {
+    const value = (e.target as HTMLInputElement).value;
+    pipelineStore.updateConfig({ ai_prompt: value });
+  }
+
+  function toggleTopicPreset(promptText: string) {
+    const current = ($pipelineStore.config.ai_prompt || '').trim();
+    const next = current === promptText ? '' : promptText;
+    pipelineStore.updateConfig({ ai_prompt: next });
+  }
+
+  function clearAiPrompt() {
+    pipelineStore.updateConfig({ ai_prompt: '' });
+  }
+
+  function handleDistributeEvenlyChange(e: Event) {
+    const checked = (e.target as HTMLInputElement).checked;
+    pipelineStore.updateConfig({ distribute_evenly: checked });
+  }
+
   function handleModeChange(mode: 'auto' | 'manual' | 'confirm') {
     pipelineStore.updateConfig({ mode });
   }
@@ -689,6 +723,73 @@
           </div>
         </div>
       {/if}
+
+      <!-- AI Focus & Genre Presets -->
+      <div class="flex flex-col gap-2.5 p-3.5 border border-[rgba(226,226,224,0.1)] rounded-[4px] bg-[#0c0c0e]/60">
+        <div class="flex items-center justify-between gap-2">
+          <label for="ai_prompt_input" class="label-mono text-[#e2e2e4]">Фокус и тема для ИИ (необязательно)</label>
+          {#if ($pipelineStore.config.ai_prompt || '').trim().length > 0}
+            <button
+              type="button"
+              on:click={clearAiPrompt}
+              disabled={$pipelineStore.status === 'running'}
+              class="font-mono text-[10px] text-[rgba(226,226,224,0.6)] hover:text-[#e2e2e4] cursor-pointer disabled:opacity-40 whitespace-nowrap"
+            >
+              Сбросить
+            </button>
+          {/if}
+        </div>
+
+        <input
+          id="ai_prompt_input"
+          type="text"
+          value={$pipelineStore.config.ai_prompt || ''}
+          on:input={handleAiPromptInput}
+          disabled={$pipelineStore.status === 'running'}
+          placeholder="Например: провалы в бизнесе или эпичные фразы перед боем..."
+          class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-2 text-xs text-[#e2e2e4] font-sans placeholder:text-[rgba(226,226,224,0.35)] focus:border-[#5865f2] focus:outline-none"
+        />
+
+        <div class="flex flex-col gap-2 pt-0.5">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <span class="font-mono text-[10px] text-[rgba(226,226,224,0.45)] mr-0.5">Общие:</span>
+            {#each GENERAL_TOPIC_PRESETS as preset}
+              {@const isActive = ($pipelineStore.config.ai_prompt || '').trim() === preset.prompt}
+              <button
+                type="button"
+                on:click={() => toggleTopicPreset(preset.prompt)}
+                disabled={$pipelineStore.status === 'running'}
+                class="px-2 py-1 text-[10px] font-mono rounded-[2px] border transition-colors cursor-pointer whitespace-nowrap disabled:opacity-40 {
+                  isActive
+                    ? 'bg-[#5865f2] border-[#5865f2] text-white'
+                    : 'bg-[#16161a] border-[rgba(226,226,224,0.15)] text-[rgba(226,226,224,0.75)] hover:border-[#5865f2]/60 hover:text-[#e2e2e4]'
+                }"
+              >
+                {preset.label}
+              </button>
+            {/each}
+          </div>
+
+          <div class="flex flex-wrap items-center gap-1.5 pt-1.5 border-t border-[rgba(226,226,224,0.08)]">
+            <span class="font-mono text-[10px] text-[rgba(226,226,224,0.45)] mr-0.5">Аниме:</span>
+            {#each ANIME_TOPIC_PRESETS as preset}
+              {@const isActive = ($pipelineStore.config.ai_prompt || '').trim() === preset.prompt}
+              <button
+                type="button"
+                on:click={() => toggleTopicPreset(preset.prompt)}
+                disabled={$pipelineStore.status === 'running'}
+                class="px-2 py-1 text-[10px] font-mono rounded-[2px] border transition-colors cursor-pointer whitespace-nowrap disabled:opacity-40 {
+                  isActive
+                    ? 'bg-[#5865f2] border-[#5865f2] text-white'
+                    : 'bg-[#16161a] border-[rgba(226,226,224,0.15)] text-[rgba(226,226,224,0.75)] hover:border-[#5865f2]/60 hover:text-[#e2e2e4]'
+                }"
+              >
+                {preset.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+      </div>
 
       <!-- Mode Selector -->
       <div class="flex flex-col gap-2">
@@ -1250,6 +1351,23 @@
               class="w-full bg-[#16161a] border border-[rgba(226,226,224,0.15)] rounded-[2px] px-2.5 py-1.5 text-xs text-[#e2e2e4] font-mono focus:border-[#5865f2] focus:outline-none"
             />
           </div>
+
+          <!-- Uniform Timeline Distribution Toggle -->
+          <label class="flex items-start gap-3 p-3 border border-[rgba(226,226,224,0.12)] rounded-[3px] cursor-pointer hover:border-[rgba(226,226,224,0.22)] bg-[#16161a]/70 transition-colors select-none">
+            <input
+              type="checkbox"
+              checked={$pipelineStore.config.distribute_evenly ?? true}
+              on:change={handleDistributeEvenlyChange}
+              disabled={$pipelineStore.status === 'running'}
+              class="w-4 h-4 mt-0.5 rounded-[2px] bg-[#0c0c0e] border-[rgba(226,226,224,0.3)] text-[#5865f2] focus:ring-0 focus:ring-offset-0 cursor-pointer accent-[#5865f2] shrink-0"
+            />
+            <div>
+              <div class="label-mono text-[#e2e2e4] normal-case tracking-normal text-xs font-medium">Равномерно по всему видео</div>
+              <div class="text-[11px] text-[rgba(226,226,224,0.5)] mt-0.5 font-sans leading-snug">
+                Распределяет клипы по всему хронометражу длинных роликов, подкастов и серий (отключите для строгого топа лучших сцен)
+              </div>
+            </div>
+          </label>
         </div>
       {/if}
     </div>

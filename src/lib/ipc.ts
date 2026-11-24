@@ -160,6 +160,8 @@ export interface PipelineConfig {
   subtitle_style?: SubtitleStyle;
   bumper_config?: BumperGlobalConfig;
   mode: 'auto' | 'manual' | 'confirm';
+  ai_prompt?: string;
+  distribute_evenly?: boolean;
 }
 
 export interface SmmClipMetadata {

@@ -9,9 +9,32 @@ use tokio::sync::broadcast::Receiver;
 use crate::error::{AppError, AppResult};
 use crate::text_analyzer::SubtitleFragment;
 
+/// Тип акустической реакции / события внутри аудиодорожки
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub enum ReactionKind {
+    Laughter,
+    Applause,
+    ActionBurst,
+}
+
+/// Обнаруженный интервал живой реакции аудитории или эмоционального/экшен-всплеска
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AudioReactionZone {
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub kind: ReactionKind,
+    pub score: f64,
+}
+
+fn default_profile_version() -> u32 {
+    1
+}
+
 /// Профиль звуковой энергии видеодорожки с высоким разрешением (шаг 20 мс = 50 отсчётов/сек)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AudioEnergyProfile {
+    #[serde(default = "default_profile_version")]
+    pub profile_version: u32,
     pub step_sec: f64,
     pub duration_sec: f64,
     pub rms_db: Vec<f32>,
@@ -22,6 +45,8 @@ pub struct AudioEnergyProfile {
     pub speech_threshold_db: f32,
     pub loud_peak_db: f32,
     pub op_ed_zones: Vec<(f64, f64)>,
+    #[serde(default)]
+    pub reaction_zones: Vec<AudioReactionZone>,
 }
 
 /// Статистика выравнивания границ клипов по тихим местам
@@ -101,6 +126,50 @@ impl AudioEnergyProfile {
         let speech_span = (self.loud_peak_db - self.speech_threshold_db).max(6.0);
         (((peak_db - self.speech_threshold_db) / speech_span) as f64).clamp(0.0, 1.0)
     }
+
+    /// Возвращает бонус за живые реакции (смех, аплодисменты, эмоциональные/экшен-всплески) внутри окна `[start_sec, end_sec]`
+    /// в формате `(bonus_score [0.0..=0.12], laughter_count, applause_count, action_burst_count)`.
+    pub fn get_reaction_bonus_between(&self, start_sec: f64, end_sec: f64) -> (f64, usize, usize, usize) {
+        if self.reaction_zones.is_empty() || end_sec <= start_sec {
+            return (0.0, 0, 0, 0);
+        }
+        let mut best_l = 0.0_f64;
+        let mut best_a = 0.0_f64;
+        let mut best_b = 0.0_f64;
+        let mut l_cnt = 0usize;
+        let mut a_cnt = 0usize;
+        let mut b_cnt = 0usize;
+
+        for rz in &self.reaction_zones {
+            let o_start = start_sec.max(rz.start_sec);
+            let o_end = end_sec.min(rz.end_sec);
+            if o_end - o_start >= 0.40 {
+                match rz.kind {
+                    ReactionKind::Laughter => {
+                        l_cnt += 1;
+                        if rz.score > best_l {
+                            best_l = rz.score;
+                        }
+                    }
+                    ReactionKind::Applause => {
+                        a_cnt += 1;
+                        if rz.score > best_a {
+                            best_a = rz.score;
+                        }
+                    }
+                    ReactionKind::ActionBurst => {
+                        b_cnt += 1;
+                        if rz.score > best_b {
+                            best_b = rz.score;
+                        }
+                    }
+                }
+            }
+        }
+
+        let bonus = (best_l * 0.085 + best_a * 0.055 + best_b * 0.065).clamp(0.0, 0.12);
+        (bonus, l_cnt, a_cnt, b_cnt)
+    }
 }
 
 /// Возвращает путь к кэшированному аудио-профилю в папке проекта `<Видео>_Проект/<Видео>.audio_profile.json`
@@ -127,22 +196,26 @@ pub async fn get_or_create_audio_profile(
     if profile_path.exists() {
         if let Ok(content) = tokio::fs::read_to_string(&profile_path).await {
             if let Ok(mut cached) = serde_json::from_str::<AudioEnergyProfile>(&content) {
-                if cached.rms_db.len() > 50 {
+                if cached.rms_db.len() > 50 && cached.profile_version >= 2 {
                     // Обновляем зоны OP/ED с учетом актуальных очищенных субтитров, если они переданы
                     if !fragments.is_empty() {
                         cached.op_ed_zones = detect_op_ed_zones(&cached, fragments);
                     }
+                    let (l_cnt, a_cnt, b_cnt) = count_reactions_by_kind(&cached.reaction_zones);
                     crate::logger::emit_log(
                         app_handle,
                         "Audio",
                         "info",
                         &format!(
-                            "✓ Загружен кэшированный профиль аудио-энергии ({} отсчётов с шагом 20 мс, порог тишины {:.1} dB, речь {:.1} dB, пик {:.1} dB, зон OP/ED: {})",
+                            "✓ Загружен кэшированный профиль аудио-энергии 16 кГц ({} отсчётов, порог тишины {:.1} dB, речь {:.1} dB, пик {:.1} dB, OP/ED: {}, реакции: смех {}, аплодисменты {}, экшен-всплески {})",
                             cached.rms_db.len(),
                             cached.quiet_valley_db,
                             cached.speech_threshold_db,
                             cached.loud_peak_db,
-                            cached.op_ed_zones.len()
+                            cached.op_ed_zones.len(),
+                            l_cnt,
+                            a_cnt,
+                            b_cnt
                         ),
                     );
                     return Ok(cached);
@@ -155,7 +228,7 @@ pub async fn get_or_create_audio_profile(
         app_handle,
         "Audio",
         "info",
-        "Построение высокоточной карты интенсивности звука (шаг 20 мс, RMS/Peak/ZCR)...",
+        "Построение карты интенсивности и спектрального детектора реакций (16 кГц, шаг 20 мс, смех / аплодисменты / всплески)...",
     );
 
     let ts = SystemTime::now()
@@ -182,7 +255,7 @@ pub async fn get_or_create_audio_profile(
             "-acodec",
             "pcm_s16le",
             "-ar",
-            "4000",
+            "16000",
             "-ac",
             "1",
             &temp_wav.to_string_lossy(),
@@ -227,7 +300,7 @@ pub async fn get_or_create_audio_profile(
     let raw_bytes = tokio::fs::read(&temp_wav).await.map_err(AppError::Io)?;
     let _ = tokio::fs::remove_file(&temp_wav).await;
 
-    let profile = build_profile_from_wav_bytes(&raw_bytes, 4000, 0.020, fragments);
+    let profile = build_profile_from_wav_bytes(&raw_bytes, 16000, 0.020, fragments);
 
     if let Some(parent) = profile_path.parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
@@ -247,19 +320,23 @@ pub async fn get_or_create_audio_profile(
             .join(", ")
     };
 
+    let (l_cnt, a_cnt, b_cnt) = count_reactions_by_kind(&profile.reaction_zones);
     crate::logger::emit_log(
         app_handle,
         "Audio",
         "info",
         &format!(
-            "✓ Профиль аудио построен ({:.1} сек, {} окон по 20 мс): фон {:.1} dB, тихая пауза <= {:.1} dB, активная речь >= {:.1} dB, экшн-пик >= {:.1} dB (зоны OP/ED: {})",
+            "✓ Профиль аудио 16 кГц построен ({:.1} сек, {} окон по 20 мс): фон {:.1} dB, пауза <= {:.1} dB, речь >= {:.1} dB, пик >= {:.1} dB | OP/ED: {} | Реакции: смех {}, аплодисменты {}, экшен-всплески {}",
             profile.duration_sec,
             profile.rms_db.len(),
             profile.noise_floor_db,
             profile.quiet_valley_db,
             profile.speech_threshold_db,
             profile.loud_peak_db,
-            op_ed_summary
+            op_ed_summary,
+            l_cnt,
+            a_cnt,
+            b_cnt
         ),
     );
 
@@ -357,6 +434,7 @@ fn build_profile_from_wav_bytes(
     let duration_sec = (rms_db.len() as f64) * step_sec;
 
     let mut profile = AudioEnergyProfile {
+        profile_version: 2,
         step_sec,
         duration_sec,
         rms_db,
@@ -367,9 +445,13 @@ fn build_profile_from_wav_bytes(
         speech_threshold_db,
         loud_peak_db,
         op_ed_zones: Vec::new(),
+        reaction_zones: Vec::new(),
     };
 
     profile.op_ed_zones = detect_op_ed_zones(&profile, fragments);
+    if sample_rate >= 16000 {
+        profile.reaction_zones = detect_audio_reactions_from_pcm(pcm_slice, sample_rate, &profile.op_ed_zones);
+    }
     profile
 }
 
@@ -1264,5 +1346,372 @@ pub fn compute_vocal_emotion_metrics(
         dead_air_ratio,
         max_dead_pause_sec,
     }
+}
+
+fn count_reactions_by_kind(zones: &[AudioReactionZone]) -> (usize, usize, usize) {
+    let mut l = 0usize;
+    let mut a = 0usize;
+    let mut b = 0usize;
+    for z in zones {
+        match z.kind {
+            ReactionKind::Laughter => l += 1,
+            ReactionKind::Applause => a += 1,
+            ReactionKind::ActionBurst => b += 1,
+        }
+    }
+    (l, a, b)
+}
+
+/// Вычисляет спектр мощности для 512 вещественных отсчетов (окно Ханна уже применено).
+/// Возвращает первые 257 бинов `[0..=256]` (`DC .. Nyquist`).
+fn compute_fft_512_power(windowed_samples: &[f64; 512]) -> [f64; 257] {
+    const N: usize = 512;
+    let mut re = *windowed_samples;
+    let mut im = [0.0_f64; N];
+
+    // Bit-reversal permutation для N = 512 (9 бит)
+    let mut j = 0usize;
+    for i in 1..N {
+        let mut bit = N >> 1;
+        while (j & bit) != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j ^= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+
+    // Итеративный алгоритм Кули — Тьюки (radix-2)
+    let mut len = 2usize;
+    while len <= N {
+        let half = len >> 1;
+        let angle_step = -2.0 * std::f64::consts::PI / (len as f64);
+        let wlen_re = angle_step.cos();
+        let wlen_im = angle_step.sin();
+
+        let mut start = 0usize;
+        while start < N {
+            let mut w_re = 1.0_f64;
+            let mut w_im = 0.0_f64;
+            for k in 0..half {
+                let u_idx = start + k;
+                let v_idx = u_idx + half;
+                let t_re = re[v_idx] * w_re - im[v_idx] * w_im;
+                let t_im = re[v_idx] * w_im + im[v_idx] * w_re;
+                re[v_idx] = re[u_idx] - t_re;
+                im[v_idx] = im[u_idx] - t_im;
+                re[u_idx] += t_re;
+                im[u_idx] += t_im;
+
+                let next_w_re = w_re * wlen_re - w_im * wlen_im;
+                w_im = w_re * wlen_im + w_im * wlen_re;
+                w_re = next_w_re;
+            }
+            start += len;
+        }
+        len <<= 1;
+    }
+
+    let mut power = [0.0_f64; 257];
+    for k in 0..=256 {
+        power[k] = re[k] * re[k] + im[k] * im[k];
+    }
+    power
+}
+
+#[derive(Clone, Copy)]
+struct SpectralFrameFeat {
+    rms: f64,
+    flatness: f64,
+    high_ratio: f64,
+    zcr: f64,
+}
+
+/// Детектор акустических реакций по методике ViralCut с OST-компенсацией для аниме:
+/// - Смех (`Laughter`): 4–7 Гц модуляция ВЧ-огибающей (`modulation > 0.38`, `high_ratio > 0.30`)
+/// - Аплодисменты (`Applause`): устойчивый широкополосный ВЧ-шум (`flatness > 0.10`, `high_ratio > 0.50`, `zcr > 0.24`)
+/// - Всплеск экшена / крика поверх OST (`ActionBurst`): резкий контрастный подъём над локальной медианой (`>= 2.1x`)
+fn detect_audio_reactions_from_pcm(
+    pcm_slice: &[u8],
+    sample_rate: usize,
+    op_ed_zones: &[(f64, f64)],
+) -> Vec<AudioReactionZone> {
+    const N_FFT: usize = 512;
+    const HOP: usize = 256;
+
+    let total_samples = pcm_slice.len() / 2;
+    if total_samples < N_FFT * 4 || sample_rate < 16000 {
+        return Vec::new();
+    }
+
+    // Декодируем PCM i16 mono -> нормализованный f64 [-1.0..1.0]
+    let mut samples = Vec::with_capacity(total_samples);
+    for pair in pcm_slice.chunks_exact(2) {
+        let s = i16::from_le_bytes([pair[0], pair[1]]) as f64 / 32768.0;
+        samples.push(s);
+    }
+
+    // Предрасчет окна Ханна (512 точек)
+    let mut hann = [0.0_f64; N_FFT];
+    for n in 0..N_FFT {
+        hann[n] = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * (n as f64) / ((N_FFT - 1) as f64)).cos());
+    }
+
+    let num_frames = (samples.len().saturating_sub(N_FFT)) / HOP + 1;
+    let mut feats = Vec::with_capacity(num_frames);
+
+    // Полоса 1.5–7 кГц в 512-точечном FFT при 16 кГц (шаг 31.25 Гц/бин): бины 48..=224
+    let bin_lo = ((1500.0 * (N_FFT as f64)) / (sample_rate as f64)).round().max(1.0) as usize;
+    let bin_hi = ((7000.0 * (N_FFT as f64)) / (sample_rate as f64)).round().min(256.0) as usize;
+
+    for f_idx in 0..num_frames {
+        let offset = f_idx * HOP;
+        let frame_slice = &samples[offset..offset + N_FFT];
+
+        let mut sum_sq = 0.0_f64;
+        let mut crossings = 0usize;
+        let mut prev_pos = frame_slice[0] >= 0.0;
+        let mut windowed = [0.0_f64; N_FFT];
+
+        for k in 0..N_FFT {
+            let v = frame_slice[k];
+            sum_sq += v * v;
+            windowed[k] = v * hann[k];
+            if k > 0 && k < HOP {
+                let is_pos = v >= 0.0;
+                if is_pos != prev_pos {
+                    crossings += 1;
+                }
+                prev_pos = is_pos;
+            }
+        }
+
+        let rms = (sum_sq / (N_FFT as f64)).sqrt();
+        let zcr = (crossings as f64) / (HOP as f64);
+
+        let power = compute_fft_512_power(&windowed);
+        let mut total_pow = 0.0_f64;
+        let mut high_pow = 0.0_f64;
+        let mut log_sum = 0.0_f64;
+        let non_dc_cnt = 256.0_f64;
+
+        for b in 1..=256 {
+            let p = power[b].max(1e-12);
+            total_pow += p;
+            log_sum += p.ln();
+            if b >= bin_lo && b <= bin_hi {
+                high_pow += p;
+            }
+        }
+
+        let arith_mean = (total_pow / non_dc_cnt).max(1e-12);
+        let geom_mean = (log_sum / non_dc_cnt).exp();
+        let flatness = (geom_mean / arith_mean).clamp(0.0, 1.0);
+        let high_ratio = (high_pow / total_pow.max(1e-12)).clamp(0.0, 1.0);
+
+        feats.push(SpectralFrameFeat {
+            rms,
+            flatness,
+            high_ratio,
+            zcr,
+        });
+    }
+
+    if feats.len() < 40 {
+        return Vec::new();
+    }
+
+    // 20-й перцентиль RMS (порог тишины quiet_floor)
+    let mut sorted_rms: Vec<f64> = feats.iter().map(|f| f.rms).collect();
+    sorted_rms.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let quiet_floor = sorted_rms[sorted_rms.len() * 20 / 100].max(1e-4);
+
+    let frames_per_sec = (sample_rate as f64) / (HOP as f64);
+    let win_frames = (1.0 * frames_per_sec).round().max(12.0) as usize;
+    let step_frames = (0.25 * frames_per_sec).round().max(4.0) as usize;
+    let ost_half_win = (10.0 * frames_per_sec).round() as usize;
+
+    let mut raw_laughter: Vec<(f64, f64, f64)> = Vec::new();
+    let mut raw_applause: Vec<(f64, f64, f64)> = Vec::new();
+    let mut raw_bursts: Vec<(f64, f64, f64)> = Vec::new();
+
+    let overlaps_op_ed = |s: f64, e: f64| -> bool {
+        op_ed_zones.iter().any(|&(zs, ze)| e > zs && s < ze)
+    };
+
+    let mut idx = 0usize;
+    while idx + win_frames <= feats.len() {
+        let t_start = (idx as f64) / frames_per_sec;
+        let t_end = ((idx + win_frames) as f64) / frames_per_sec;
+
+        if overlaps_op_ed(t_start, t_end) {
+            idx += step_frames;
+            continue;
+        }
+
+        let slice = &feats[idx..idx + win_frames];
+
+        // Локальная медиана громкости в радиусе ±10с для OST-компенсации
+        let bg_s = idx.saturating_sub(ost_half_win);
+        let bg_e = (idx + win_frames + ost_half_win).min(feats.len());
+        let mut bg_vals: Vec<f64> = feats[bg_s..bg_e].iter().step_by(4).map(|f| f.rms).collect();
+        bg_vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let local_median = if !bg_vals.is_empty() {
+            bg_vals[bg_vals.len() / 2].max(quiet_floor)
+        } else {
+            quiet_floor
+        };
+
+        let active_thresh = (quiet_floor * 1.45).max(local_median * 0.65);
+        let mut active_cnt = 0usize;
+        let mut sum_rms = 0.0_f64;
+        let mut max_rms = 0.0_f64;
+        let mut weight_sum = 0.0_f64;
+        let mut w_flat = 0.0_f64;
+        let mut w_high = 0.0_f64;
+        let mut w_zcr = 0.0_f64;
+
+        for f in slice {
+            if f.rms >= active_thresh {
+                active_cnt += 1;
+            }
+            sum_rms += f.rms;
+            if f.rms > max_rms {
+                max_rms = f.rms;
+            }
+            let w = (f.rms - quiet_floor * 0.7).max(0.0);
+            weight_sum += w;
+            w_flat += f.flatness * w;
+            w_high += f.high_ratio * w;
+            w_zcr += f.zcr * w;
+        }
+
+        if weight_sum <= 1e-9 || active_cnt == 0 {
+            idx += step_frames;
+            continue;
+        }
+
+        let active_ratio = (active_cnt as f64) / (win_frames as f64);
+        let mean_rms = (sum_rms / (win_frames as f64)).max(1e-9);
+        let var_rms = slice
+            .iter()
+            .map(|f| {
+                let d = f.rms - mean_rms;
+                d * d
+            })
+            .sum::<f64>()
+            / (win_frames as f64);
+        let modulation = (var_rms.sqrt() / mean_rms).clamp(0.0, 2.0);
+
+        let avg_flat = w_flat / weight_sum;
+        let avg_high = w_high / weight_sum;
+        let avg_zcr = w_zcr / weight_sum;
+
+        // 1. Смех (ритмичные ВЧ-пульсации 4-7 Гц)
+        if active_ratio >= 0.45
+            && modulation > 0.38
+            && avg_flat > 0.02
+            && avg_flat < 0.65
+            && avg_high > 0.30
+            && avg_zcr > 0.04
+            && avg_zcr < 0.58
+            && max_rms >= local_median * 1.25
+        {
+            let sc = ((avg_high * 1.6).min(1.0) * (0.45 + modulation.min(1.0))).clamp(0.35, 0.98);
+            raw_laughter.push((t_start, t_end, sc));
+        }
+
+        // 2. Аплодисменты (устойчивый широкополосный шум, защищенный от ровного саундтрека)
+        if active_ratio >= 0.60
+            && modulation < 0.55
+            && avg_flat > 0.10
+            && avg_high > 0.50
+            && avg_zcr > 0.24
+            && max_rms >= quiet_floor * 1.8
+        {
+            let sc = ((avg_flat * 4.0).min(1.0) * (avg_high * 1.2).min(1.0)).clamp(0.35, 0.98);
+            raw_applause.push((t_start, t_end, sc));
+        }
+
+        // 3. Контрастный эмоциональный крик / экшен-всплеск поверх фонового OST (аниме и игры)
+        let contrast_ratio = max_rms / local_median.max(1e-6);
+        if contrast_ratio >= 2.25
+            && max_rms >= quiet_floor * 3.0
+            && (avg_high > 0.28 || modulation >= 0.42)
+        {
+            let sc = ((contrast_ratio - 1.7) * 0.36).clamp(0.42, 0.96);
+            raw_bursts.push((t_start, t_end, sc));
+        }
+
+        idx += step_frames;
+    }
+
+    let merge_and_trim = |raw: Vec<(f64, f64, f64)>, kind: ReactionKind, min_dur_sec: f64| -> Vec<AudioReactionZone> {
+        if raw.is_empty() {
+            return Vec::new();
+        }
+        let mut merged: Vec<(f64, f64, f64)> = Vec::new();
+        for (s, e, sc) in raw {
+            if let Some(last) = merged.last_mut() {
+                if s <= last.1 + 0.35 {
+                    last.1 = last.1.max(e);
+                    if sc > last.2 {
+                        last.2 = sc;
+                    }
+                    continue;
+                }
+            }
+            merged.push((s, e, sc));
+        }
+
+        // Подрезаем тихие края по сглаженной энергии `(rms * high_ratio)`
+        let mut out = Vec::new();
+        for (ms, me, sc) in merged {
+            let fi_s = ((ms * frames_per_sec).floor() as usize).min(feats.len().saturating_sub(1));
+            let fi_e = ((me * frames_per_sec).ceil() as usize).min(feats.len().saturating_sub(1));
+            if fi_e <= fi_s + 2 {
+                continue;
+            }
+            let energies: Vec<f64> = feats[fi_s..=fi_e]
+                .iter()
+                .map(|f| f.rms * (f.high_ratio + 0.20))
+                .collect();
+            let mut sorted_e = energies.clone();
+            sorted_e.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let med_e = sorted_e[sorted_e.len() / 2];
+            let trim_thr = (quiet_floor * 0.02).max(med_e * 0.25);
+
+            let mut trim_l = 0usize;
+            while trim_l < energies.len() && energies[trim_l] < trim_thr {
+                trim_l += 1;
+            }
+            let mut trim_r = energies.len().saturating_sub(1);
+            while trim_r > trim_l && energies[trim_r] < trim_thr {
+                trim_r -= 1;
+            }
+
+            let final_s = ((fi_s + trim_l) as f64) / frames_per_sec;
+            let final_e = ((fi_s + trim_r + 1) as f64) / frames_per_sec;
+            if final_e - final_s >= min_dur_sec && !overlaps_op_ed(final_s, final_e) {
+                out.push(AudioReactionZone {
+                    start_sec: (final_s * 100.0).round() / 100.0,
+                    end_sec: (final_e * 100.0).round() / 100.0,
+                    kind: kind.clone(),
+                    score: sc,
+                });
+            }
+        }
+        out
+    };
+
+    let mut all_zones = Vec::new();
+    all_zones.extend(merge_and_trim(raw_laughter, ReactionKind::Laughter, 0.60));
+    all_zones.extend(merge_and_trim(raw_applause, ReactionKind::Applause, 0.90));
+    all_zones.extend(merge_and_trim(raw_bursts, ReactionKind::ActionBurst, 0.55));
+    all_zones.sort_by(|a, b| a.start_sec.partial_cmp(&b.start_sec).unwrap_or(std::cmp::Ordering::Equal));
+    all_zones
 }
 

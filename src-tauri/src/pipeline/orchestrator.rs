@@ -6,6 +6,10 @@ use crate::error::AppResult;
 use tokio::sync::broadcast::Receiver;
 use crate::render::{RenderConfig, SubtitleStyle};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PipelineConfig {
     pub asr_model_path: Option<String>,
@@ -33,6 +37,10 @@ pub struct PipelineConfig {
     pub subtitle_style: Option<SubtitleStyle>,
     pub bumper_config: Option<crate::bumpers::BumperGlobalConfig>,
     pub mode: Option<String>,
+    #[serde(default)]
+    pub ai_prompt: Option<String>,
+    #[serde(default = "default_true")]
+    pub distribute_evenly: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -62,10 +70,17 @@ struct CachedVisionScenes {
     scenes: Vec<crate::analyzer::SceneCandidate>,
 }
 
-fn compute_fragments_fingerprint(frags: &[crate::text_analyzer::SubtitleFragment]) -> u64 {
+fn compute_fragments_fingerprint(
+    frags: &[crate::text_analyzer::SubtitleFragment],
+    ai_prompt: Option<&str>,
+) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     frags.len().hash(&mut hasher);
+    ai_prompt
+        .map(|s| s.trim().to_lowercase().replace('ё', "е"))
+        .unwrap_or_default()
+        .hash(&mut hasher);
     for f in frags {
         f.text.hash(&mut hasher);
         ((f.start * 100.0).round() as i64).hash(&mut hasher);
@@ -308,7 +323,7 @@ pub async fn run_pipeline(
                 }
 
                 let text_scores_cache_path = project_cache_dir.join(format!("{}_text_scores.json", file_stem));
-                let frags_fp = compute_fragments_fingerprint(&frags);
+                let frags_fp = compute_fragments_fingerprint(&frags, config.ai_prompt.as_deref());
                 let mut cached_scores_opt: Option<Vec<f64>> = None;
 
                 if text_scores_cache_path.exists() {
@@ -357,6 +372,7 @@ pub async fn run_pipeline(
                         ollama_url: config.ollama_url.clone(),
                         openai_base_url,
                         openai_api_key,
+                        ai_prompt: config.ai_prompt.clone(),
                     };
 
                     let computed = match crate::text_analyzer::analyze_text_with_llm(
@@ -379,6 +395,7 @@ pub async fn run_pipeline(
                             match crate::text_analyzer::analyze_with_llama_cli(
                                 &frags,
                                 None,
+                                config.ai_prompt.as_deref(),
                                 &app_handle,
                                 cancel_rx.resubscribe(),
                             ).await {
@@ -401,7 +418,7 @@ pub async fn run_pipeline(
                                         "warn",
                                         &format!("Сбой llama-cli: {}. Финальный переход на высокоскоростной встроенный NLP расчет.", e2),
                                     );
-                                    crate::text_analyzer::compute_text_scores_advanced(&frags)
+                                    crate::text_analyzer::compute_text_scores_with_focus(&frags, config.ai_prompt.as_deref())
                                 }
                             }
                         }
@@ -506,9 +523,52 @@ pub async fn run_pipeline(
     .await
     .ok();
 
+    if let Some(ref prof) = audio_profile_opt {
+        if !prof.reaction_zones.is_empty() {
+            let laugh_cnt = prof
+                .reaction_zones
+                .iter()
+                .filter(|z| z.kind == crate::audio_analyzer::ReactionKind::Laughter)
+                .count();
+            let app_cnt = prof
+                .reaction_zones
+                .iter()
+                .filter(|z| z.kind == crate::audio_analyzer::ReactionKind::Applause)
+                .count();
+            let burst_cnt = prof
+                .reaction_zones
+                .iter()
+                .filter(|z| z.kind == crate::audio_analyzer::ReactionKind::ActionBurst)
+                .count();
+            crate::logger::emit_log(
+                &app_handle,
+                "Audio",
+                "info",
+                &format!(
+                    "✓ Детектор реакций (16 кГц FFT): обнаружено {} зон (смех: {}, аплодисменты: {}, экшен-всплески: {})",
+                    prof.reaction_zones.len(),
+                    laugh_cnt,
+                    app_cnt,
+                    burst_cnt
+                ),
+            );
+        }
+    }
+
+    let ad_blocks = crate::text_analyzer::detect_ad_blocks(&fragments);
+    if !ad_blocks.is_empty() {
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            &format!(
+                "🛡 Фильтр рекламы и фандаб-вклеек: выявлено {} блоков (будут исключены из нарезки)",
+                ad_blocks.len()
+            ),
+        );
+    }
+
     // 5. Умное построение списка лучших фрагментов (Хайлайтов) с эластичной длительностью по границам завершённых сцен:
-    // `config.max_clip_duration_sec` задает базовый ориентир (например, 15с), но чтобы шортсы НИКОГДА не обрезались
-    // по смыслу на середине мысли, вопросе или перед панчлайном, разрешаем эластичный коридор (например, 11–22с при настройке 15с).
     let base_max = config.max_clip_duration_sec.clamp(10.0, 60.0).min(video_duration);
     let min_dur = (base_max * 0.68).clamp(10.0, 16.0).min((base_max - 2.0).max(4.0));
     let target_dur = (base_max * 1.05).clamp(min_dur + 2.5, 28.0).min(video_duration);
@@ -558,6 +618,7 @@ pub async fn run_pipeline(
                 &text_scores,
                 &scenes,
                 audio_profile_opt.as_ref(),
+                &ad_blocks,
                 anchor_idx,
                 min_dur,
                 target_dur,
@@ -577,8 +638,6 @@ pub async fn run_pipeline(
     }
 
     // Б. Из сцен визуального/аудио анализа:
-    // Если в видео есть распознанные субтитры, привязываем визуальные пики к ближайшему цельному диалоговому окну (10–20с),
-    // чтобы исключить нарезку клипов посреди безмолвного музыкального опенинга или на полуслове!
     for scene in &scenes {
         if scene.timestamp_sec < intro_skip || scene.timestamp_sec >= outro_limit {
             continue;
@@ -604,6 +663,7 @@ pub async fn run_pipeline(
                     &text_scores,
                     &scenes,
                     audio_profile_opt.as_ref(),
+                    &ad_blocks,
                     nearest_idx,
                     min_dur,
                     target_dur,
@@ -640,21 +700,27 @@ pub async fn run_pipeline(
         }
     }
 
-    // В. Включаем самые мощные звуковые экшн-сцены серии (взрывы, сражения, магия + частая смена планов, вне OP/ED),
-    // чтобы взрывной экшен без диалогов (или с короткими выкриками) попадал в пул кандидатов!
+    // В. Включаем самые мощные звуковые экшн-сцены серии (взрывы, сражения, магия + частая смена планов, вне OP/ED и рекламы)
     if let Some(ref prof) = audio_profile_opt {
         let scene_cut_times: Vec<f64> = scenes.iter().map(|s| s.timestamp_sec).collect();
-        let action_windows = crate::audio_analyzer::extract_high_intensity_action_windows(
-            prof,
-            &scene_cut_times,
-            &fragments,
-            &scenes,
-            min_dur,
-            target_dur,
-            max_dur,
-            intro_skip,
-            outro_limit,
-        );
+        let action_windows: Vec<(f64, f64, f64, String, String)> =
+            crate::audio_analyzer::extract_high_intensity_action_windows(
+                prof,
+                &scene_cut_times,
+                &fragments,
+                &scenes,
+                min_dur,
+                target_dur,
+                max_dur,
+                intro_skip,
+                outro_limit,
+            )
+            .into_iter()
+            .filter(|w| {
+                let dur = (w.1 - w.0).max(1.0);
+                crate::text_analyzer::ad_overlap_seconds(w.0, w.1, &ad_blocks) <= 1.5_f64.max(dur * 0.20)
+            })
+            .collect();
         if !action_windows.is_empty() {
             crate::logger::emit_log(
                 &app_handle,
@@ -669,8 +735,7 @@ pub async fn run_pipeline(
         }
     }
 
-    // Если строгий построитель диалоговых окон не дал кандидатов (например, редкие одиночные реплики с огромными паузами),
-    // строим резервные окна вокруг лучших реплик
+    // Если строгий построитель диалоговых окон не дал кандидатов, строим резервные окна вокруг лучших реплик
     if all_valid_windows.is_empty() && !fragments.is_empty() {
         let mut frag_with_scores: Vec<(usize, f64)> = fragments
             .iter()
@@ -695,7 +760,11 @@ pub async fn run_pipeline(
                     break;
                 }
             }
-            if end - start >= min_dur * 0.75 {
+            let (start, end) = crate::text_analyzer::trim_edges_against_ads(start, end, &ad_blocks);
+            let dur = end - start;
+            if dur >= min_dur * 0.75
+                && crate::text_analyzer::ad_overlap_seconds(start, end, &ad_blocks) <= 1.5_f64.max(dur * 0.20)
+            {
                 all_valid_windows.push((
                     start,
                     end,
@@ -907,6 +976,7 @@ pub async fn run_pipeline(
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+            ai_prompt: config.ai_prompt.clone(),
         };
 
         if let Ok(verdicts) = crate::text_analyzer::verify_assembled_clips_coherence(
@@ -1121,10 +1191,42 @@ pub async fn run_pipeline(
         effective_threshold
     };
 
-    // 2. Сбалансированный отбор клипов с обязательным резервированием слотов под качественно доработанные клипы 2-го круга:
-    // Клипы, прошедшие ревизию и успешно доработанные (cand.5 == true), спасли ключевые мысли и панчлайны.
-    // Если они преодолели порог качества, гарантируем им включение в итоговую выборку (до 2-3 слотов),
-    // чтобы они не вытеснялись исключительно сырыми баллами клипов 1-го круга.
+    // 1.8. Семантическая дедупликация кандидатов (убираем смысловые повторы тезисов и дубли флешбэков)
+    if !fragments.is_empty() && processed_scenes.len() > 1 {
+        processed_scenes.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        let before_dedup = processed_scenes.len();
+        let mut unique_scenes: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = Vec::with_capacity(before_dedup);
+        let mut unique_dialogues: Vec<String> = Vec::with_capacity(before_dedup);
+
+        for cand in processed_scenes {
+            let cand_dlg = extract_window_dialogue(&fragments, cand.0, cand.1);
+            let is_dup = unique_scenes.iter().zip(unique_dialogues.iter()).any(|(sel, sel_dlg)| {
+                crate::text_analyzer::are_clips_semantically_duplicate(&cand_dlg, &cand.3, sel_dlg, &sel.3)
+            });
+            if !is_dup {
+                unique_dialogues.push(cand_dlg);
+                unique_scenes.push(cand);
+            }
+        }
+
+        let removed_sem = before_dedup.saturating_sub(unique_scenes.len());
+        if removed_sem > 0 {
+            crate::logger::emit_log(
+                &app_handle,
+                "Pipeline",
+                "info",
+                &format!(
+                    "🧹 Семантическая дедупликация: исключено {} смысловых дублей (повторы фраз/флешбэки)",
+                    removed_sem
+                ),
+            );
+        }
+        processed_scenes = unique_scenes;
+    }
+
+    // 2. Сбалансированный отбор клипов:
+    // - Резервируем слоты под качественно доработанные клипы 2-го круга
+    // - По переключателю `config.distribute_evenly` распределяем отобранные клипы по сегментам таймлайна
     let repaired_qualifying: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = processed_scenes
         .iter()
         .filter(|cand| cand.5 && cand.2 >= (effective_threshold * 0.85).max(0.12))
@@ -1138,29 +1240,61 @@ pub async fn run_pipeline(
         .collect();
 
     let mut selected_intervals: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = Vec::new();
+    let max_repaired_slots = if !repaired_qualifying.is_empty() && effective_limit >= 2 {
+        (effective_limit / 3).max(1).min(2).min(repaired_qualifying.len())
+    } else {
+        0
+    };
 
-    if !repaired_qualifying.is_empty() && effective_limit >= 2 {
-        let max_repaired_slots = (effective_limit / 3).max(1).min(2).min(repaired_qualifying.len());
-        // Добавляем лучшие доработанные клипы 2-го круга
-        for rep in repaired_qualifying.iter().take(max_repaired_slots) {
-            selected_intervals.push(rep.clone());
+    for rep in repaired_qualifying.iter().take(max_repaired_slots) {
+        selected_intervals.push(rep.clone());
+    }
+
+    if config.distribute_evenly && video_duration >= 180.0 && effective_limit >= 2 && !standard_qualifying.is_empty() {
+        let buckets = effective_limit.clamp(1, 12);
+        let bucket_len = (video_duration / (buckets as f64)).max(1.0);
+        let global_best = processed_scenes.first().map(|s| s.2).unwrap_or(0.0);
+        let bucket_floor = (global_best * 0.55).max(0.12);
+
+        for b in 0..buckets {
+            if selected_intervals.len() >= effective_limit {
+                break;
+            }
+            let b_start = (b as f64) * bucket_len;
+            let b_end = b_start + bucket_len;
+            if let Some(best_in_bucket) = standard_qualifying
+                .iter()
+                .filter(|cand| cand.0 >= b_start && cand.0 < b_end && cand.2 >= bucket_floor)
+                .filter(|cand| !selected_intervals.iter().any(|s| (s.0 - cand.0).abs() < 2.0))
+                .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+            {
+                selected_intervals.push(best_in_bucket.clone());
+            }
         }
-        // Заполняем оставшиеся слоты лучшими стандартными клипами 1-го круга
+
+        for cand in &standard_qualifying {
+            if selected_intervals.len() >= effective_limit {
+                break;
+            }
+            if !selected_intervals.iter().any(|s| (s.0 - cand.0).abs() < 2.0) {
+                selected_intervals.push(cand.clone());
+            }
+        }
+
+        crate::logger::emit_log(
+            &app_handle,
+            "Pipeline",
+            "info",
+            &format!(
+                "⏱ Распределение по хронометражу: равномерный режим ({} сегментов, порог качества сегмента >= {:.2})",
+                buckets, bucket_floor
+            ),
+        );
+    } else if !repaired_qualifying.is_empty() && effective_limit >= 2 {
         let remaining_slots = effective_limit.saturating_sub(selected_intervals.len());
         for std in standard_qualifying.iter().take(remaining_slots) {
             selected_intervals.push(std.clone());
         }
-        // Если слоты еще остались (например, мало стандартных), добираем оставшиеся доработанные клипы
-        if selected_intervals.len() < effective_limit {
-            for rep in repaired_qualifying.iter().skip(max_repaired_slots) {
-                if selected_intervals.len() >= effective_limit { break; }
-                if !selected_intervals.iter().any(|s| (s.0 - rep.0).abs() < 2.0) {
-                    selected_intervals.push(rep.clone());
-                }
-            }
-        }
-        // Предварительно сортируем по рейтингу
-        selected_intervals.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
     } else {
         selected_intervals = processed_scenes
             .iter()
@@ -1169,6 +1303,18 @@ pub async fn run_pipeline(
             .cloned()
             .collect();
     }
+
+    if selected_intervals.len() < effective_limit && !repaired_qualifying.is_empty() {
+        for rep in repaired_qualifying.iter().skip(max_repaired_slots) {
+            if selected_intervals.len() >= effective_limit {
+                break;
+            }
+            if !selected_intervals.iter().any(|s| (s.0 - rep.0).abs() < 2.0) {
+                selected_intervals.push(rep.clone());
+            }
+        }
+    }
+    selected_intervals.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
 
     // 2б. Адаптивное пополнение для длинных видео:
     let min_desired = if is_auto_clips {
@@ -1182,7 +1328,11 @@ pub async fn run_pipeline(
         let needed = effective_limit.saturating_sub(selected_intervals.len());
         let additional: Vec<(f64, f64, f64, String, String, bool, Option<String>)> = processed_scenes
             .iter()
-            .filter(|cand| cand.2 < effective_threshold && cand.2 >= relaxed_floor)
+            .filter(|cand| {
+                cand.2 < effective_threshold
+                    && cand.2 >= relaxed_floor
+                    && !selected_intervals.iter().any(|s| (s.0 - cand.0).abs() < 2.0)
+            })
             .take(needed)
             .cloned()
             .collect();
@@ -1590,6 +1740,7 @@ pub async fn run_pipeline(
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             openai_api_key: config.openai_api_key.clone().unwrap_or_default(),
+            ai_prompt: config.ai_prompt.clone(),
         };
 
         let smm_results = crate::text_analyzer::generate_and_save_smm_bundle(
@@ -1622,6 +1773,23 @@ pub async fn run_pipeline(
     Ok((generated_clips, suggested_fragments))
 }
 
+fn extract_window_dialogue(
+    fragments: &[crate::text_analyzer::SubtitleFragment],
+    start: f64,
+    end: f64,
+) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for f in fragments {
+        if f.end > start + 0.10 && f.start < end - 0.10 {
+            let trimmed = f.text.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed);
+            }
+        }
+    }
+    parts.join(" ")
+}
+
 /// Строит логически завершенное окно клипа в гибком диапазоне `[min_dur, max_dur]` (например, 10–20 секунд),
 /// привязывая начало клипа строго к началу предложения, а конец — к полному завершению диалогового обмена без обрывов на полуслове или слабой реплике.
 #[allow(clippy::too_many_arguments)]
@@ -1630,6 +1798,7 @@ fn build_complete_phrase_window(
     text_scores: &[f64],
     scenes: &[crate::analyzer::SceneCandidate],
     audio_profile: Option<&crate::audio_analyzer::AudioEnergyProfile>,
+    ad_blocks: &[(f64, f64)],
     anchor_idx: usize,
     min_dur: f64,
     target_dur: f64,
@@ -2051,9 +2220,16 @@ fn build_complete_phrase_window(
         }
     }
 
-    let (end_idx, clip_start, clip_end, is_clean_end, _, _) = chosen?;
+    let (end_idx, raw_clip_start, raw_clip_end, is_clean_end, _, _) = chosen?;
+    let (clip_start, clip_end) =
+        crate::text_analyzer::trim_edges_against_ads(raw_clip_start, raw_clip_end, ad_blocks);
     let clip_dur = clip_end - clip_start;
     if clip_dur < min_dur - 0.15 || clip_dur > max_dur + 1.2 {
+        return None;
+    }
+    if crate::text_analyzer::ad_overlap_seconds(clip_start, clip_end, ad_blocks)
+        > 1.5_f64.max(clip_dur * 0.20)
+    {
         return None;
     }
 
@@ -2242,13 +2418,20 @@ fn build_complete_phrase_window(
 
     let filler_penalty = (filler_ratio * 0.12).clamp(0.0, 0.06);
 
-    // Широкий и сбалансированный динамический диапазон оценки окна (0.28 .. 0.97):
-    // - Спокойная экспозиция без вопросов и пиков: 0.45 – 0.68
-    // - Содержательные диалоговые сцены (детектив / комедия / вопросы / 1 восклицание): 0.65 – 0.82
-    // - Сильные эмоциональные сцены (2 восклицания / драма / расследование): 0.80 – 0.88
-    // - Супер-интенсивные кульминации (3+ восклицаний / бой / шок, для порога 0.85–0.90+): 0.87 – 0.96
-    let mut raw_window_score = peak_score * 0.56
-        + top2_avg * 0.26
+    // 4. ViralCut + Anime: скоринг хука первой реплики, цифр, широкого темпа речи и детектора аудио-реакций (смех/аплодисменты/экшен)
+    let vc_metrics = crate::text_analyzer::compute_viralcut_window_metrics(
+        fragments,
+        start_idx,
+        end_idx,
+        clip_dur,
+    );
+    let vc_hook_bonus = ((vc_metrics.hook_score - 0.45) * 0.08).clamp(-0.025, 0.045);
+    let reaction_bonus = audio_profile
+        .map(|prof| prof.get_reaction_bonus_between(clip_start, clip_end).0)
+        .unwrap_or(0.0);
+
+    let mut raw_window_score = peak_score * 0.54
+        + top2_avg * 0.25
         + avg_score * 0.10
         + speech_density.min(0.85) * 0.04
         + completeness_bonus
@@ -2257,6 +2440,10 @@ fn build_complete_phrase_window(
         + vocal_expr_bonus
         + hook_struct_bonus
         + punch_struct_bonus
+        + vc_hook_bonus
+        + vc_metrics.numeric_specificity
+        + vc_metrics.speech_rate_fit
+        + reaction_bonus
         - transition_penalty
         - dead_air_penalty
         - filler_penalty;

@@ -40,6 +40,8 @@ pub struct TextAnalysisConfig {
     pub ollama_url: String,       // e.g. "http://localhost:11434"
     pub openai_base_url: String,  // e.g. "https://api.openai.com/v1"
     pub openai_api_key: String,   // Bearer token / API key
+    #[serde(default)]
+    pub ai_prompt: Option<String>, // Тематический фокус отбора (подкаст / аниме-пресет или запрос)
 }
 
 /// Функция парсинга SRT
@@ -1032,8 +1034,8 @@ pub fn is_sentence_end(fragments: &[SubtitleFragment], idx: usize) -> bool {
 }
 
 /// Нормализует вектор оценок от LLM так, чтобы его длина строго совпадала с длиной пакета `chunk`
-fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64> {
-    let fallback = compute_text_scores_advanced(chunk);
+fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment], ai_prompt: Option<&str>) -> Vec<f64> {
+    let fallback = compute_text_scores_with_focus(chunk, ai_prompt);
     let mut out = Vec::with_capacity(chunk.len());
     for i in 0..chunk.len() {
         if let Some(&val) = parsed.get(i) {
@@ -1048,16 +1050,17 @@ fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64
                 // не позволяем заниженной оценке LLM на коротком выкрике («НАМ КОНЕЦ!») утянуть пик вниз
                 let has_exclam = chunk[i].text.contains('!');
                 let has_question = chunk[i].text.contains('?');
+                let topic_boost = compute_topic_relevance(&chunk[i].text, ai_prompt);
                 let effective_llm = if has_exclam && fallback[i] >= 0.75 {
                     val.clamp(0.12, 0.98).max(fallback[i] * 0.95)
                 } else {
                     val.clamp(0.12, 0.98)
                 };
-                let raw_blend = effective_llm * 0.65 + fallback[i] * 0.35;
+                let raw_blend = effective_llm * 0.65 + fallback[i] * 0.35 + topic_boost * 0.35;
                 let contrasted = if has_exclam {
                     (raw_blend * 1.10).clamp(0.35, 0.98)
-                } else if has_question {
-                    (raw_blend * 1.05).clamp(0.30, 0.92)
+                } else if has_question || topic_boost >= 0.08 {
+                    (raw_blend * 1.05).clamp(0.30, 0.94)
                 } else {
                     raw_blend.clamp(0.20, 0.88)
                 };
@@ -1074,6 +1077,7 @@ fn normalize_batch_scores(parsed: &[f64], chunk: &[SubtitleFragment]) -> Vec<f64
 pub async fn analyze_with_llama_cli(
     fragments: &[SubtitleFragment],
     preferred_model_name: Option<&str>,
+    ai_prompt: Option<&str>,
     app_handle: &AppHandle,
     mut cancel_rx: Receiver<()>,
 ) -> AppResult<Vec<f64>> {
@@ -1187,7 +1191,7 @@ pub async fn analyze_with_llama_cli(
             &format!("Пакет {}/{}: анализ {} реплик через llama-cli (GPU offload={})...", batch_idx + 1, total_batches, chunk.len(), use_gpu),
         );
 
-        let (sys_prompt, user_prompt) = build_stage1_prompt_parts(chunk);
+        let (sys_prompt, user_prompt) = build_stage1_prompt_parts(chunk, ai_prompt);
         let mut prompt = format_prompt_for_gguf_model(&model_path_str, &sys_prompt, &user_prompt, "[");
         let mut batch_res = run_llama_cli(
             app_handle,
@@ -1279,7 +1283,7 @@ pub async fn analyze_with_llama_cli(
                     if use_gpu {
                         gpu_succeeded_once = true;
                     }
-                    let normalized = normalize_batch_scores(batch_scores, chunk);
+                    let normalized = normalize_batch_scores(batch_scores, chunk, ai_prompt);
                     crate::logger::emit_log(
                         app_handle,
                         "LLM",
@@ -1306,7 +1310,7 @@ pub async fn analyze_with_llama_cli(
                             chunk.len()
                         ),
                     );
-                    all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                    all_scores.extend_from_slice(&compute_text_scores_with_focus(chunk, ai_prompt));
 
                     if !gpu_succeeded_once && (!use_gpu || consecutive_parse_failures >= 2) && batch_idx + 1 < total_batches {
                         mark_model_broken(&model_path_str);
@@ -1317,7 +1321,7 @@ pub async fn analyze_with_llama_cli(
                             "Предохранитель LLM: выбранная GGUF-модель выдает некорректные токены. Переключение всех оставшихся пакетов на встроенный NLP-движок анализа полных фраз.",
                         );
                         let remaining = &fragments[(batch_idx + 1) * batch_size..];
-                        all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                        all_scores.extend_from_slice(&compute_text_scores_with_focus(remaining, ai_prompt));
                         break;
                     }
                 }
@@ -1333,7 +1337,7 @@ pub async fn analyze_with_llama_cli(
                     ),
                 );
                 let remaining = &fragments[batch_idx * batch_size..];
-                all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                all_scores.extend_from_slice(&compute_text_scores_with_focus(remaining, ai_prompt));
                 break;
             }
         }
@@ -1353,15 +1357,25 @@ pub async fn analyze_text_with_llm(
         return Ok(Vec::new());
     }
 
+    let ai_prompt = config
+        .ai_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
     // Если выбран Builtin — используем быстрый умный локальный семантический анализатор с контролем целостности фраз
     if config.engine == TextEngine::Builtin {
         crate::logger::emit_log(
             app_handle,
             "LLM",
             "info",
-            &format!("Применяется высокоскоростной встроенный NLP-движок анализа целостных фраз (всего реплик: {})", fragments.len()),
+            &format!(
+                "Применяется высокоскоростной встроенный NLP-движок анализа целостных фраз (всего реплик: {}{})",
+                fragments.len(),
+                ai_prompt.map(|p| format!(", фокус: «{}»", p)).unwrap_or_default()
+            ),
         );
-        return Ok(compute_text_scores_advanced(fragments));
+        return Ok(compute_text_scores_with_focus(fragments, ai_prompt));
     }
 
     if config.engine == TextEngine::LlamaCli {
@@ -1371,7 +1385,7 @@ pub async fn analyze_text_with_llm(
             "info",
             &format!("Запуск анализа через llama-cli (модель: '{}')...", config.model_name),
         );
-        match analyze_with_llama_cli(fragments, Some(&config.model_name), app_handle, cancel_rx.resubscribe()).await {
+        match analyze_with_llama_cli(fragments, Some(&config.model_name), ai_prompt, app_handle, cancel_rx.resubscribe()).await {
             Ok(scores) => return Ok(scores),
             Err(e) => {
                 if e.to_string().contains("Отменено") {
@@ -1383,7 +1397,7 @@ pub async fn analyze_text_with_llm(
                     "warn",
                     &format!("llama-cli не может быть запущен ({}). Предохранитель переключает на встроенный NLP-движок.", e),
                 );
-                return Ok(compute_text_scores_advanced(fragments));
+                return Ok(compute_text_scores_with_focus(fragments, ai_prompt));
             }
         }
     }
@@ -1418,7 +1432,7 @@ pub async fn analyze_text_with_llm(
                 &format!("Пакет {}/{}: отправка {} реплик в Ollama...", batch_idx + 1, total_batches, chunk.len()),
             );
 
-            let prompt = build_prompt(chunk);
+            let prompt = build_prompt(chunk, ai_prompt);
             match run_ollama(&client, config, &prompt, app_handle).await {
                 Ok(result) => {
                     let parsed = parse_json_array(&result, chunk.len());
@@ -1429,7 +1443,7 @@ pub async fn analyze_text_with_llm(
                             "info",
                             &format!("Успешный ответ от Ollama: получено {} оценок", batch_scores.len()),
                         );
-                        all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
+                        all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk, ai_prompt));
                     } else {
                         crate::logger::emit_log(
                             app_handle,
@@ -1437,7 +1451,7 @@ pub async fn analyze_text_with_llm(
                             "warn",
                             "Ollama вернула невалидный JSON. Применяется встроенный NLP анализ для пакета.",
                         );
-                        all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                        all_scores.extend_from_slice(&compute_text_scores_with_focus(chunk, ai_prompt));
                     }
                 }
                 Err(e) => {
@@ -1448,7 +1462,7 @@ pub async fn analyze_text_with_llm(
                         &format!("Предохранитель Ollama: сервис недоступен ({})! Каскадный переход на llama-cli...", e),
                     );
                     let remaining = &fragments[batch_idx * batch_size..];
-                    match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
+                    match analyze_with_llama_cli(remaining, None, ai_prompt, app_handle, cancel_rx.resubscribe()).await {
                         Ok(llama_scores) => {
                             crate::logger::emit_log(
                                 app_handle,
@@ -1468,7 +1482,7 @@ pub async fn analyze_text_with_llm(
                                 "warn",
                                 &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
                             );
-                            all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                            all_scores.extend_from_slice(&compute_text_scores_with_focus(remaining, ai_prompt));
                         }
                     }
                     break;
@@ -1529,7 +1543,7 @@ pub async fn analyze_text_with_llm(
                 ),
             );
 
-            let prompt = build_prompt(chunk);
+            let prompt = build_prompt(chunk, ai_prompt);
             let mut result_opt = None;
             let mut hard_channel_unavailable = false;
             // Если ранее уже был сбой на этом API, не тратим время на повторные попытки для каждого пакета
@@ -1612,7 +1626,7 @@ pub async fn analyze_text_with_llm(
                         batch_scores.len()
                     ),
                 );
-                all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk));
+                all_scores.extend_from_slice(&normalize_batch_scores(batch_scores, chunk, ai_prompt));
             } else {
                 total_failures += 1;
                 // При недоступности бесплатного канала (502/503/429) или при 2-м сбое за сессию
@@ -1629,7 +1643,7 @@ pub async fn analyze_text_with_llm(
                         ),
                     );
                     let remaining = &fragments[batch_idx * batch_size..];
-                    match analyze_with_llama_cli(remaining, None, app_handle, cancel_rx.resubscribe()).await {
+                    match analyze_with_llama_cli(remaining, None, ai_prompt, app_handle, cancel_rx.resubscribe()).await {
                         Ok(llama_scores) => {
                             crate::logger::emit_log(
                                 app_handle,
@@ -1654,7 +1668,7 @@ pub async fn analyze_text_with_llm(
                                 "warn",
                                 &format!("Сбой резервного llama-cli ({}). Финальное переключение на встроенный NLP-движок.", llama_err),
                             );
-                            all_scores.extend_from_slice(&compute_text_scores_advanced(remaining));
+                            all_scores.extend_from_slice(&compute_text_scores_with_focus(remaining, ai_prompt));
                         }
                     }
                     break;
@@ -1669,7 +1683,7 @@ pub async fn analyze_text_with_llm(
                             total_batches
                         ),
                     );
-                    all_scores.extend_from_slice(&compute_text_scores_advanced(chunk));
+                    all_scores.extend_from_slice(&compute_text_scores_with_focus(chunk, ai_prompt));
                 }
             }
         }
@@ -1677,7 +1691,7 @@ pub async fn analyze_text_with_llm(
     }
 
     crate::logger::emit_log(app_handle, "LLM", "info", "Расчет семантических оценок через встроенный NLP завершен.");
-    Ok(compute_text_scores_advanced(fragments))
+    Ok(compute_text_scores_with_focus(fragments, ai_prompt))
 }
 
 /// Определяет, является ли реплика «водой», словом-паразитом, хезитацией или технической фразой без сюжетной ценности
@@ -1866,7 +1880,7 @@ fn format_preview_text_68(txt: &str) -> String {
     }
 }
 
-fn build_stage1_prompt_parts(fragments: &[SubtitleFragment]) -> (String, String) {
+fn build_stage1_prompt_parts(fragments: &[SubtitleFragment], ai_prompt: Option<&str>) -> (String, String) {
     let mut lines = Vec::new();
     for (i, frag) in fragments.iter().enumerate() {
         let clean_txt = frag.text.replace(['\n', '\r', '"', '[', ']'], " ");
@@ -1875,25 +1889,37 @@ fn build_stage1_prompt_parts(fragments: &[SubtitleFragment]) -> (String, String)
         lines.push(format!("{}) {} {} \"{}\"", i + 1, start_tag, end_tag, clean_txt.trim()));
     }
     let input_list = lines.join("\n");
-    let sys = "Ты строгий профессиональный режиссер монтажа вирусных роликов (Shorts, Reels, TikTok, Хайлайты 16:9). \
+    let focus_block = ai_prompt
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|p| {
+            format!(
+                "\n- ПРИОРИТЕТНЫЙ ФОКУС ПОЛЬЗОВАТЕЛЯ: «{}» — повышенно оценивай (0.75..0.97) реплики и сцены, соответствующие этой теме, но сохраняй штраф для рекламы, титров озвучки и «воды».",
+                p.replace(['\n', '\r'], " ")
+            )
+        })
+        .unwrap_or_default();
+
+    let sys = "Ты строгий профессиональный режиссер монтажа вирусных роликов (Shorts, Reels, TikTok, Аниме-эдиты, Хайлайты 16:9). \
         Возвращай ТОЛЬКО один JSON-массив десятичных чисел от 0.05 до 0.98 через запятую (например: [0.42, 0.89, 0.25]) без текста и без нумерации.";
     let usr = format!(
-        "Оцени потенциал каждой из {} русских реплик числом от 0.05 до 0.98 (штрафуй «воду» и высоко цени хуки, юмор и кульминации!):\n\
-- 0.12..0.38: «вода», слова-паразиты, обрывки (продолж./незаверш.), бытовые реплики.\n\
-- 0.42..0.65: обычные сюжетные диалоги и спокойные вопросы.\n\
-- 0.70..0.85: сильные интригующие хуки, острый разговорный юмор, сарказм, сленг, споры и угрозы.\n\
-- 0.88..0.97: ЯРКИЙ ПАНЧЛАЙН / КУЛЬМИНАЦИЯ (взрывная шутка, развязка, крик, шок — 1-2 реплики на пакет!).\n\
+        "Оцени потенциал каждой из {} русских реплик числом от 0.05 до 0.98 (штрафуй рекламу/вклейки озвучки/«воду» и высоко цени цепляющие хуки, юмор, драму и экшен-кульминации!):\n\
+- 0.05..0.28: реклама, промокоды, подписки/бусти, «озвучено проектом», «вода», слова-паразиты, обрывки (продолж./незаверш.).\n\
+- 0.35..0.65: обычные сюжетные диалоги и спокойные вопросы.\n\
+- 0.70..0.85: сильные интригующие хуки, цифры/факты, острый юмор, сарказм, клятвы, споры и угрозы.\n\
+- 0.88..0.97: ЯРКИЙ ПАНЧЛАЙН / КУЛЬМИНАЦИЯ (взрывная шутка, развязка, крик, шок, сюжетный поворот — 1-2 реплики на пакет!).{}\n\
 Выведи ТОЛЬКО JSON-массив ровно из {} десятичных чисел через запятую и закрой скобкой ].\n\n\
 Реплики:\n{}",
         fragments.len(),
+        focus_block,
         fragments.len(),
         input_list
     );
     (sys.to_string(), usr)
 }
 
-fn build_prompt(fragments: &[SubtitleFragment]) -> String {
-    let (sys, usr) = build_stage1_prompt_parts(fragments);
+fn build_prompt(fragments: &[SubtitleFragment], ai_prompt: Option<&str>) -> String {
+    let (sys, usr) = build_stage1_prompt_parts(fragments, ai_prompt);
     format!("{}\n\n{}\n\n[", sys, usr)
 }
 
@@ -2445,13 +2471,439 @@ pub fn is_opening_or_song_fragment(fragments: &[SubtitleFragment], idx: usize) -
     false
 }
 
-/// Продвинутый локальный семантический анализатор диалогов, эмоциональных всплесков и целостности фраз
-/// со строгой калибровкой шкалы эмоций (0.20 .. 0.95):
-/// - Спокойные доклады и бытовые разговоры без восклицаний: 0.25 – 0.52
-/// - Обычные тактические обсуждения и вопросы: 0.54 – 0.68
-/// - Эмоциональные споры, приказы и драматические повороты: 0.70 – 0.84
-/// - Исключительная кульминация (крик, ярость, шок, `?!` / `!!` + маркеры экстрима): 0.86 – 0.95
-pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> {
+/// =====================================================================================
+/// VIRALCUT + ANIME/FANDUB МЕХАНИЗМЫ:
+/// 1) Фильтр рекламных интеграций, промокодов и фандаб-вклеек
+/// 2) Скоринг тематической релевантности (`ai_prompt`: общие + аниме-пресеты)
+/// 3) Скоринг хуков (подкаст + аниме-диалоги), цифр и широкого темпа речи
+/// =====================================================================================
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ViralCutWindowMetrics {
+    pub hook_score: f64,
+    pub numeric_specificity: f64,
+    pub speech_rate_fit: f64,
+}
+
+fn has_promo_url_or_code(lower_txt: &str, raw_txt: &str) -> bool {
+    if lower_txt.contains("http://")
+        || lower_txt.contains("https://")
+        || lower_txt.contains("t.me/")
+        || lower_txt.contains("vk.com/")
+        || lower_txt.contains("boosty.to")
+    {
+        return true;
+    }
+    raw_txt.split_whitespace().any(|tok| {
+        let clean: String = tok.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        clean.len() >= 5
+            && clean.chars().all(|c| !c.is_ascii_lowercase())
+            && clean.chars().any(|c| c.is_ascii_uppercase())
+            && clean.chars().any(|c| c.is_ascii_digit())
+    })
+}
+
+/// Детектор рекламных блоков, спонсорских интеграций и фандаб-вклеек по субтитрам.
+/// Возвращает отсортированные слитые интервалы `(start_sec, end_sec)` с небольшим защитным отступом.
+pub fn detect_ad_blocks(fragments: &[SubtitleFragment]) -> Vec<(f64, f64)> {
+    if fragments.is_empty() {
+        return Vec::new();
+    }
+
+    const AD_STRONG_PATTERNS: &[&str] = &[
+        // Классическая YouTube/подкастная реклама и ставки
+        "промокод", "по промокоду", "ссылка в описан", "ссылку оставил", "ссылка в закреп",
+        "рекламная интеграц", "спонсор видео", "спонсор выпуск", "спонсор сегодняш",
+        "на правах рекламы", "переходи по ссылке", "заказывай по ссылке", "по моей ссылке",
+        "скидка по коду", "ставки на спорт", "букмекер", "бесплатная подписка",
+        "получи бонус", "пройди регистрац", "вбивай промокод", "erid",
+        "use code", "promo code", "sponsored by", "link in bio", "link in description",
+        // Фандаб-вклейки, релиз-блоки и титры озвучки (аниме)
+        "озвучено проектом", "переведено и озвучено", "релиз подготовлен", "специально для сайта",
+        "роли озвучивали", "над релизом работали", "текст читал", "наш телеграм",
+        "подписывайтесь на наш телеграм", "поддержать выход сери", "поддержать проект",
+        "boosty", "бусти", "patreon", "патреон", "подпишись на канал",
+        "ставь лайк и подписывайся", "приятного просмотра с озвучкой", "закадровый перевод",
+    ];
+
+    const AD_WEAK_PATTERNS: &[&str] = &[
+        "телеграм", "telegram", "подпишись", "подписывайтесь", "скидка", "акция",
+        "бонус", "регистрац", "бесплатно", "донат", "кэшбэк", "купон",
+        "вконтакте", "группа вк", "discord", "дискорд", "твич", "twitch", "розыгрыш",
+    ];
+
+    let mut cue_points: Vec<usize> = Vec::with_capacity(fragments.len());
+    for f in fragments {
+        let lower = f.text.trim().to_lowercase().replace('ё', "е");
+        if lower.is_empty() {
+            cue_points.push(0);
+            continue;
+        }
+        let mut pts = 0usize;
+        for pat in AD_STRONG_PATTERNS {
+            if lower.contains(pat) {
+                pts += 2;
+            }
+        }
+        for pat in AD_WEAK_PATTERNS {
+            if lower.contains(pat) {
+                pts += 1;
+            }
+        }
+        if has_promo_url_or_code(&lower, &f.text) {
+            pts += 2;
+        }
+        cue_points.push(pts);
+    }
+
+    // Блочная проверка: одиночная реплика >= 2 баллов ИЛИ соседняя реплика >= 1 балла в паре с соседом (gap <= 3.5с)
+    let mut is_ad_cue = vec![false; fragments.len()];
+    for i in 0..fragments.len() {
+        if cue_points[i] >= 2 {
+            is_ad_cue[i] = true;
+        } else if cue_points[i] == 1 {
+            let prev_hit = i > 0
+                && cue_points[i - 1] >= 1
+                && (fragments[i].start - fragments[i - 1].end).max(0.0) <= 3.5;
+            let next_hit = i + 1 < fragments.len()
+                && cue_points[i + 1] >= 1
+                && (fragments[i + 1].start - fragments[i].end).max(0.0) <= 3.5;
+            if prev_hit || next_hit {
+                is_ad_cue[i] = true;
+            }
+        }
+    }
+
+    let mut blocks: Vec<(f64, f64)> = Vec::new();
+    for (i, flagged) in is_ad_cue.iter().enumerate() {
+        if !*flagged {
+            continue;
+        }
+        let s = (fragments[i].start - 0.15).max(0.0);
+        let e = fragments[i].end + 0.15;
+        if let Some(last) = blocks.last_mut() {
+            if s - last.1 <= 3.5 {
+                last.1 = last.1.max(e);
+                continue;
+            }
+        }
+        blocks.push((s, e));
+    }
+    blocks
+}
+
+pub fn ad_overlap_seconds(start: f64, end: f64, ad_blocks: &[(f64, f64)]) -> f64 {
+    let mut total = 0.0_f64;
+    for &(as_sec, ae_sec) in ad_blocks {
+        let ov_s = start.max(as_sec);
+        let ov_e = end.min(ae_sec);
+        if ov_e > ov_s {
+            total += ov_e - ov_s;
+        }
+    }
+    total
+}
+
+/// Подрезает края окна, если оно слегка задевает край рекламного или фандаб-блока (<= 0.55с).
+pub fn trim_edges_against_ads(mut start: f64, mut end: f64, ad_blocks: &[(f64, f64)]) -> (f64, f64) {
+    for &(ad_s, ad_e) in ad_blocks {
+        if ad_s <= start + 0.15 && ad_e > start && (ad_e - start) <= 0.55 {
+            let candidate = ad_e + 0.06;
+            if end - candidate >= 4.0 {
+                start = candidate;
+            }
+        }
+        if ad_e >= end - 0.15 && ad_s < end && (end - ad_s) <= 0.55 {
+            let candidate = ad_s - 0.06;
+            if candidate - start >= 4.0 {
+                end = candidate;
+            }
+        }
+    }
+    (start, end)
+}
+
+/// Расширение пользовательского `ai_prompt` тематическими ключами (общие + аниме-пресеты)
+fn expand_topic_keywords(ai_prompt: &str) -> (Vec<String>, bool) {
+    let norm = ai_prompt.trim().to_lowercase().replace('ё', "е");
+    if norm.is_empty() {
+        return (Vec::new(), false);
+    }
+
+    let mut stems: Vec<String> = Vec::new();
+    let mut wants_numbers = false;
+
+    for raw_w in norm.split(|c: char| !c.is_alphanumeric()) {
+        if raw_w.chars().count() >= 3
+            && !matches!(
+                raw_w,
+                "или" | "для" | "про" | "что" | "как" | "все" | "всё" | "где" | "без"
+                    | "это" | "под" | "над" | "при" | "аниме" | "клипы" | "моменты" | "видео"
+                    | "the" | "and" | "for" | "with"
+            )
+        {
+            stems.push(raw_w.to_string());
+        }
+    }
+
+    // Общий пресет: Юмор / Комедия / Аниме-шутки
+    if norm.contains("юмор")
+        || norm.contains("шутк")
+        || norm.contains("смеш")
+        || norm.contains("комед")
+        || norm.contains("панч")
+        || norm.contains("прикол")
+        || norm.contains("гэг")
+        || norm.contains("сарказм")
+    {
+        for s in [
+            "ахах", "ха-ха", "хе-хе", "шутк", "смеш", "прикол", "угар", "ирони",
+            "сарказм", "издева", "серьезно", "дурак", "идиот", "офиг", "капец",
+            "блин", "клоун", "абсурд", "нелеп", "с ума", "да ладно", "что за бред",
+        ] {
+            stems.push(s.to_string());
+        }
+    }
+
+    // Общий пресет: Деньги / Цифры / Бизнес
+    if norm.contains("деньг")
+        || norm.contains("цифр")
+        || norm.contains("бизнес")
+        || norm.contains("финанс")
+        || norm.contains("доход")
+        || norm.contains("факт")
+    {
+        wants_numbers = true;
+        for s in [
+            "руб", "доллар", "тысяч", "миллион", "млн", "млрд", "процент", "доход",
+            "прибыл", "выручк", "бюджет", "цена", "стоит", "купил", "продал",
+            "провал", "ошибк", "рынок", "клиент", "кейс", "заработ",
+        ] {
+            stems.push(s.to_string());
+        }
+    }
+
+    // Пресет: Споры / Интрига / Повороты
+    if norm.contains("спор")
+        || norm.contains("интриг")
+        || norm.contains("конфликт")
+        || norm.contains("поворот")
+        || norm.contains("раскрыт")
+        || norm.contains("тайн")
+        || norm.contains("клиффхэнг")
+    {
+        for s in [
+            "лжешь", "врешь", "неправд", "чушь", "докаж", "почему", "зачем",
+            "призна", "преда", "тайн", "секрет", "на самом деле", "неужели",
+            "не может быть", "обман", "заговор", "ловушк", "правда", "скрывал",
+        ] {
+            stems.push(s.to_string());
+        }
+    }
+
+    // Пресет: Советы / Лайфхаки
+    if norm.contains("совет")
+        || norm.contains("лайфхак")
+        || norm.contains("правил")
+        || norm.contains("инсайт")
+        || norm.contains("метод")
+    {
+        for s in [
+            "правил", "совет", "никогда не", "всегда", "лайфхак", "главное",
+            "первое", "второе", "важно", "секрет", "ошибк", "работает", "способ",
+            "метод", "вывод", "науч", "запомн",
+        ] {
+            stems.push(s.to_string());
+        }
+    }
+
+    // Аниме-пресет: Экшен / Бои
+    if norm.contains("экш")
+        || norm.contains("бои")
+        || norm.contains("бой")
+        || norm.contains("битв")
+        || norm.contains("сраж")
+        || norm.contains("крик")
+        || norm.contains("техник")
+        || norm.contains("маги")
+    {
+        for s in [
+            "удар", "атак", "бей", "уничтож", "разнес", "сотру", "техник", "клинок",
+            "меч", "выстрел", "огонь", "взрыв", "маги", "сил", "монстр", "враг",
+            "берегись", "прорыв", "в бой", "сдохн", "умри", "предел", "трансформ",
+            "недооцен", "приказ", "штурм", "держись",
+        ] {
+            stems.push(s.to_string());
+        }
+    }
+
+    // Аниме-пресет: Драма / Эмоции / Клятвы
+    if norm.contains("драм")
+        || norm.contains("эмоц")
+        || norm.contains("слез")
+        || norm.contains("клятв")
+        || norm.contains("предат")
+        || norm.contains("проща")
+        || norm.contains("боль")
+    {
+        for s in [
+            "клянусь", "поклял", "обеща", "прости", "любл", "ненавиж", "умр",
+            "смерт", "погиб", "боль", "слез", "сердц", "душ", "никогда", "брос",
+            "защищ", "спаст", "поздно", "не уходи", "верь мне", "ради", "судьб",
+            "прощай", "не отдам",
+        ] {
+            stems.push(s.to_string());
+        }
+    }
+
+    (stems, wants_numbers)
+}
+
+/// Вычисляет тематический бонус `0.0..=0.22` для реплики/диалога под заданный `ai_prompt`.
+pub fn compute_topic_relevance(text: &str, ai_prompt: Option<&str>) -> f64 {
+    let Some(prompt_raw) = ai_prompt.map(str::trim).filter(|s| !s.is_empty()) else {
+        return 0.0;
+    };
+    let (stems, wants_numbers) = expand_topic_keywords(prompt_raw);
+    if stems.is_empty() && !wants_numbers {
+        return 0.0;
+    }
+
+    let lower = text.to_lowercase().replace('ё', "е");
+    let mut hits = 0usize;
+    for st in &stems {
+        if lower.contains(st.as_str()) {
+            hits += 1;
+            if hits >= 4 {
+                break;
+            }
+        }
+    }
+
+    let mut score = (hits as f64) * 0.055;
+    if wants_numbers
+        && (lower.chars().any(|c| c.is_ascii_digit())
+            || lower.contains('%')
+            || lower.contains('$')
+            || lower.contains('₽'))
+    {
+        score += 0.07;
+    }
+
+    score.clamp(0.0, 0.22)
+}
+
+/// Скоринг хука первой реплики, цифровой конкретики и темпа речи (ViralCut + аниме-адаптация).
+pub fn compute_viralcut_window_metrics(
+    fragments: &[SubtitleFragment],
+    start_idx: usize,
+    end_idx: usize,
+    clip_dur: f64,
+) -> ViralCutWindowMetrics {
+    if fragments.is_empty() || start_idx >= fragments.len() || end_idx >= fragments.len() || start_idx > end_idx {
+        return ViralCutWindowMetrics::default();
+    }
+
+    let opener_raw = fragments[start_idx].text.trim();
+    let opener_lower = opener_raw.to_lowercase().replace('ё', "е");
+    let opener_words: Vec<&str> = opener_lower.split_whitespace().collect();
+
+    let mut hook = 0.28_f64;
+
+    if opener_raw.contains("?!") || opener_raw.contains("!?") {
+        hook += 0.30;
+    } else if opener_raw.contains('?') {
+        hook += 0.26;
+    } else if opener_raw.contains('!') {
+        hook += 0.20;
+    }
+
+    let direct_triggers = [
+        "ты ", "вы ", "тебе ", "вам ", "твой", "слушай", "знаешь", "представь",
+        "поверь", "смотри", "не смей", "попробуй", "скажи", "признай", "you ", "your ",
+    ];
+    if direct_triggers.iter().any(|t| opener_lower.contains(t)) {
+        hook += 0.16;
+    }
+
+    let viral_drama_hooks = [
+        "почему ", "зачем ", "как так", "никто не", "на самом деле", "главный секрет",
+        "ошибка", "перестань", "клянусь", "обещаю", "никогда не", "невозможно",
+        "неужели", "предат", "наконец-то", "я же говорил", "да ладно", "серьезно",
+        "издева", "что за",
+    ];
+    if viral_drama_hooks.iter().any(|h| opener_lower.contains(h)) {
+        hook += 0.16;
+    }
+
+    if opener_raw.chars().any(|c| c.is_ascii_digit()) {
+        hook += 0.12;
+    }
+
+    let leading_fillers = [
+        "ну ", "ну,", "ээ", "аа", "короче", "типа", "как бы", "в общем", "так вот", "значит,", "мм", "эм",
+    ];
+    if leading_fillers.iter().any(|lf| opener_lower.starts_with(lf)) {
+        hook -= 0.22;
+    }
+
+    if opener_words.len() > 28 {
+        hook -= 0.12;
+    }
+
+    let mut numeric_tokens = 0usize;
+    let mut total_words = 0usize;
+    let mut has_any_exclam = false;
+
+    for f in &fragments[start_idx..=end_idx] {
+        let trimmed = f.text.trim();
+        if trimmed.contains('!') {
+            has_any_exclam = true;
+        }
+        let low = trimmed.to_lowercase().replace('ё', "е");
+        for w in low.split_whitespace() {
+            if w.chars().any(|c| c.is_alphanumeric()) {
+                total_words += 1;
+            }
+            if w.chars().any(|c| c.is_ascii_digit())
+                || w.contains('%')
+                || w.contains('$')
+                || w.contains('₽')
+                || matches!(w, "тыс" | "млн" | "млрд" | "миллион" | "миллионов" | "миллиард")
+            {
+                numeric_tokens += 1;
+            }
+        }
+    }
+
+    let numeric_specificity = ((numeric_tokens as f64) * 0.025).clamp(0.0, 0.075);
+
+    // Широкий коридор темпа речи (1.5..=5.0 слов/сек), уважающий напряженные драматические паузы
+    let wps = (total_words as f64) / clip_dur.max(1.0);
+    let speech_rate_fit = if (2.5..=3.8).contains(&wps) {
+        0.05
+    } else if (1.5..=5.0).contains(&wps) {
+        0.025
+    } else if wps < 0.9 && !has_any_exclam {
+        -0.03
+    } else if wps > 6.2 {
+        -0.02
+    } else {
+        0.0
+    };
+
+    ViralCutWindowMetrics {
+        hook_score: hook.clamp(0.0, 1.0),
+        numeric_specificity,
+        speech_rate_fit,
+    }
+}
+
+/// Продвинутый локальный семантический анализатор с поддержкой пользовательского фокуса `ai_prompt`.
+pub fn compute_text_scores_with_focus(
+    fragments: &[SubtitleFragment],
+    ai_prompt: Option<&str>,
+) -> Vec<f64> {
     if fragments.is_empty() {
         return Vec::new();
     }
@@ -2571,6 +3023,10 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
             score += (extreme_hits as f64) * 0.16;
             score += (mod_hits as f64) * 0.04;
 
+            // 2б. Тематический фокус пользователя (`ai_prompt`)
+            let topic_boost = compute_topic_relevance(&f.text, ai_prompt);
+            score += topic_boost;
+
             // 3. Хук-маркеры и целостность границ фразы
             if is_sentence_start(fragments, idx) {
                 score += 0.03;
@@ -2589,8 +3045,8 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
             // 4. Темп и плотность живой речи
             let duration = (f.end - f.start).max(0.4);
             let speech_rate = (word_count as f64) / duration;
-            if speech_rate >= 2.4 && speech_rate <= 5.5 {
-                score += ((speech_rate - 2.2) * 0.022).clamp(0.01, 0.05);
+            if (2.2..=5.5).contains(&speech_rate) {
+                score += ((speech_rate - 2.0) * 0.022).clamp(0.01, 0.05);
             }
 
             // 5. Насыщенность реплики по числу слов
@@ -2599,11 +3055,13 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
             }
 
             // Спокойные повествовательные фразы без `!` и без экстремальных триггеров не могут превышать 0.55
+            // (кроме фраз, попавших точно в выбранный пользователем тематический фокус!)
             if !has_exclam && extreme_hits == 0 && !has_double_punct && !has_all_caps_scream {
-                score = score.min(0.55);
+                let calm_cap = if topic_boost >= 0.08 { 0.78 } else { 0.55 };
+                score = score.min(calm_cap);
             }
 
-            score.clamp(0.12, 0.96)
+            score.clamp(0.12, 0.97)
         })
         .collect();
 
@@ -2625,15 +3083,13 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
 
             // Передаем импульс к первой части предложения только если в предложении действительно есть эмоция
             let boost = if max_in_sentence >= 0.78 { 0.02 } else { 0.0 };
-            raw_scores[sent_start] = (raw_scores[sent_start] * 0.40 + max_in_sentence * 0.60 + boost).clamp(0.16, 0.95);
+            raw_scores[sent_start] = (raw_scores[sent_start] * 0.40 + max_in_sentence * 0.60 + boost).clamp(0.16, 0.96);
         }
 
         i = sent_end + 1;
     }
 
     // Шаг 3. Кластерный импульс для сцен с серией восклицаний подряд (боевая кульминация / накал страстей):
-    // если вокруг восклицательной реплики в радиусе ±6.5с есть еще >= 2 восклицательных реплик,
-    // усиливаем эмоциональное ядро кластера, чтобы настоящие кульминации достигали 0.86–0.95
     let snapshot_scores = raw_scores.clone();
     for idx in 0..fragments.len() {
         if !fragments[idx].text.contains('!') || snapshot_scores[idx] < 0.48 {
@@ -2664,16 +3120,21 @@ pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> 
         if exclam_neighbors >= 2 {
             let cluster_boost = (exclam_neighbors.min(4) as f64) * 0.055
                 + if max_neighbor_score >= 0.75 { 0.04 } else { 0.0 };
-            raw_scores[idx] = (snapshot_scores[idx] + cluster_boost).clamp(0.16, 0.95);
+            raw_scores[idx] = (snapshot_scores[idx] + cluster_boost).clamp(0.16, 0.96);
         }
     }
 
     raw_scores
 }
 
+/// Продвинутый локальный семантический анализатор диалогов, эмоциональных всплесков и целостности фраз
+pub fn compute_text_scores_advanced(fragments: &[SubtitleFragment]) -> Vec<f64> {
+    compute_text_scores_with_focus(fragments, None)
+}
+
 #[allow(dead_code)]
 pub fn compute_text_scores_fallback(fragments: &[SubtitleFragment]) -> Vec<f64> {
-    compute_text_scores_advanced(fragments)
+    compute_text_scores_with_focus(fragments, None)
 }
 
 /// Тип дефекта, обнаруженного у собранного клипа при 2-й проверке
@@ -2718,7 +3179,7 @@ pub struct ClipVerificationVerdict {
 }
 
 /// Строит системный и пользовательский промпты для 2-й (финальной) проверки УЖЕ СОБРАННЫХ фрагментов
-fn build_clip_verification_parts(candidates: &[AssembledClipCandidate]) -> (String, String) {
+fn build_clip_verification_parts(candidates: &[AssembledClipCandidate], ai_prompt: Option<&str>) -> (String, String) {
     let mut items = Vec::with_capacity(candidates.len());
     for (i, cand) in candidates.iter().enumerate() {
         let dur = (cand.end - cand.start).max(1.0);
@@ -2738,36 +3199,46 @@ fn build_clip_verification_parts(candidates: &[AssembledClipCandidate]) -> (Stri
     }
 
     let list_block = items.join("\n");
-    let sys = "Ты главный шеф-редактор вирусных шортсов и хайлайтов. Выполняешь строгую вторую проверку уже собранных клипов. \
+    let topic_rule = ai_prompt
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|p| {
+            format!(
+                "\n5. СООТВЕТСТВИЕ ФОКУСУ ПОЛЬЗОВАТЕЛЯ («{}»): сцены, ярко раскрывающие эту тему, дополнительно поощряй (0.75..0.98), но отбраковывай рекламу и обрывки.",
+                p.replace(['\n', '\r'], " ")
+            )
+        })
+        .unwrap_or_default();
+
+    let sys = "Ты главный шеф-редактор вирусных шортсов, аниме-эдитов и хайлайтов. Выполняешь строгую вторую проверку уже собранных клипов. \
         Возвращай ТОЛЬКО один JSON-массив десятичных чисел от 0.05 до 0.98 через запятую без текста и комментариев.";
     let usr = format!(
         "Выполни СТРОГУЮ ВТОРУЮ ПРОВЕРКУ {} УЖЕ СОБРАННЫХ видеофрагментов (ниже приведен полный диалог каждого готового ролика целиком).\n\
-Оцени каждый готовый фрагмент числом от 0.05 до 0.98 по 4 жестким правилам:\n\
+Оцени каждый готовый фрагмент числом от 0.05 до 0.98 по жестким правилам:\n\
 1. СВЯЗНОСТЬ И ЗАКОНЧЕННОСТЬ МЫСЛИ: реплики внутри клипа должны образовывать единую понятную мысль с логичным началом и четкой финальной точкой/панчлайном. Если склеены куски разных тем или финал оборван на полуслове — ставь 0.10..0.28!\n\
-2. ОТСЕВ ПОЛНОГО БРЕДА: если текст бессвязный, похож на словесный мусор, галлюцинацию распознавания или набор несвязанных выкриков — ставь 0.05..0.20!\n\
+2. ОТСЕВ ПОЛНОГО БРЕДА И РЕКЛАМЫ: если текст бессвязный, похож на словесный мусор, рекламу/промокод, фандаб-вклейку или набор несвязанных выкриков — ставь 0.05..0.20!\n\
 3. ОТСЕВ СКУКОТЫ И «ВОДЫ»: если в отрывке унылая бытовуха, сухие технические фразы, затянутая «вода» без интриги и эмоций — ставь 0.15..0.34!\n\
-4. ЮМОР, САРКАЗМ И КУЛЬМИНАЦИЯ: высоко оценивай (0.72..0.98) живой русский юмор, иронию, сленг, острую перепалку (вопрос -> хлесткий ответ) и яркую развязку в конце ролика.\n\
+4. ЮМОР, ДРАМА, ЭКШЕН И КУЛЬМИНАЦИЯ: высоко оценивай (0.72..0.98) живой русский юмор, сарказм, острую перепалку (вопрос -> хлесткий ответ), а также сильные аниме-кульминации (клятвы, экшен, сюжетные повороты).{}\n\
 Выведи ТОЛЬКО JSON-массив ровно из {} десятичных чисел через запятую и закрой скобкой ].\n\n\
 Готовые фрагменты для 2-й проверки:\n{}",
         candidates.len(),
+        topic_rule,
         candidates.len(),
         list_block
     );
     (sys.to_string(), usr)
 }
 
-fn build_clip_verification_prompt(candidates: &[AssembledClipCandidate]) -> String {
-    let (sys, usr) = build_clip_verification_parts(candidates);
+fn build_clip_verification_prompt(candidates: &[AssembledClipCandidate], ai_prompt: Option<&str>) -> String {
+    let (sys, usr) = build_clip_verification_parts(candidates, ai_prompt);
     format!("{}\n\n{}\n\n[", sys, usr)
 }
 
-/// Детерминированный аудит собранного диалога клипа на:
-/// 1) Полный бред / разорванные фразы / склейку разных сцен
-/// 2) Законченность мысли в начале и в конце
-/// 3) Скукоту / «воду» vs живой русский юмор, сарказм и драматический панчлайн
+/// Детерминированный аудит собранного диалога клипа на связность, скукоту, юмор и соответствие теме `ai_prompt`
 fn audit_assembled_clip_dialogue(
     cand: &AssembledClipCandidate,
     fragments: &[SubtitleFragment],
+    ai_prompt: Option<&str>,
 ) -> (f64, bool, bool, bool, String) {
     // Возвращает: (score, is_nonsense, is_boring, is_incomplete, reason)
     let (Some(first_idx), Some(last_idx)) = (cand.first_cue_idx, cand.last_cue_idx) else {
@@ -2999,17 +3470,23 @@ fn audit_assembled_clip_dialogue(
         score += (exclam_cues.min(3) as f64) * 0.05;
     }
 
-    // Бонус за юмор, иронию, сленг и яркие обороты
+    // Бонус за юмор, иронию, сленг, яркие обороты и фокус пользователя
     if humor_hits > 0 {
         score += (humor_hits.min(3) as f64) * 0.065;
+    }
+    let topic_boost = compute_topic_relevance(&cand.full_dialogue, ai_prompt);
+    if topic_boost > 0.0 {
+        score += (topic_boost * 0.50).min(0.11);
     }
 
     // Штраф за частичную воду
     score -= filler_ratio * 0.25;
 
-    let clamped = score.clamp(0.15, 0.96);
-    let is_boring = clamped < 0.38 && exclam_cues == 0 && humor_hits == 0 && question_cues == 0;
-    let reason = if humor_hits > 0 && first_half_has_question && second_half_has_exclam {
+    let clamped = score.clamp(0.15, 0.97);
+    let is_boring = clamped < 0.38 && exclam_cues == 0 && humor_hits == 0 && question_cues == 0 && topic_boost < 0.08;
+    let reason = if topic_boost >= 0.08 {
+        "точное попадание в выбранную тему с завершенной мыслью".to_string()
+    } else if humor_hits > 0 && first_half_has_question && second_half_has_exclam {
         "связный диалог: интригующий зачин + юмор/панчлайн в финале".to_string()
     } else if humor_hits > 0 {
         "законченная мысль с живым юмором/эмоцией".to_string()
@@ -3035,10 +3512,16 @@ pub async fn verify_assembled_clips_coherence(
         return Ok(Vec::new());
     }
 
+    let ai_prompt = config
+        .ai_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
     // 1. Сначала выполняем детерминированный аудит каждого собранного клипа
     let det_audits: Vec<(f64, bool, bool, bool, String)> = candidates
         .iter()
-        .map(|c| audit_assembled_clip_dialogue(c, fragments))
+        .map(|c| audit_assembled_clip_dialogue(c, fragments, ai_prompt))
         .collect();
 
     // 2. Запускаем 2-ю проверку через русскоязычную LLM (Vikhr GGUF через llama-cli, либо выбранный движок с авто-фоллбэком на Vikhr)
@@ -3091,8 +3574,8 @@ pub async fn verify_assembled_clips_coherence(
                 break;
             }
 
-            let (sys_p, usr_p) = build_clip_verification_parts(chunk);
-            let prompt = build_clip_verification_prompt(chunk);
+            let (sys_p, usr_p) = build_clip_verification_parts(chunk, ai_prompt);
+            let prompt = build_clip_verification_prompt(chunk, ai_prompt);
             let mut parsed_batch: Option<Vec<f64>> = None;
 
             if config.engine == TextEngine::OpenAi {
