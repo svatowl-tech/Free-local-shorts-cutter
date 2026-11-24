@@ -6343,5 +6343,106 @@ pub async fn generate_and_save_smm_bundle(
     results
 }
 
+fn is_semantic_stopword(w: &str) -> bool {
+    matches!(
+        w,
+        "чтобы" | "когда" | "потом" | "потому" | "поэтому" | "которые" | "который" | "которая"
+            | "которое" | "которых" | "очень" | "просто" | "вообще" | "более" | "менее"
+            | "меня" | "тебя" | "тебе" | "себя" | "себе" | "него" | "нему" | "ними"
+            | "надо" | "нужно" | "можно" | "будет" | "было" | "были" | "быть" | "есть"
+            | "если" | "тоже" | "также" | "только" | "даже" | "лишь" | "разве" | "ведь"
+            | "здесь" | "туда" | "сюда" | "тогда" | "сейчас" | "теперь" | "один" | "одна"
+            | "одно" | "этот" | "эта" | "этого" | "этом" | "этой" | "этих" | "такой"
+            | "такая" | "такое" | "такие" | "свой" | "своя" | "своё" | "свое" | "свои"
+            | "this" | "that" | "with" | "from" | "have" | "they" | "what" | "when"
+            | "there" | "their" | "about" | "would" | "could" | "should" | "just"
+    )
+}
+
+fn extract_content_keywords(text: &str) -> HashSet<String> {
+    let lower = text.to_lowercase().replace('ё', "е");
+    let mut set = HashSet::new();
+    for raw in lower.split(|c: char| !c.is_alphanumeric()) {
+        if raw.chars().count() >= 4 && !is_semantic_stopword(raw) {
+            set.insert(raw.to_string());
+        }
+    }
+    set
+}
+
+fn normalize_similarity_text(text: &str) -> String {
+    text.to_lowercase()
+        .replace('ё', "е")
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn normalized_char_similarity(a: &str, b: &str) -> f64 {
+    let va: Vec<char> = a.chars().take(120).collect();
+    let vb: Vec<char> = b.chars().take(120).collect();
+    let la = va.len();
+    let lb = vb.len();
+    if la == 0 || lb == 0 {
+        return 0.0;
+    }
+    let mut prev: Vec<usize> = (0..=lb).collect();
+    let mut curr = vec![0usize; lb + 1];
+    for i in 1..=la {
+        curr[0] = i;
+        for j in 1..=lb {
+            let cost = if va[i - 1] == vb[j - 1] { 0 } else { 1 };
+            curr[j] = (curr[j - 1] + 1)
+                .min(prev[j] + 1)
+                .min(prev[j - 1] + cost);
+        }
+        prev.copy_from_slice(&curr);
+    }
+    let max_len = la.max(lb) as f64;
+    (1.0 - (prev[lb] as f64 / max_len)).clamp(0.0, 1.0)
+}
+
+/// Отсев смысловых дублей (повторяющиеся тезисы в подкастах, а также флешбэки/рекапы в аниме):
+/// - Пересечение содержательных ключевых слов (Jaccard > 0.62 при >= 3 общих словах)
+/// - Схожесть нормализованных заголовков/диалога (> 0.82)
+pub fn are_clips_semantically_duplicate(
+    full_dialogue_a: &str,
+    preview_a: &str,
+    full_dialogue_b: &str,
+    preview_b: &str,
+) -> bool {
+    let kw_a = extract_content_keywords(full_dialogue_a);
+    let kw_b = extract_content_keywords(full_dialogue_b);
+    if kw_a.len() >= 3 && kw_b.len() >= 3 {
+        let inter = kw_a.intersection(&kw_b).count();
+        let union = kw_a.union(&kw_b).count();
+        if union > 0 && inter >= 3 && (inter as f64 / union as f64) > 0.62 {
+            return true;
+        }
+    }
+
+    let norm_pa = normalize_similarity_text(preview_a);
+    let norm_pb = normalize_similarity_text(preview_b);
+    if norm_pa.chars().count() >= 14 && norm_pb.chars().count() >= 14 {
+        if normalized_char_similarity(&norm_pa, &norm_pb) > 0.82 {
+            return true;
+        }
+    }
+
+    let norm_da = normalize_similarity_text(full_dialogue_a);
+    let norm_db = normalize_similarity_text(full_dialogue_b);
+    if norm_da.chars().count() >= 25 && norm_db.chars().count() >= 25 {
+        if normalized_char_similarity(&norm_da, &norm_db) > 0.82 {
+            return true;
+        }
+    }
+
+    false
+}
+
+
 
 
