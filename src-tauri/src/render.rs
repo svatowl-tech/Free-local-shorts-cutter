@@ -1171,6 +1171,7 @@ async fn execute_ffmpeg_clip_render(
 }
 
 /// Создает один клип из исходного видео с нарезкой, субтитрами, фильтрами и финальной контрольной проверкой наличия лиц в 9:16 шортсе.
+/// Возвращает итоговые фактические границы `(actual_start_sec, actual_end_sec)` после возможного авто-ремонта границ речи.
 pub async fn render_clip(
     video_path: PathBuf,
     start_sec: f64,
@@ -1180,7 +1181,7 @@ pub async fn render_clip(
     config: RenderConfig,
     app_handle: AppHandle,
     cancel_rx: Receiver<()>,
-) -> AppResult<()> {
+) -> AppResult<(f64, f64)> {
     log::info!("Запуск рендеринга клипа: {}", output_path.display());
 
     // Гарантируем существование родительской папки для сохранения
@@ -1294,7 +1295,7 @@ pub async fn render_clip(
         let _ = tokio::fs::remove_file(tmp).await;
     }
 
-    res
+    res.map(|()| (active_start_sec, active_start_sec + active_duration_sec))
 }
 
 /// Структура 10-мс аудио-окна для высокоточного контроля среза фонем на краях готового шортса
@@ -2001,15 +2002,20 @@ async fn verify_and_repair_short_audio_with_whisper(
                 } else {
                     // Договариваем ТОЛЬКО `last_cue` и останавливаемся в межфразовой впадине перед `next_cue`!
                     let expected_end = last_cue.end.max(end_sec + 0.55);
-                    let lo_s = (expected_end - 0.15).max(end_sec + 0.45).min(max_nb_sec);
+                    let mut lo_s = (expected_end - 0.15).max(end_sec + 0.45).min(max_nb_sec);
                     let hi_bound = if let Some(nc) = next_cue_opt {
-                        // Если после паузы в финальной реплике стоит ещё одно слово (например «...спасибо тогда. Помогла.»),
-                        // разрешаем дотянуться вплоть до `nc.start + 0.35` (до +2.85с), не залезая глубже в следующую реплику.
-                        (nc.start + 0.35).max(lo_s + 0.85).min(end_sec + 2.85)
+                        if nc.start > end_sec + 0.12 {
+                            // Строго не заходим за начало `next_cue`, чтобы не захватить первый слог чужой реплики и не вызывать Pass 2!
+                            let safe_before_next = (nc.start - 0.03).max(end_sec + 0.10);
+                            lo_s = lo_s.min((nc.start - 0.08).max(end_sec + 0.06));
+                            safe_before_next.min(end_sec + 2.85)
+                        } else {
+                            (nc.start + 0.12).max(lo_s + 0.35).min(end_sec + 1.80)
+                        }
                     } else {
                         expected_end + 1.50
                     };
-                    let hi_s = hi_bound.max(lo_s + 0.35).min(max_nb_sec);
+                    let hi_s = hi_bound.max(lo_s + 0.15).min(max_nb_sec);
                     (lo_s, hi_s)
                 }
             } else {
@@ -2202,7 +2208,13 @@ async fn verify_and_repair_short_audio_with_whisper(
                             .unwrap_or(repaired_end);
                         let nc_cap = last_expected_idx_opt
                             .and_then(|idx| project_cues.get(idx + 1))
-                            .map(|nc| nc.start + 0.35)
+                            .map(|nc| {
+                                if nc.start > le_end + 0.10 {
+                                    (nc.start - 0.03).max(le_end + 0.06)
+                                } else {
+                                    nc.start + 0.15
+                                }
+                            })
                             .unwrap_or(max_nb_sec);
                         let t = le_end.max(repaired_end + 1.15).min(nc_cap).min(max_nb_sec);
                         (t, nc_cap.min(max_nb_sec))
@@ -3438,17 +3450,17 @@ fn analyze_bmp_frame_2d(
                         && sat > 0.10
                         && sat < 0.60;
 
-                    // Аниме-кожа (персиковый / светло-бежевый / теплый тон лица без оранжевых взрывов и серых стен)
-                    let is_anime_skin = luma > 115.0
+                    // Аниме-кожа (персиковый / светло-бежевый / приглушённый тёплый тон лица в тёмных сценах без оранжевых взрывов и серых стен)
+                    let is_anime_skin = luma > 88.0
                         && luma < 246.0
-                        && r > g * 1.02
-                        && g >= b * 0.94
-                        && (r - b) >= 11.0
+                        && r > g * 1.015
+                        && g >= b * 0.93
+                        && (r - b) >= 8.0
                         && (r - b) <= 66.0
-                        && (r - g) >= 3.0
+                        && (r - g) >= 2.5
                         && (r - g) <= 38.0
-                        && sat >= 0.065
-                        && sat <= 0.43;
+                        && sat >= 0.055
+                        && sat <= 0.45;
 
                     if is_real_skin || is_anime_skin {
                         skin_pixels += 1.0;
@@ -3657,10 +3669,10 @@ fn analyze_bmp_frame_2d(
                 // Край кадра (x > 0.75 или x < 0.25) требует четких черт глаз/лица, чтобы лампы/стены на краю не уводили камеру в 19%!
                 let center_dist = (center_gx - 0.50).abs();
                 let base_comp_prior = (1.0 - (center_dist / 0.46).powi(2) * 0.48).clamp(0.48, 1.00);
-                let edge_artifact_damp = if !(0.25..=0.75).contains(&center_gx)
-                    && (eye_density < 0.085 || upper_eye_density < 0.060)
+                let edge_artifact_damp = if !(0.20..=0.80).contains(&center_gx)
+                    && (eye_density < 0.070 || upper_eye_density < 0.050)
                 {
-                    0.28
+                    0.35
                 } else {
                     1.00
                 };
@@ -3730,9 +3742,9 @@ fn analyze_bmp_frame_2d(
         }
 
         let refined_cx = if den > 0.1 {
-            (raw_cx * 0.60 + (num / den) * 0.40).clamp(0.24, 0.76)
+            (raw_cx * 0.60 + (num / den) * 0.40).clamp(0.17, 0.83)
         } else {
-            raw_cx.clamp(0.24, 0.76)
+            raw_cx.clamp(0.17, 0.83)
         };
 
         // Оцениваем активность мимики/рта (`speaker_activity`) внутри рамки лица (с акцентом на нижние 65% лица — губы/челюсть)
@@ -3779,7 +3791,7 @@ fn analyze_bmp_frame_2d(
             let w1 = c1.base_score * (1.0 + c1.speaker_activity * 0.4);
             let w2 = c2.base_score * (1.0 + c2.speaker_activity * 0.4);
             let mid = ((c1.center_ratio * w1 + c2.center_ratio * w2) / (w1 + w2).max(0.01))
-                .clamp(0.26, 0.74);
+                .clamp(0.22, 0.78);
             dual_group_ratio = Some(mid);
         }
     }
@@ -3826,7 +3838,7 @@ fn resolve_multiface_shot_segments(
     if dual_samples.len() * 2 >= slice.len() && !dual_samples.is_empty() {
         let num: f64 = dual_samples.iter().map(|(r, w)| r * w).sum();
         let den: f64 = dual_samples.iter().map(|(_, w)| *w).sum();
-        let group_ratio = (num / den.max(0.01)).clamp(0.26, 0.74);
+        let group_ratio = (num / den.max(0.01)).clamp(0.22, 0.78);
         return vec![CameraSegment {
             start_t,
             end_t,
@@ -3875,15 +3887,14 @@ fn resolve_multiface_shot_segments(
     clusters.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     // Защита от краевых ложных кластеров (водяные знаки, колонны, края стен):
-    // Если первый кластер оказался ближе к краю (x > 0.74 или x < 0.26),
-    // а среди остальных кластеров есть кандидат в комфортной центральной/третьевой зоне (x от 0.26 до 0.74),
-    // проверяем: если центральный кластер достаточно выражен (>= 22% веса крайнего ИЛИ замечен в 2+ кадрах),
-    // то предпочтение отдается центральному персонажу!
+    // Если первый кластер оказался на самом краю (x > 0.80 или x < 0.20),
+    // а среди остальных кластеров есть выраженный кандидат в центральной/третьевой зоне (x от 0.24 до 0.76),
+    // отдаём предпочтение центральному персонажу. Персонажей в зоне 0.18..0.82 при отсутствии более сильного центрального НЕ теряем!
     let mut best_cluster_idx = 0_usize;
-    if clusters.len() >= 2 && (clusters[0].0 > 0.74 || clusters[0].0 < 0.26) {
+    if clusters.len() >= 2 && (clusters[0].0 > 0.80 || clusters[0].0 < 0.20) {
         for (idx, cl) in clusters.iter().enumerate().skip(1) {
-            let is_central = (0.26..=0.74).contains(&cl.0);
-            if is_central && (cl.1 >= clusters[0].1 * 0.22 || cl.2 >= 2) {
+            let is_central = (0.24..=0.76).contains(&cl.0);
+            if is_central && (cl.1 >= clusters[0].1 * 0.28 || cl.2 >= 2) {
                 best_cluster_idx = idx;
                 break;
             }
@@ -3894,14 +3905,13 @@ fn resolve_multiface_shot_segments(
         clusters.insert(0, chosen);
     }
 
-    let primary_cluster_x = clusters[0].0.clamp(0.26, 0.74);
+    let primary_cluster_x = clusters[0].0.clamp(0.18, 0.82);
 
-    // 3. Если в ракурсе есть 2 конкурирующих разнесенных лица (например левый собеседник ~30% и правый ~70%)
+    // 3. Если в ракурсе есть 2 конкурирующих разнесенных лица (например левый собеседник ~25% и правый ~75%)
     // и ракурс длится >= 3.5с (7+ сэмплов), проверяем, нет ли устойчивой смены говорящего между первой и второй половиной ракурса.
-    // ВАЖНО: отсекаем краевые ложные кластеры (< 26% или > 74%), чтобы камера никогда не улетала в край стены/фона!
     if clusters.len() >= 2 && slice.len() >= 7 {
         let secondary_cluster_x = clusters[1].0;
-        let secondary_is_valid_zone = (0.26..=0.74).contains(&secondary_cluster_x);
+        let secondary_is_valid_zone = (0.18..=0.82).contains(&secondary_cluster_x);
         let cluster_dist = (primary_cluster_x - secondary_cluster_x).abs();
 
         if secondary_is_valid_zone
@@ -3971,14 +3981,14 @@ fn resolve_multiface_shot_segments(
                     CameraSegment {
                         start_t,
                         end_t: split_t,
-                        start_ratio: target_a.clamp(0.26, 0.74),
-                        end_ratio: target_a.clamp(0.26, 0.74),
+                        start_ratio: target_a.clamp(0.18, 0.82),
+                        end_ratio: target_a.clamp(0.18, 0.82),
                     },
                     CameraSegment {
                         start_t: split_t,
                         end_t,
-                        start_ratio: target_b.clamp(0.26, 0.74),
-                        end_ratio: target_b.clamp(0.26, 0.74),
+                        start_ratio: target_b.clamp(0.18, 0.82),
+                        end_ratio: target_b.clamp(0.18, 0.82),
                     },
                 ];
             }
@@ -4003,12 +4013,12 @@ fn resolve_multiface_shot_segments(
         {
             let w = (matched.base_score * (1.0 + matched.speaker_activity * 1.5)).max(0.10);
             running_x = running_x * 0.65 + matched.center_ratio * 0.35;
-            track_points.push((s.rel_time, matched.center_ratio.clamp(0.26, 0.74), w));
+            track_points.push((s.rel_time, matched.center_ratio.clamp(0.18, 0.82), w));
         }
     }
 
     if track_points.is_empty() {
-        let r = primary_cluster_x.clamp(0.26, 0.74);
+        let r = primary_cluster_x.clamp(0.18, 0.82);
         return vec![CameraSegment {
             start_t,
             end_t,
@@ -4019,7 +4029,7 @@ fn resolve_multiface_shot_segments(
 
     let weighted_num: f64 = track_points.iter().map(|(_, r, w)| r * w).sum();
     let weighted_den: f64 = track_points.iter().map(|(_, _, w)| *w).sum();
-    let mean_ratio = (weighted_num / weighted_den.max(0.01)).clamp(0.26, 0.74);
+    let mean_ratio = (weighted_num / weighted_den.max(0.01)).clamp(0.18, 0.82);
 
     // Если персонаж действительно плавно идет/смещается в кадре (4+ точки одного и того же трека) — строим плавное ведение камеры
     if track_points.len() >= 4 {
@@ -4036,8 +4046,8 @@ fn resolve_multiface_shot_segments(
             return vec![CameraSegment {
                 start_t,
                 end_t,
-                start_ratio: avg_first.clamp(0.26, 0.74),
-                end_ratio: avg_second.clamp(0.26, 0.74),
+                start_ratio: avg_first.clamp(0.18, 0.82),
+                end_ratio: avg_second.clamp(0.18, 0.82),
             }];
         }
     }

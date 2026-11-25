@@ -1571,7 +1571,7 @@ pub async fn run_pipeline(
             &format!("Запуск нарезки клипа {}/{}: {:.1}с -> {:.1}с (длительность {:.1}с)", i + 1, total_clips, start_sec, end_sec, duration),
         );
 
-        crate::render::render_clip(
+        let (actual_start, actual_end) = crate::render::render_clip(
             video_path.clone(),
             start_sec,
             duration,
@@ -1590,7 +1590,7 @@ pub async fn run_pipeline(
             &app_handle,
         ).await;
 
-        exported_smm_targets.push((clip_path.clone(), start_sec, end_sec, "shorts".to_string()));
+        exported_smm_targets.push((clip_path.clone(), actual_start, actual_end, "shorts".to_string()));
         generated_clips.push(clip_path);
     }
 
@@ -1908,7 +1908,8 @@ fn build_complete_phrase_window(
     // или на последней брошенной фразе уходящей сцены прямо перед открытием новой сцены,
     // сдвигаем старт вперед на содержательное начало следующей реплики (сильный хук)!
     while start_idx + 1 < fragments.len()
-        && (crate::text_analyzer::is_weak_clip_start(fragments, start_idx)
+        && (!crate::text_analyzer::is_sentence_start(fragments, start_idx)
+            || crate::text_analyzer::is_weak_clip_start(fragments, start_idx)
             || crate::text_analyzer::is_filler_or_water_fragment(&fragments[start_idx].text))
         && (crate::text_analyzer::is_sentence_start(fragments, start_idx + 1)
             || crate::text_analyzer::is_new_scene_opener(&fragments[start_idx + 1].text))
@@ -2298,11 +2299,12 @@ fn build_complete_phrase_window(
 
     // Бонус за идеальную целостность начала и конца диалога
     let is_clean_start = crate::text_analyzer::is_sentence_start(fragments, start_idx)
+        && !crate::text_analyzer::is_weak_clip_start(fragments, start_idx)
         && !crate::text_analyzer::starts_with_discourse_continuation(&fragments[start_idx].text);
     let completeness_bonus = match (is_clean_start, is_clean_end) {
         (true, true) => 0.03,
-        (true, false) | (false, true) => 0.0,
-        (false, false) => -0.08,
+        (true, false) | (false, true) => -0.05,
+        (false, false) => -0.13,
     };
 
     // Штраф за длинный провал тишины/музыки посередине клипа (когда склеены две разные сцены)

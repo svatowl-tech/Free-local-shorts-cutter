@@ -316,14 +316,19 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
         "этой ",
         "этому ",
         "этим ",
+        "вместе с ",
+        "наряду с ",
+        "помимо ",
+        "включая ",
+        "наподобие ",
     ];
 
     if continuation_prefixes.iter().any(|p| clean.starts_with(p)) {
         return true;
     }
 
-    // Анафорические местоимения 3-го лица в первых 4 словах («Я как следует им закупилась...», «Они с ним не справятся...»),
-    // которые отсылают к существительному из предыдущей реплики («...настоящего кофе.»)
+    // Анафорические местоимения 3-го лица в первых 4 словах («Я как следует им закупилась...», «Вместе с их уязвимым...»),
+    // которые отсылают к существительному из предыдущей реплики
     let first_words: Vec<&str> = clean
         .split(|c: char| !c.is_alphabetic() && c != '-')
         .filter(|w| !w.is_empty())
@@ -332,7 +337,7 @@ pub fn starts_with_discourse_continuation(text: &str) -> bool {
     if first_words.iter().skip(1).any(|&w| {
         matches!(
             w,
-            "им" | "ими" | "них" | "ними" | "него" | "нее" | "нем" | "ней" | "этим" | "этого" | "этому"
+            "им" | "ими" | "них" | "ними" | "него" | "нее" | "нем" | "ней" | "их" | "его" | "ее" | "этим" | "этого" | "этому"
         )
     }) {
         return true;
@@ -632,6 +637,15 @@ pub fn is_weak_clip_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
         "ну да",
         "конечно",
         "согласен",
+        "согласна",
+        "согласны",
+        "поняли",
+        "верно",
+        "правда",
+        "договорились",
+        "так вот",
+        "не дай",
+        "эй, не дай",
         "совершенно верно",
         "вы совершенно правы",
         "ничего страшного",
@@ -681,6 +695,19 @@ pub fn is_weak_clip_start(fragments: &[SubtitleFragment], idx: usize) -> bool {
     ];
 
     if weak_openers.contains(&clean.as_str()) {
+        return true;
+    }
+
+    // Короткие восклицания-оклики и обрывочные команды (<= 4 слов, например «Эй, не дай!», «Слушай, не лезь!»)
+    let clean_words = clean.split_whitespace().count();
+    if clean_words <= 4
+        && (clean.starts_with("эй,")
+            || clean.starts_with("эй ")
+            || clean.starts_with("слышь,")
+            || clean.starts_with("слушай,")
+            || clean.starts_with("погоди,")
+            || clean.starts_with("подожди,"))
+    {
         return true;
     }
 
@@ -942,8 +969,19 @@ pub fn is_weak_clip_ending(fragments: &[SubtitleFragment], idx: usize) -> bool {
             if word_count == 1 && gap_next < 2.5 {
                 return true;
             }
-            // Короткая 1–3 словная фраза с точкой («Знакомая атака.», «Странное дело.», «Сами ведь знаете.»), за которой в пределах 2.5с идет реакция
-            if word_count <= 3 && !raw_trimmed.contains('!') && gap_next <= 2.5 {
+            // Короткая 1–3 словная фраза с точкой («Знакомая атака.», «Странное дело.»), за которой в пределах 2.5с идет реакция,
+            // ИЛИ короткое обращение/оклик с `!` («Ну шеф!», «Эй, погоди!»), после которого вплотную следует ответ собеседника
+            let is_short_vocative_exclam = word_count <= 3
+                && raw_trimmed.contains('!')
+                && gap_next <= 1.2
+                && (gap_next <= 0.15
+                    || clean.starts_with("ну ")
+                    || clean.starts_with("эй")
+                    || clean.starts_with("ой")
+                    || ["шеф", "босс", "командир", "капитан", "товарищ", "господин", "ребята", "парень", "погоди", "подожди", "стой", "слушай"]
+                        .iter()
+                        .any(|voc| clean.contains(voc)));
+            if (word_count <= 3 && !raw_trimmed.contains('!') && gap_next <= 2.5) || is_short_vocative_exclam {
                 return true;
             }
             // Если следующая реплика начинается втугую (`gap_next <= 0.25с`) и является выводом/панчлайном или продолжением мысли того же говорящего
@@ -3872,6 +3910,9 @@ fn find_clean_peak_window_near(
                 }
             }
         }
+        if !is_sentence_start(fragments, start_i) || is_weak_clip_start(fragments, start_i) {
+            continue;
+        }
 
         let desired_dur = ((min_dur + max_dur) * 0.52).clamp(min_dur + 3.5, max_dur - 1.5);
         let mut end_i = anchor_i.max(start_i);
@@ -4575,7 +4616,7 @@ fn build_smm_copywriter_parts(input: &SmmGenerationInput) -> (String, String) {
 ЖЕСТКИЕ ПРАВИЛА:\n\
 1) НАЗВАНИЕ: напиши развернутую, интригующую фразу из 5–9 слов (30–75 символов), передающую конфликт, поворот или юмор конкретно этой сцены \
 (например: «Поменяла себе челюсть и даже не спросила врача» или «Как отключить маячок слежки без визита в клинику»). \
-ЗАПРЕЩЕНО писать короткие ярлыки из 1–2 слов и ЗАПРЕЩЕНО просто повторять название тайтла «{}»!\n\
+ЗАПРЕЩЕНО писать короткие ярлыки из 1–2 слов, префиксы нумерации вроде «Сцена №...» / «Эпизод №...» / «Клип №...», штампы («Накал страстей...») и ЗАПРЕЩЕНО просто повторять название тайтла «{}»!\n\
 2) ОПИСАНИЕ: 2–3 живых предложения своими словами: упомяни тайтл «{}», раскрой суть происходящего в сцене и её контекст, а в последнем предложении пошути над абсурдностью или напряжением этой ситуации.\n\
 3) ХЕШТЕГИ: 8–10 тематических русских тегов через пробел с символом #.\n\n\
 Выведи ТОЛЬКО 3 заполненных поля:\n\
@@ -5112,7 +5153,7 @@ pub fn build_deterministic_smm_copy(input: &SmmGenerationInput) -> (String, Stri
             "Когда спокойный разговор за секунду превратился в ультиматум",
             "Точка кипения: сцена, которая меняет правила игры",
             "Вызов брошен открыто: почему отступать уже слишком поздно",
-            "Накал страстей в кадре: когда каждое слово бьёт в цель",
+            "Слова наотмашь: момент, после которого прежней жизни больше нет",
             "Никаких компромиссов: момент, где решается судьба героев",
         ];
         variants[seed % variants.len()]
@@ -5542,6 +5583,26 @@ fn has_leaked_smm_template(text: &str) -> bool {
 fn strip_redundant_video_title_prefix(candidate: &str, video_title: &str) -> String {
     let mut s = candidate.trim().to_string();
 
+    // 0. Отрезаем паразитную нумерацию вроде «Сцена №5: ...», «Клип #3: ...», «Эпизод 2 — ...»
+    let low_s = s.to_lowercase().replace('ё', "е");
+    for kw in ["сцена", "клип", "ролик", "эпизод", "фрагмент", "часть"] {
+        if low_s.starts_with(kw) {
+            if let Some((_, right)) = s.split_once(':').or_else(|| s.split_once(" — ")).or_else(|| s.split_once(" - ")) {
+                let left_len = s.len() - right.len();
+                if left_len <= 24 {
+                    let clean_right = right.trim().trim_matches(['"', '«', '»']);
+                    if clean_right.chars().count() >= 10 {
+                        let mut chars = clean_right.chars();
+                        if let Some(first_ch) = chars.next() {
+                            s = format!("{}{}", first_ch.to_uppercase(), chars.as_str());
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     // 1. Если модель уже приписала `| Название видео` в конце — отрезаем суффикс
     if let Some((left, _)) = s.split_once(" | ") {
         let trimmed_left = left.trim();
@@ -5678,6 +5739,12 @@ fn is_meaningful_smm_hook_title(
         "вот-вот перевернётся",
         "перепутавшимся",
         "сцена с ",
+        "сцена №",
+        "эпизод №",
+        "клип №",
+        "ролик №",
+        "накал страстей в кадре",
+        "каждое слово бьет в цель",
     ];
     if BANNED_TITLE_ECHO_WORDS.iter().any(|&w| lower_cand.contains(w)) {
         return false;

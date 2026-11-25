@@ -187,6 +187,8 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
         "громкий",
         "громкий громкий",
         "тихий",
+        "корректор",
+        "редактор",
     ];
     if exact_tags.contains(&clean_exact) {
         return true;
@@ -225,7 +227,9 @@ pub fn is_whisper_hallucination(text: &str) -> bool {
     // 2. Универсальные титры переводчиков, редакторов и вокальный бред на заставках
     let subtitle_credits = [
         "редактор субтитров",
+        "редактор текста",
         "корректор субтитров",
+        "корректор текста",
         "корректор ",
         "субтитры субтитров",
         "субтитры сделал",
@@ -2172,17 +2176,35 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
         }
 
         let run_len = run_end - i;
-        if run_len >= 4 || (run_len == 3 && words_i >= 5) {
-            // Если прямо перед 4+-кратным зацикливанием вокала стоит одиночная строка с тем же 10-символьным префиксом
-            // (например «Повторяй на Сент-Чьи» перед 8x «Повторяй на Вище»), удаляем и её!
-            if !short_prefix_i.is_empty() && short_prefix_i.chars().count() >= 9 {
-                if let Some(last_pushed) = clean_fragments.last() {
-                    let last_norm = norm_line(&last_pushed.text);
-                    if last_norm.starts_with(&short_prefix_i)
-                        && (stage1[i].start - last_pushed.end).abs() <= 2.5
-                    {
-                        clean_fragments.pop();
-                    }
+        let is_short_rapid_loop = run_len >= 3 && words_i <= 4 && {
+            let avg_cue_dur = stage1[i..run_end]
+                .iter()
+                .map(|f| (f.end - f.start).max(0.0))
+                .sum::<f64>()
+                / (run_len as f64);
+            let max_pair_gap = stage1[i..run_end]
+                .windows(2)
+                .map(|w| (w[1].start - w[0].end).max(0.0))
+                .fold(0.0_f64, f64::max);
+            avg_cue_dur <= 2.2 && max_pair_gap <= 2.5
+        };
+        if run_len >= 4 || (run_len == 3 && words_i >= 5) || is_short_rapid_loop {
+            // Если прямо перед 3+/4+-кратным зацикливанием стоит одиночная строка с тем же 9+ префиксом
+            // ИЛИ короткая подводка (<= 4 слов), оканчивающаяся на то же слово (например «Ты чё?» перед 21x «Вы-то чё?»), удаляем и её!
+            let loop_last_word = norm_i.split_whitespace().last().unwrap_or("");
+            if let Some(last_pushed) = clean_fragments.last() {
+                let last_norm = norm_line(&last_pushed.text);
+                let shares_prefix = !short_prefix_i.is_empty()
+                    && short_prefix_i.chars().count() >= 9
+                    && last_norm.starts_with(&short_prefix_i);
+                let shares_short_tail = last_norm.split_whitespace().count() <= 4
+                    && !loop_last_word.is_empty()
+                    && loop_last_word.chars().count() >= 2
+                    && last_norm.split_whitespace().last() == Some(loop_last_word);
+                if (shares_prefix || shares_short_tail)
+                    && (stage1[i].start - last_pushed.end).abs() <= 3.0
+                {
+                    clean_fragments.pop();
                 }
             }
             // Если прямо перед длинным вокальным циклом (например 11x «Вернешься.» на опенинге) стоит короткая 3-строчная вокальная петля A-B-A
@@ -2202,7 +2224,7 @@ pub async fn sanitize_srt_file(srt_path: &Path, app_handle: &AppHandle) -> AppRe
                     clean_fragments.truncate(n - 3);
                 }
             }
-            // Любая фраза (даже из 1–3 слов, как «ПЕСНЯ ВСХЛИПЫМ» x9) повторенная 4+ раз подряд (или 3+ раз для длинной фразы >= 5 слов) —
+            // Любая фраза (даже из 1–3 слов, как «ПЕСНЯ ВСХЛИПЫМ» x9 или «Вы-то чё?» x21) повторенная в цикле —
             // это 100% зацикленная галлюцинация Whisper на музыке или шуме, отбрасываем весь кластер!
             i = run_end;
             continue;

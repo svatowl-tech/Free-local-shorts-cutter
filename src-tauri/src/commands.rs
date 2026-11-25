@@ -339,7 +339,7 @@ pub async fn render_clips_from_fragments(
         );
         let clip_path = clips_dir.join(clip_filename);
 
-        crate::render::render_clip(
+        let (actual_start, actual_end) = crate::render::render_clip(
             video_buf.clone(),
             start_sec,
             duration,
@@ -358,7 +358,7 @@ pub async fn render_clips_from_fragments(
             &app,
         ).await;
 
-        exported_smm_targets.push((clip_path.clone(), start_sec, end_sec, "shorts".to_string()));
+        exported_smm_targets.push((clip_path.clone(), actual_start, actual_end, "shorts".to_string()));
         generated_clips.push(clip_path.to_string_lossy().to_string());
     }
 

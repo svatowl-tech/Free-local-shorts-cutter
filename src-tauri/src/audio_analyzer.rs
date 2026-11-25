@@ -658,26 +658,31 @@ pub fn refine_clip_bounds_by_audio(
     if let Some(f_idx) = first_cue_idx {
         let first_cue = &fragments[f_idx];
         // Не сдвигаем старт позже, чем за 0.08с до начала первой реплики клипа,
-        // и не уводим раньше, чем за 0.65с до первой реплики (чтобы фоновый шум/BGM не утягивал старт на 2.3с в предыдущую сцену!)
+        // и разрешаем откат до 1.15с до первой реплики (если голос стартовал раньше таймкода Whisper), но не задевая предыдущую фразу
         max_allowed_start = max_allowed_start.min((first_cue.start - 0.08).max(raw_start));
-        min_allowed_start = min_allowed_start.max((first_cue.start - max_shift.min(0.65)).max(0.0));
+        min_allowed_start = min_allowed_start.max((first_cue.start - max_shift.min(1.15)).max(0.0));
 
         if f_idx > 0 {
             let prev_cue = &fragments[f_idx - 1];
             let gap_before = (first_cue.start - prev_cue.end).max(0.0);
             if gap_before <= max_shift + 0.5 {
-                min_allowed_start = min_allowed_start.max((prev_cue.end + 0.02).min(raw_start));
+                min_allowed_start = min_allowed_start.max((prev_cue.end + 0.04).min(raw_start));
             }
         }
     }
 
     let raw_start_idx = profile.time_to_idx(raw_start);
-    let start_rms = profile.smoothed_rms_at(raw_start_idx);
+    let mut start_peak_rms = profile.smoothed_rms_at(raw_start_idx);
+    let start_scan_lo = raw_start_idx.saturating_sub(5);
+    let start_scan_hi = (raw_start_idx + 3).min(profile.rms_db.len().saturating_sub(1));
+    for idx_s in start_scan_lo..=start_scan_hi {
+        start_peak_rms = start_peak_rms.max(profile.smoothed_rms_at(idx_s));
+    }
     let local_start_valley_db = compute_local_valley_db(profile, raw_start);
     let mut rescued_start = false;
 
-    let new_start = if start_rms > local_start_valley_db + 2.2 && start_rms > profile.quiet_valley_db + 1.8 {
-        // В точке `raw_start` УЖЕ звучит голос поверх локального фона (фраза началась раньше таймкода)!
+    let new_start = if start_peak_rms > local_start_valley_db + 2.0 && start_peak_rms > profile.quiet_valley_db + 1.6 {
+        // В окне [-100мс .. +60мс] вокруг `raw_start` уже звучит голос поверх локального фона (фраза началась раньше таймкода)!
         rescued_start = true;
         find_quiet_valley_before_onset(
             profile,
@@ -687,9 +692,10 @@ pub fn refine_clip_bounds_by_audio(
             local_start_valley_db,
         )
     } else {
-        // В точке `raw_start` относительно тихо — находим самую чистую точку тишины (минимальный RMS + Peak)
-        let local_min_bound = (raw_start - max_shift.min(0.45)).max(min_allowed_start);
-        find_cleanest_quiet_point(profile, raw_start, local_min_bound, max_allowed_start)
+        // В точке `raw_start` относительно тихо — даём 140 мс предзапаса перед взрывным согласным и находим чистую тишину
+        let local_min_bound = (raw_start - max_shift.min(0.60)).max(min_allowed_start);
+        let safe_target = (raw_start - 0.14).clamp(local_min_bound, max_allowed_start);
+        find_cleanest_quiet_point(profile, safe_target, local_min_bound, max_allowed_start)
     };
 
     // --- 2. ВЫРАВНИВАНИЕ КОНЦА КЛИПА (`new_end`) ---
@@ -720,17 +726,17 @@ pub fn refine_clip_bounds_by_audio(
     let local_end_valley_db = compute_local_valley_db(profile, raw_end);
     let mut rescued_end = false;
 
-    // Проверяем также ближайшие 120 мс (6 фреймов) после `raw_end`: если внутри слова была смычка взрывного согласного ('г', 'к', 'п', 'т', 'в'),
-    // в самой точке `raw_end` энергия могла кратковременно просесть, а через 40-80 мс звучит ударный/заключительный слог слова!
+    // Проверяем также ближайшие 200 мс (10 фреймов) после `raw_end`: если внутри слова была смычка взрывного согласного ('г', 'к', 'п', 'т', 'в'),
+    // в самой точке `raw_end` энергия могла кратковременно просесть, а через 40-160 мс звучит ударный/заключительный слог слова!
     let mut post_end_max_rms = end_rms;
-    for lookahead in 1..=6 {
+    for lookahead in 1..=10 {
         let idx_la = (raw_end_idx + lookahead).min(profile.rms_db.len().saturating_sub(1));
         if profile.idx_to_time(idx_la) <= max_allowed_end {
             post_end_max_rms = post_end_max_rms.max(profile.smoothed_rms_at(idx_la));
         }
     }
 
-    let new_end = if post_end_max_rms > local_end_valley_db + 1.8 && post_end_max_rms > profile.quiet_valley_db + 1.4 {
+    let new_end = if post_end_max_rms > local_end_valley_db + 1.5 && post_end_max_rms > profile.quiet_valley_db + 1.2 {
         rescued_end = true;
         resolve_active_end_boundary(
             profile,
@@ -741,8 +747,8 @@ pub fn refine_clip_bounds_by_audio(
         )
     } else {
         let safe_forward_min = min_allowed_end.max(raw_end - 0.04);
-        let local_max_bound = (raw_end + max_shift.min(0.55)).min(max_allowed_end).max(safe_forward_min);
-        find_cleanest_quiet_point(profile, (raw_end + 0.08).min(local_max_bound), safe_forward_min, local_max_bound)
+        let local_max_bound = (raw_end + max_shift.min(0.65)).min(max_allowed_end).max(safe_forward_min);
+        find_cleanest_quiet_point(profile, (raw_end + 0.12).min(local_max_bound), safe_forward_min, local_max_bound)
     };
 
     let final_start = (new_start * 100.0).round() / 100.0;
@@ -853,9 +859,9 @@ fn resolve_active_end_boundary(
         if profile.rms_db[k] <= local_valley_db + 1.1 {
             quiet_run += 1;
             if quiet_run >= 7 {
-                // Оставляем 3 фрейма (60 мс) мягкого послезвучия после окончания фонемы, чтобы afade=out 40мс не съел глухую согласную
+                // Оставляем 6 фреймов (120 мс) мягкого послезвучия после окончания фонемы, чтобы afade=out 40мс не съел глухую согласную
                 let speech_end_idx = k.saturating_sub(quiet_run);
-                let target_idx = (speech_end_idx + 3).min(k).min(idx_max);
+                let target_idx = (speech_end_idx + 6).min(k).min(idx_max);
                 return profile.idx_to_time(target_idx);
             }
         } else {
@@ -1610,39 +1616,40 @@ fn detect_audio_reactions_from_pcm(
         let avg_high = w_high / weight_sum;
         let avg_zcr = w_zcr / weight_sum;
 
-        // 1. Смех (ритмичные ВЧ-пульсации 4-7 Гц)
-        if active_ratio >= 0.45
-            && modulation > 0.38
-            && avg_flat > 0.02
-            && avg_flat < 0.65
-            && avg_high > 0.30
-            && avg_zcr > 0.04
-            && avg_zcr < 0.58
-            && max_rms >= local_median * 1.25
+        // 1. Смех (отчётливые ритмичные ВЧ-пульсации 4-7 Гц выше фоновой речи и OST)
+        if active_ratio >= 0.50
+            && modulation > 0.50
+            && avg_flat > 0.03
+            && avg_flat < 0.55
+            && avg_high > 0.34
+            && avg_zcr > 0.05
+            && avg_zcr < 0.52
+            && max_rms >= local_median * 1.48
         {
-            let sc = ((avg_high * 1.6).min(1.0) * (0.45 + modulation.min(1.0))).clamp(0.35, 0.98);
+            let sc = ((avg_high * 1.6).min(1.0) * (0.45 + modulation.min(1.0))).clamp(0.42, 0.98);
             raw_laughter.push((t_start, t_end, sc));
         }
 
         // 2. Аплодисменты (устойчивый широкополосный шум, защищенный от ровного саундтрека)
-        if active_ratio >= 0.60
-            && modulation < 0.55
-            && avg_flat > 0.10
-            && avg_high > 0.50
-            && avg_zcr > 0.24
-            && max_rms >= quiet_floor * 1.8
+        if active_ratio >= 0.65
+            && modulation < 0.50
+            && avg_flat > 0.12
+            && avg_high > 0.52
+            && avg_zcr > 0.25
+            && max_rms >= quiet_floor * 2.2
         {
-            let sc = ((avg_flat * 4.0).min(1.0) * (avg_high * 1.2).min(1.0)).clamp(0.35, 0.98);
+            let sc = ((avg_flat * 4.0).min(1.0) * (avg_high * 1.2).min(1.0)).clamp(0.42, 0.98);
             raw_applause.push((t_start, t_end, sc));
         }
 
         // 3. Контрастный эмоциональный крик / экшен-всплеск поверх фонового OST (аниме и игры)
         let contrast_ratio = max_rms / local_median.max(1e-6);
-        if contrast_ratio >= 2.25
-            && max_rms >= quiet_floor * 3.0
-            && (avg_high > 0.28 || modulation >= 0.42)
+        if active_ratio >= 0.30
+            && contrast_ratio >= 2.85
+            && max_rms >= quiet_floor * 3.8
+            && (avg_high > 0.30 || modulation >= 0.48)
         {
-            let sc = ((contrast_ratio - 1.7) * 0.36).clamp(0.42, 0.96);
+            let sc = ((contrast_ratio - 2.1) * 0.34).clamp(0.45, 0.96);
             raw_bursts.push((t_start, t_end, sc));
         }
 
@@ -1656,7 +1663,7 @@ fn detect_audio_reactions_from_pcm(
         let mut merged: Vec<(f64, f64, f64)> = Vec::new();
         for (s, e, sc) in raw {
             if let Some(last) = merged.last_mut() {
-                if s <= last.1 + 0.35 {
+                if s <= last.1 + 1.0 {
                     last.1 = last.1.max(e);
                     if sc > last.2 {
                         last.2 = sc;
@@ -1668,7 +1675,7 @@ fn detect_audio_reactions_from_pcm(
         }
 
         // Подрезаем тихие края по сглаженной энергии `(rms * high_ratio)`
-        let mut out = Vec::new();
+        let mut trimmed_zones: Vec<AudioReactionZone> = Vec::new();
         for (ms, me, sc) in merged {
             let fi_s = ((ms * frames_per_sec).floor() as usize).min(feats.len().saturating_sub(1));
             let fi_e = ((me * frames_per_sec).ceil() as usize).min(feats.len().saturating_sub(1));
@@ -1696,7 +1703,7 @@ fn detect_audio_reactions_from_pcm(
             let final_s = ((fi_s + trim_l) as f64) / frames_per_sec;
             let final_e = ((fi_s + trim_r + 1) as f64) / frames_per_sec;
             if final_e - final_s >= min_dur_sec && !overlaps_op_ed(final_s, final_e) {
-                out.push(AudioReactionZone {
+                trimmed_zones.push(AudioReactionZone {
                     start_sec: (final_s * 100.0).round() / 100.0,
                     end_sec: (final_e * 100.0).round() / 100.0,
                     kind: kind.clone(),
@@ -1704,13 +1711,32 @@ fn detect_audio_reactions_from_pcm(
                 });
             }
         }
+
+        // NMS с паузой восстановления >= 3.0с между реакциями одного типа (убирает серию ложных дроблений на шумной сцене)
+        trimmed_zones.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        let mut out: Vec<AudioReactionZone> = Vec::new();
+        for z in trimmed_zones {
+            let too_close = out.iter().any(|kept| {
+                let gap = if z.start_sec > kept.end_sec {
+                    z.start_sec - kept.end_sec
+                } else if kept.start_sec > z.end_sec {
+                    kept.start_sec - z.end_sec
+                } else {
+                    0.0
+                };
+                gap < 3.0
+            });
+            if !too_close {
+                out.push(z);
+            }
+        }
         out
     };
 
     let mut all_zones = Vec::new();
-    all_zones.extend(merge_and_trim(raw_laughter, ReactionKind::Laughter, 0.60));
-    all_zones.extend(merge_and_trim(raw_applause, ReactionKind::Applause, 0.90));
-    all_zones.extend(merge_and_trim(raw_bursts, ReactionKind::ActionBurst, 0.55));
+    all_zones.extend(merge_and_trim(raw_laughter, ReactionKind::Laughter, 0.85));
+    all_zones.extend(merge_and_trim(raw_applause, ReactionKind::Applause, 1.00));
+    all_zones.extend(merge_and_trim(raw_bursts, ReactionKind::ActionBurst, 0.75));
     all_zones.sort_by(|a, b| a.start_sec.partial_cmp(&b.start_sec).unwrap_or(std::cmp::Ordering::Equal));
     all_zones
 }
